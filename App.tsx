@@ -887,7 +887,7 @@ const App: React.FC = () => {
   const handleSaveProdutoCombinado = useCallback(async (productSku: string, newBomItems: ProdutoCombinado['items']) => {
       const payload = {
         bom_composition: { items: newBomItems } as any,
-        updated_at: Date.now(),
+        updated_at: new Date().toISOString(),
       };
       const { error } = await dbClient.from('product_boms').update(payload).eq('code', productSku);
         if (!error) {
@@ -922,7 +922,7 @@ const App: React.FC = () => {
             }
             
             // Gerar ID único
-            const now = Date.now();
+            const now = new Date().toISOString();
             let itemWithId: any = {
                 id: generateId(),
                 name: item.name.trim(),
@@ -932,8 +932,6 @@ const App: React.FC = () => {
                 category: item.category || '',
                 current_qty: item.current_qty || 0,
                 reserved_qty: item.reserved_qty || 0,
-                created_at: now,
-                updated_at: now,
             };
 
             // Filtrar campos específicos por tipo
@@ -1352,7 +1350,7 @@ const App: React.FC = () => {
 
   const handleConfirmImportFromXml = useCallback(async (payload: any) => {
         if (!currentUser) return;
-        const now = Date.now();
+        const now = new Date().toISOString();
         const newItemsToInsert = payload.itemsToCreate.map((item:any) => ({
             id: item.id || generateId(),
             code: item.code,
@@ -1365,8 +1363,6 @@ const App: React.FC = () => {
             ready_qty: Number(item.ready_qty || 0),
             min_qty: Number(item.min_qty || 0),
             status: item.status || 'ATIVO',
-            created_at: now,
-            updated_at: now,
             bom_composition: item.bom_composition || null,
         }));
         if (newItemsToInsert.length > 0) await dbClient.from('product_boms').insert(newItemsToInsert as any);
@@ -1379,12 +1375,9 @@ const App: React.FC = () => {
     try {
       console.log(`🔗 [BulkLink] Vinculando ${selectedSkus.length} SKUs ao produto ${targetProductId}`);
       
-            const now = Date.now();
             const skuLinksToInsert = selectedSkus.map(sku => ({
         imported_sku: sku,
         master_product_sku: targetProductId,
-                created_at: now,
-                updated_at: now,
       }));
 
       const { error } = await dbClient.from('sku_links').insert(skuLinksToInsert);
@@ -1412,7 +1405,6 @@ const App: React.FC = () => {
       console.log(`🔗 [BulkLink-New] Criando novo produto "${newProductData.name}" e vinculando ${selectedSkus.length} SKUs`);
       
       // 1. Criar novo produto
-            const now = Date.now();
             const newProduct = {
                 id: generateId(),
         code: newProductData.code,
@@ -1427,8 +1419,6 @@ const App: React.FC = () => {
                 cost_price: 0,
         category: 'Importado',
                 status: 'ATIVO',
-                created_at: now,
-                updated_at: now,
       };
 
       const { data: insertedProduct, error: insertError } = await dbClient
@@ -1450,8 +1440,6 @@ const App: React.FC = () => {
             const skuLinksToInsert = selectedSkus.map(sku => ({
         imported_sku: sku,
                 master_product_sku: productCode,
-                created_at: now,
-                updated_at: now,
       }));
 
       const { error: linkError } = await dbClient.from('sku_links').insert(skuLinksToInsert);
@@ -1581,13 +1569,10 @@ const App: React.FC = () => {
                 return true;
             }
             
-            // Preparar dados com ID gerado
+            // Preparar dados para upsert
             const skuLinkData = {
-                id: generateId(),
                 imported_sku: importedSkuUpper,
                 master_product_sku: masterSkuUpper,
-                created_at: Date.now(),
-                updated_at: Date.now(),
             };
             
             console.log(`📥 [handleLinkSku] Vinculando ${importedSkuUpper} -> ${masterSkuUpper}`);
@@ -1670,7 +1655,6 @@ const App: React.FC = () => {
   const handleAddImportToHistory = useCallback(async (item: any, processedData: any) => {
         try {
             const historyItem = {
-                id: generateId(),
                 file_name: item.fileName,
                 processed_at: item.processedAt,
                 user_name: item.user,
@@ -1678,7 +1662,6 @@ const App: React.FC = () => {
                 unlinked_count: item.unlinked_count,
                 canal: item.canal,
                 processed_data: processedData as any,
-                created_at: Date.now(),
             };
             
             console.log('📥 Salvando importação no histórico:', historyItem);

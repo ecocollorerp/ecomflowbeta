@@ -102,7 +102,13 @@ ALTER TABLE stock_items
     ADD COLUMN IF NOT EXISTS substitute_product_code TEXT,
     ADD COLUMN IF NOT EXISTS expedition_items        JSONB DEFAULT '[]'::jsonb,
     ADD COLUMN IF NOT EXISTS barcode                 TEXT,
-    ADD COLUMN IF NOT EXISTS updated_at              TIMESTAMPTZ DEFAULT NOW();
+    ADD COLUMN IF NOT EXISTS updated_at              TIMESTAMPTZ DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS reserved_qty            REAL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS ready_qty               REAL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS sell_price              REAL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS cost_price              REAL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS description             TEXT,
+    ADD COLUMN IF NOT EXISTS status                  TEXT DEFAULT 'ATIVO';
 
 CREATE INDEX IF NOT EXISTS idx_stock_items_code ON stock_items (code);
 CREATE INDEX IF NOT EXISTS idx_stock_items_kind ON stock_items (kind);
@@ -229,13 +235,71 @@ ALTER TABLE sku_links ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NO
 CREATE INDEX IF NOT EXISTS idx_sku_links_master ON sku_links (master_product_sku);
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 8.  TABELA: product_boms (Receitas / BOM)
+-- 8.  TABELA: product_boms (Receitas / BOM + Dados do Produto)
+--     PK = id (gerado pelo app), code = UNIQUE (usado para queries)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS product_boms (
-    product_sku  TEXT         PRIMARY KEY,
-    items        JSONB        DEFAULT '[]'::jsonb,
-    updated_at   TIMESTAMPTZ  DEFAULT NOW()
+    id               TEXT         PRIMARY KEY,
+    code             TEXT         UNIQUE NOT NULL,
+    name             TEXT         NOT NULL,
+    kind             TEXT         DEFAULT 'PRODUTO',
+    unit             TEXT         DEFAULT 'un',
+    category         TEXT         DEFAULT '',
+    current_qty      REAL         DEFAULT 0,
+    reserved_qty     REAL         DEFAULT 0,
+    ready_qty        REAL         DEFAULT 0,
+    min_qty          REAL         DEFAULT 0,
+    sell_price       REAL         DEFAULT 0,
+    cost_price       REAL         DEFAULT 0,
+    bom_composition  JSONB        DEFAULT '{"items":[]}'::jsonb,
+    items            JSONB        DEFAULT '[]'::jsonb,
+    description      TEXT,
+    status           TEXT         DEFAULT 'ATIVO',
+    barcode          TEXT,
+    color            TEXT,
+    product_type     TEXT,
+    substitute_product_code TEXT,
+    expedition_items JSONB        DEFAULT '[]'::jsonb,
+    created_at       TIMESTAMPTZ  DEFAULT NOW(),
+    updated_at       TIMESTAMPTZ  DEFAULT NOW()
 );
+
+-- Garantir colunas extras se tabela já existia na versão antiga
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS id TEXT;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS code TEXT;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS name TEXT;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS kind TEXT DEFAULT 'PRODUTO';
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS unit TEXT DEFAULT 'un';
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS category TEXT DEFAULT '';
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS current_qty REAL DEFAULT 0;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS reserved_qty REAL DEFAULT 0;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS ready_qty REAL DEFAULT 0;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS min_qty REAL DEFAULT 0;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS sell_price REAL DEFAULT 0;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS cost_price REAL DEFAULT 0;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS bom_composition JSONB DEFAULT '{"items":[]}'::jsonb;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS items JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'ATIVO';
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS barcode TEXT;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS color TEXT;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS product_type TEXT;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS substitute_product_code TEXT;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS expedition_items JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Migração: se tabela antiga usava product_sku como PK, preencher id/code a partir dele
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_boms' AND column_name='product_sku') THEN
+    UPDATE product_boms SET id = product_sku WHERE id IS NULL AND product_sku IS NOT NULL;
+    UPDATE product_boms SET code = product_sku WHERE code IS NULL AND product_sku IS NOT NULL;
+    UPDATE product_boms SET name = product_sku WHERE name IS NULL AND product_sku IS NOT NULL;
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_product_boms_code ON product_boms (code);
+CREATE INDEX IF NOT EXISTS idx_product_boms_kind ON product_boms (kind);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 9.  TABELA: weighing_batches
@@ -537,7 +601,11 @@ DECLARE
 BEGIN
     SELECT * INTO found_user
     FROM public.users
-    WHERE email = login_input AND password = password_input
+    WHERE (
+        lower(trim(COALESCE(name, ''))) = lower(trim(COALESCE(login_input, '')))
+        OR lower(trim(COALESCE(email, ''))) = lower(trim(COALESCE(login_input, '')))
+    )
+    AND trim(COALESCE(password, '')) = trim(COALESCE(password_input, ''))
     LIMIT 1;
 
     IF found_user IS NOT NULL THEN
@@ -586,6 +654,7 @@ END;
 $$;
 
 -- ── 22.3  adjust_stock_quantity ───────────────────────────────────────────────
+--     Funciona com stock_items (INSUMO) E product_boms (PRODUTO/PROCESSADO)
 CREATE OR REPLACE FUNCTION adjust_stock_quantity(
     item_code       TEXT,
     quantity_delta   REAL,
@@ -597,11 +666,23 @@ RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
     v_item_name TEXT;
+    v_found_in  TEXT;
 BEGIN
+    -- Primeiro tenta em stock_items
     SELECT name INTO v_item_name FROM stock_items WHERE code = item_code;
-    IF v_item_name IS NULL THEN RAISE EXCEPTION 'Item not found: %', item_code; END IF;
-
-    UPDATE stock_items SET current_qty = current_qty + quantity_delta WHERE code = item_code;
+    IF v_item_name IS NOT NULL THEN
+        v_found_in := 'stock_items';
+        UPDATE stock_items SET current_qty = current_qty + quantity_delta, updated_at = NOW() WHERE code = item_code;
+    ELSE
+        -- Senão tenta em product_boms
+        SELECT name INTO v_item_name FROM product_boms WHERE code = item_code;
+        IF v_item_name IS NOT NULL THEN
+            v_found_in := 'product_boms';
+            UPDATE product_boms SET current_qty = current_qty + quantity_delta, updated_at = NOW() WHERE code = item_code;
+        ELSE
+            RAISE EXCEPTION 'Item not found in stock_items or product_boms: %', item_code;
+        END IF;
+    END IF;
 
     INSERT INTO stock_movements (stock_item_code, stock_item_name, origin, qty_delta, ref, created_by_name)
     VALUES (item_code, v_item_name, origin_text, quantity_delta, ref_text, user_name);
@@ -627,7 +708,7 @@ BEGIN
     PERFORM adjust_stock_quantity(item_code, quantity_to_produce, 'PRODUCAO_MANUAL', ref_text, user_name);
 
     -- Deduzir insumos da BOM
-    SELECT items INTO bom_data FROM product_boms WHERE product_sku = item_code;
+    SELECT items INTO bom_data FROM product_boms WHERE code = item_code;
     IF bom_data IS NOT NULL THEN
         FOR bom_item IN SELECT * FROM jsonb_array_elements(bom_data)
         LOOP

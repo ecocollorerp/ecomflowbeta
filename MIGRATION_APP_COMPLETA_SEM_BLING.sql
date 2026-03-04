@@ -522,8 +522,11 @@ BEGIN
   RETURN QUERY
   SELECT u.id, u.name, u.email, u.role, u.setor, u.password, u.prefix, COALESCE(u.attendance, '[]'::jsonb), u.ui_settings
   FROM users u
-  WHERE (u.email = login_input OR u.name = login_input)
-    AND (u.password = password_input OR u.password IS NULL)
+  WHERE (
+        lower(trim(coalesce(u.email, ''))) = lower(trim(coalesce(login_input, '')))
+        OR lower(trim(coalesce(u.name, ''))) = lower(trim(coalesce(login_input, '')))
+  )
+    AND (trim(coalesce(u.password, '')) = trim(coalesce(password_input, '')) OR u.password IS NULL)
   LIMIT 1;
 END;
 $$;

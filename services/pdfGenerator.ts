@@ -269,7 +269,7 @@ export const buildPdf = async (
                 if (pairData && pairData.skus.length > 0) {
                     const lines = pairData.skus.map(item => {
                         const masterSku = skuLinkMap.get(item.sku);
-                        const product = masterSku ? stockItemMap.get(masterSku) : undefined;
+                        const product = masterSku ? stockItemMap.get(masterSku) : stockItemMap.get(item.sku);
                         const finalSku = product ? product.code : item.sku;
                         const finalName = product ? product.name : item.sku;
 
@@ -333,7 +333,7 @@ export const buildPdf = async (
                 if (pairData && pairData.skus.length > 0) {
                     const lines = pairData.skus.map(item => {
                         const masterSku = skuLinkMap.get(item.sku);
-                        const product = masterSku ? stockItemMap.get(masterSku) : undefined;
+                        const product = masterSku ? stockItemMap.get(masterSku) : stockItemMap.get(item.sku);
                         const finalSku = product ? product.code : item.sku;
                         const finalName = product ? product.name : item.sku;
 
