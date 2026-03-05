@@ -137,19 +137,44 @@ export const resetDatabase = async (): Promise<{ success: boolean; message: stri
 
 
 /**
- * Attempts to log in a user by calling a secure RPC function in Supabase.
+ * Attempts to log in a user.
+ * Uses direct table query as primary method, falls back to RPC.
  */
 export const loginUser = async (login: string, password_from_user: string): Promise<User | null> => {
-    const { data, error } = await dbClient.rpc('login', {
-        login_input: login,
-        password_input: password_from_user
-    });
+    const trimmedLogin = (login || '').trim().toLowerCase();
+    const trimmedPass  = (password_from_user || '').trim();
 
-    if (error) {
-        // Log the full error object for better debugging
-        console.error('RPC login error:', JSON.stringify(error, null, 2));
-        return null;
+    if (!trimmedLogin || !trimmedPass) return null;
+
+    // Estratégia 1: Consulta direta na tabela users (mais confiável)
+    try {
+        const { data: rows, error: qErr } = await dbClient
+            .from('users')
+            .select('*')
+            .or(`name.ilike.${trimmedLogin},email.ilike.${trimmedLogin}`)
+            .limit(10);
+
+        if (!qErr && rows && rows.length > 0) {
+            const match = rows.find((u: any) => (u.password || '').trim() === trimmedPass);
+            if (match) return match as User;
+        }
+    } catch (e) {
+        console.warn('Direct login query failed, trying RPC fallback:', e);
     }
 
-    return data as User | null;
+    // Estratégia 2: Fallback para RPC (caso a consulta direta falhe)
+    try {
+        const { data, error } = await dbClient.rpc('login', {
+            login_input: login,
+            password_input: password_from_user
+        });
+        if (error) {
+            console.error('RPC login error:', JSON.stringify(error, null, 2));
+            return null;
+        }
+        return data as User | null;
+    } catch (e) {
+        console.error('RPC login fallback error:', e);
+        return null;
+    }
 };
