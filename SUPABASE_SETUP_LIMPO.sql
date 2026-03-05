@@ -187,7 +187,8 @@ CREATE TABLE scan_logs (
     canal       TEXT,
     order_id    TEXT,
     sku         TEXT,
-    notes       TEXT
+    notes       TEXT,
+    created_at  TIMESTAMPTZ  DEFAULT NOW()
 );
 CREATE INDEX idx_scan_logs_display_key ON scan_logs (display_key);
 CREATE INDEX idx_scan_logs_scanned_at  ON scan_logs (scanned_at DESC);
