@@ -851,7 +851,7 @@ const ResponsiveStockList: React.FC<any> = (props) => {
                     <tr>
                         {props.onSelectAll && <th className="py-4 px-3 w-8 text-center"><input type="checkbox" onChange={(e) => onSelectAll(e, filteredItems)} checked={filteredItems.length > 0 && selectedIds && filteredItems.every((i: StockItem) => selectedIds.has(i.id))} /></th>}
                         {props.isProdutos && <th className="p-4"></th>}
-                        {['Ações', 'Código', 'Nome do Item', props.showColorColumn && 'Cor', 'Saldo Atual', 'Estoque Mínimo', 'Unidade'].filter(Boolean).map(h => <th key={h as string} className="py-4 px-3 text-left">{h}</th>)}
+                        {['Ações', 'Código', 'Nome do Item', props.showColorColumn && 'Cor', 'Saldo Atual', props.isProdutos && 'Reservado', props.isProdutos && 'Pronto', 'Estoque Mínimo', 'Unidade', props.isProdutos && 'SKUs'].filter(Boolean).map(h => <th key={h as string} className="py-4 px-3 text-left">{h}</th>)}
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 font-bold text-slate-600">
@@ -895,8 +895,11 @@ const StockRow: React.FC<{ item: StockItem, hasAdjustPermission: boolean } & any
                 <td className="py-4 px-3 text-slate-800">{item.name}</td>
                 {props.showColorColumn && <td className="py-4 px-3 text-xs">{item.color || 'N/A'}</td>}
                 <td className={`py-4 px-3 text-center font-black ${isBelowMin ? 'text-red-600' : 'text-slate-900'}`}>{item.current_qty.toFixed(2)}</td>
+                {isProdutos && <td className="py-4 px-3 text-center text-orange-600 font-bold">{(item.reserved_qty || 0).toFixed(2)}</td>}
+                {isProdutos && <td className="py-4 px-3 text-center text-emerald-600 font-black">{(item.ready_qty || 0).toFixed(2)}</td>}
                 <td className="py-4 px-3 text-center opacity-60">{item.min_qty.toFixed(2)}</td>
                 <td className="py-4 px-3 text-center uppercase text-[10px] font-black text-gray-400">{item.unit}</td>
+                {isProdutos && <td className="py-4 px-3 text-center">{linkedSkusForThisProduct.length > 0 ? <span className="bg-blue-100 text-blue-700 text-[9px] font-black px-2 py-0.5 rounded-full">{linkedSkusForThisProduct.length}</span> : <span className="text-gray-300 text-[9px]">—</span>}</td>}
             </tr>
             {isExpanded && (
                 <tr className="bg-slate-50">

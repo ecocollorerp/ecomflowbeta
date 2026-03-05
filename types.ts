@@ -160,9 +160,15 @@ export interface StockItem {
     code: string;
     name: string;
     kind: StockItemKind;
-    unit: 'kg' | 'un' | 'm' | 'L';
+    unit: string;
     current_qty: number;
     min_qty: number;
+    reserved_qty?: number;
+    ready_qty?: number;
+    sell_price?: number;
+    cost_price?: number;
+    description?: string;
+    status?: string;
     category?: string;
     color?: string;
     product_type?: 'papel_de_parede' | 'miudos';

@@ -1,24 +1,26 @@
 -- ============================================================================
--- ERP FÁBRICA PRO — MIGRAÇÃO COMPLETA DO BANCO DE DADOS
--- Versão: 2026-02-27 v4.0 (alinhada com sql.ts + melhorias)
+-- ERP FÁBRICA PRO — SQL COMPLETO PARA SUPABASE
+-- Versão: 2025-06-04 v5.0
 --
--- Como executar:
---   1. Abra https://app.supabase.com  →  seu projeto
---   2. SQL Editor  →  New Query
---   3. Cole todo este arquivo  →  Run
+-- INSTRUÇÕES:
+--   1. Abra https://app.supabase.com → seu projeto
+--   2. SQL Editor → New Query
+--   3. Cole TODO este arquivo → Run
+--   4. Login: admin / supersuecocollor
 --
--- O script é idempotente: pode ser executado várias vezes com segurança.
+-- O script é 100% idempotente (pode rodar várias vezes sem erro).
+-- Inclui: tabelas, índices, triggers, RPCs, RLS, dados iniciais.
 -- ============================================================================
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 0.  EXTENSÕES
 -- ─────────────────────────────────────────────────────────────────────────────
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";    -- uuid_generate_v4()
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";     -- gen_random_uuid()
-CREATE EXTENSION IF NOT EXISTS "pg_trgm";      -- busca textual fuzzy (opcional)
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 0.1 ENUMS (criação segura)
+-- 0.1 ENUMS
 -- ─────────────────────────────────────────────────────────────────────────────
 DO $$ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'canal_type') THEN
@@ -75,7 +77,7 @@ INSERT INTO app_settings (key, value) VALUES
 ON CONFLICT (key) DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 3.  TABELA: stock_items
+-- 3.  TABELA: stock_items (INSUMOS)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS stock_items (
     id                      UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -91,6 +93,12 @@ CREATE TABLE IF NOT EXISTS stock_items (
     expedition_items        JSONB        DEFAULT '[]'::jsonb,
     substitute_product_code TEXT,
     barcode                 TEXT,
+    reserved_qty            REAL         DEFAULT 0,
+    ready_qty               REAL         DEFAULT 0,
+    sell_price              REAL         DEFAULT 0,
+    cost_price              REAL         DEFAULT 0,
+    description             TEXT,
+    status                  TEXT         DEFAULT 'ATIVO',
     created_at              TIMESTAMPTZ  DEFAULT NOW(),
     updated_at              TIMESTAMPTZ  DEFAULT NOW()
 );
@@ -116,7 +124,6 @@ CREATE INDEX IF NOT EXISTS idx_stock_items_name ON stock_items USING gin(name gi
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 4.  TABELA: stock_movements
---     ATENÇÃO: coluna é created_by_name (não created_by)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS stock_movements (
     id                UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -131,13 +138,11 @@ CREATE TABLE IF NOT EXISTS stock_movements (
     created_at        TIMESTAMPTZ  DEFAULT NOW()
 );
 
--- Migração: renomear created_by → created_by_name se a coluna antiga existir
 DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_movements' AND column_name='created_by')
        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_movements' AND column_name='created_by_name')
     THEN
         ALTER TABLE stock_movements RENAME COLUMN created_by TO created_by_name;
-        RAISE NOTICE 'stock_movements: created_by renomeada para created_by_name';
     END IF;
 END $$;
 
@@ -153,7 +158,6 @@ CREATE INDEX IF NOT EXISTS idx_stock_mvt_origin     ON stock_movements (origin);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 5.  TABELA: orders
---     ATENÇÃO: id é TEXT (não UUID) para compatibilidade com frontend
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS orders (
     id                        TEXT             PRIMARY KEY,
@@ -235,8 +239,8 @@ ALTER TABLE sku_links ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NO
 CREATE INDEX IF NOT EXISTS idx_sku_links_master ON sku_links (master_product_sku);
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 8.  TABELA: product_boms (Receitas / BOM + Dados do Produto)
---     PK = id (gerado pelo app), code = UNIQUE (usado para queries)
+-- 8.  TABELA: product_boms (Produtos Finais)
+--     PK = id (gerado pelo app), code = UNIQUE (SKU do produto)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS product_boms (
     id               TEXT         PRIMARY KEY,
@@ -264,7 +268,7 @@ CREATE TABLE IF NOT EXISTS product_boms (
     updated_at       TIMESTAMPTZ  DEFAULT NOW()
 );
 
--- Garantir colunas extras se tabela já existia na versão antiga
+-- Garantir colunas se tabela já existia
 ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS id TEXT;
 ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS code TEXT;
 ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS name TEXT;
@@ -289,7 +293,7 @@ ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS expedition_items JSONB DEFAULT
 ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE product_boms ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
--- Migração: se tabela antiga usava product_sku como PK, preencher id/code a partir dele
+-- Migração: se tabela antiga usava product_sku como PK
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_boms' AND column_name='product_sku') THEN
     UPDATE product_boms SET id = product_sku WHERE id IS NULL AND product_sku IS NOT NULL;
@@ -303,7 +307,6 @@ CREATE INDEX IF NOT EXISTS idx_product_boms_kind ON product_boms (kind);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 9.  TABELA: weighing_batches
---     ATENÇÃO: colunas são created_by_id / created_by_name (não user_id / created_by)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS weighing_batches (
     id                UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -317,20 +320,13 @@ CREATE TABLE IF NOT EXISTS weighing_batches (
     created_at        TIMESTAMPTZ  DEFAULT NOW()
 );
 
--- Migração: renomear colunas antigas se existirem
 DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='weighing_batches' AND column_name='user_id')
        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='weighing_batches' AND column_name='created_by_id')
-    THEN
-        ALTER TABLE weighing_batches RENAME COLUMN user_id TO created_by_id;
-        RAISE NOTICE 'weighing_batches: user_id renomeada para created_by_id';
-    END IF;
+    THEN ALTER TABLE weighing_batches RENAME COLUMN user_id TO created_by_id; END IF;
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='weighing_batches' AND column_name='created_by')
        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='weighing_batches' AND column_name='created_by_name')
-    THEN
-        ALTER TABLE weighing_batches RENAME COLUMN created_by TO created_by_name;
-        RAISE NOTICE 'weighing_batches: created_by renomeada para created_by_name';
-    END IF;
+    THEN ALTER TABLE weighing_batches RENAME COLUMN created_by TO created_by_name; END IF;
 END $$;
 
 ALTER TABLE weighing_batches
@@ -378,7 +374,6 @@ CREATE INDEX IF NOT EXISTS idx_prod_plans_created_at ON production_plans (create
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 12. TABELA: production_plan_items
---     Colunas alinhadas com sql.ts: current_stock, avg_daily_consumption
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS production_plan_items (
     id                     UUID  PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -391,7 +386,6 @@ CREATE TABLE IF NOT EXISTS production_plan_items (
     required_production    REAL
 );
 
--- Migração: adicionar colunas novas se faltam (vindo do schema anterior)
 ALTER TABLE production_plan_items
     ADD COLUMN IF NOT EXISTS current_stock         REAL,
     ADD COLUMN IF NOT EXISTS avg_daily_consumption REAL;
@@ -400,7 +394,6 @@ CREATE INDEX IF NOT EXISTS idx_plan_items_plan_id ON production_plan_items (plan
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 13. TABELA: shopping_list_items
---     PK é stock_item_code (sem coluna id separada)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS shopping_list_items (
     stock_item_code TEXT         PRIMARY KEY,
@@ -467,7 +460,6 @@ CREATE INDEX IF NOT EXISTS idx_returns_logged_at ON returns (logged_at DESC);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 17. TABELA: admin_notices
---     id é TEXT (não UUID)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS admin_notices (
     id         TEXT         PRIMARY KEY,
@@ -496,7 +488,7 @@ ALTER TABLE stock_pack_groups ADD COLUMN IF NOT EXISTS barcode TEXT;
 CREATE INDEX IF NOT EXISTS idx_pack_groups_name ON stock_pack_groups (name);
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 19. ROW LEVEL SECURITY (todas as tabelas abertas via anon key)
+-- 19. ROW LEVEL SECURITY (acesso aberto via anon key)
 -- ─────────────────────────────────────────────────────────────────────────────
 DO $$ DECLARE
     tbl TEXT;
@@ -521,15 +513,14 @@ SELECT
     o.canal,
     o.status                              AS status_pedido,
     COALESCE(sl_link.master_product_sku, o.sku) AS sku_mestre,
-    COALESCE(si.name, pb.name, o.sku)              AS nome_produto,
+    COALESCE(si.name, pb.name, o.sku)     AS nome_produto,
     o.qty_final                           AS quantidade_final,
     COALESCE(sc.user_name, '')            AS bipado_por,
     COALESCE(sc.user_id, '')              AS bipado_por_id,
     sc.scanned_at                         AS data_bipagem,
     CASE
         WHEN o.status::text = 'BIPADO' AND sc.scanned_at IS NOT NULL
-             AND o.data IS NOT NULL
-             AND o.data ~ '^\d{4}-\d{2}-\d{2}'
+             AND o.data IS NOT NULL AND o.data ~ '^\d{4}-\d{2}-\d{2}'
              AND TO_DATE(o.data, 'YYYY-MM-DD') < DATE(sc.scanned_at)
         THEN 'Bipado com Atraso'
         WHEN o.status::text = 'BIPADO' THEN 'Bipado no Prazo'
@@ -593,7 +584,7 @@ END $$;
 -- 22. STORED PROCEDURES (RPCs)
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- ── 22.1  login (parâmetros: login_input, password_input) ────────────────────
+-- ── 22.1  login ──────────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION login(login_input TEXT, password_input TEXT)
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
@@ -655,7 +646,7 @@ END;
 $$;
 
 -- ── 22.3  adjust_stock_quantity ───────────────────────────────────────────────
---     Funciona com stock_items (INSUMO) E product_boms (PRODUTO/PROCESSADO)
+--     Busca em stock_items E product_boms
 CREATE OR REPLACE FUNCTION adjust_stock_quantity(
     item_code       TEXT,
     quantity_delta   REAL,
@@ -667,18 +658,15 @@ RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
     v_item_name TEXT;
-    v_found_in  TEXT;
 BEGIN
     -- Primeiro tenta em stock_items
     SELECT name INTO v_item_name FROM stock_items WHERE code = item_code;
     IF v_item_name IS NOT NULL THEN
-        v_found_in := 'stock_items';
         UPDATE stock_items SET current_qty = current_qty + quantity_delta, updated_at = NOW() WHERE code = item_code;
     ELSE
-        -- Senão tenta em product_boms
+        -- Depois tenta em product_boms
         SELECT name INTO v_item_name FROM product_boms WHERE code = item_code;
         IF v_item_name IS NOT NULL THEN
-            v_found_in := 'product_boms';
             UPDATE product_boms SET current_qty = current_qty + quantity_delta, updated_at = NOW() WHERE code = item_code;
         ELSE
             RAISE EXCEPTION 'Item not found in stock_items or product_boms: %', item_code;
@@ -705,10 +693,8 @@ DECLARE
     insumo_code TEXT;
     qty_needed REAL;
 BEGIN
-    -- Adicionar estoque ao produto
     PERFORM adjust_stock_quantity(item_code, quantity_to_produce, 'PRODUCAO_MANUAL', ref_text, user_name);
 
-    -- Deduzir insumos da BOM
     SELECT items INTO bom_data FROM product_boms WHERE code = item_code;
     IF bom_data IS NOT NULL THEN
         FOR bom_item IN SELECT * FROM jsonb_array_elements(bom_data)
@@ -762,28 +748,13 @@ DECLARE
     v_source_name TEXT;
 BEGIN
     SELECT name INTO v_source_name FROM stock_items WHERE code = source_code;
-
-    -- Deduzir fonte
     PERFORM adjust_stock_quantity(source_code, -source_qty, 'MOAGEM', 'Consumo Moagem', op_user_name);
-
-    -- Criar processado se não existir
     IF NOT EXISTS (SELECT 1 FROM stock_items WHERE code = output_code) THEN
-        INSERT INTO stock_items (code, name, kind, unit, current_qty)
-        VALUES (output_code, output_name, 'INSUMO', 'kg', 0);
+        INSERT INTO stock_items (code, name, kind, unit, current_qty) VALUES (output_code, output_name, 'INSUMO', 'kg', 0);
     END IF;
-
-    -- Adicionar saída
     PERFORM adjust_stock_quantity(output_code, output_qty, 'MOAGEM', 'Produção Moagem', op_user_name);
-
-    -- Registrar lote
-    INSERT INTO grinding_batches
-        (source_insumo_code, source_insumo_name, source_qty_used,
-         output_insumo_code, output_insumo_name, output_qty_produced,
-         mode, user_id, user_name)
-    VALUES
-        (source_code, COALESCE(v_source_name, source_code), source_qty,
-         output_code, output_name, output_qty,
-         op_mode, op_user_id, op_user_name);
+    INSERT INTO grinding_batches (source_insumo_code, source_insumo_name, source_qty_used, output_insumo_code, output_insumo_name, output_qty_produced, mode, user_id, user_name)
+    VALUES (source_code, COALESCE(v_source_name, source_code), source_qty, output_code, output_name, output_qty, op_mode, op_user_id, op_user_name);
 END;
 $$;
 
@@ -802,19 +773,14 @@ BEGIN
     SELECT * INTO v_scan FROM scan_logs WHERE id = scan_id_to_cancel;
     IF NOT FOUND THEN RETURN; END IF;
 
-    -- Encontrar o pedido associado
     SELECT * INTO v_order FROM orders
     WHERE (order_id = v_scan.display_key OR tracking = v_scan.display_key)
       AND status::text = 'BIPADO';
 
     IF v_order IS NOT NULL THEN
-        -- Reverter status
         UPDATE orders SET status = 'NORMAL' WHERE id = v_order.id;
-
-        -- Reverter estoque (+1)
         SELECT master_product_sku INTO v_master FROM sku_links WHERE imported_sku = v_order.sku;
         IF v_master IS NULL THEN v_master := v_order.sku; END IF;
-
         PERFORM adjust_stock_quantity(v_master, 1, 'AJUSTE_MANUAL', 'Cancelamento Bipagem ' || v_scan.display_key, user_name);
     END IF;
 
@@ -822,7 +788,7 @@ BEGIN
 END;
 $$;
 
--- ── 22.8  delete_orders (text[], não uuid[]) ─────────────────────────────────
+-- ── 22.8  delete_orders ──────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION delete_orders(order_ids TEXT[])
 RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER AS $$
@@ -879,7 +845,7 @@ BEGIN
 END;
 $$;
 
--- ── 22.11 sync_database (placeholder) ─────────────────────────────────────────
+-- ── 22.11 sync_database ──────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION sync_database()
 RETURNS TEXT
 LANGUAGE plpgsql SECURITY DEFINER AS $$
@@ -905,16 +871,52 @@ BEGIN
     DELETE FROM public.import_history;
     DELETE FROM public.admin_notices;
     DELETE FROM public.etiquetas_historico;
-
     UPDATE public.stock_items SET current_qty = 0;
     UPDATE public.product_boms SET current_qty = 0, reserved_qty = 0, ready_qty = 0;
-
     RETURN 'Banco de dados limpo com sucesso.';
 END;
 $$;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 23. VERIFICAÇÃO FINAL
+-- 23. DADOS INICIAIS
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Usuário admin (login: admin / supersuecocollor)
+INSERT INTO users (name, password, role, setor)
+VALUES ('admin', 'supersuecocollor', 'SUPER_ADMIN', ARRAY['ADMINISTRATIVO'])
+ON CONFLICT DO NOTHING;
+
+-- Insumos de exemplo
+INSERT INTO stock_items (code, name, kind, unit, category, current_qty) VALUES
+    ('MAT-PAPEL-001', 'Papel A4 80g (resma)', 'INSUMO', 'resmas', 'Papéis', 100),
+    ('MAT-TINTA-001', 'Tinta Preta (litro)',  'INSUMO', 'litros', 'Tintas', 50),
+    ('MAT-COLA-001',  'Cola PVA (kg)',         'INSUMO', 'kg',     'Adesivos', 25),
+    ('MAT-LAM-001',   'Laminado Brilho (m2)',  'INSUMO', 'm2',     'Laminados', 200)
+ON CONFLICT (code) DO NOTHING;
+
+-- Produtos finais de exemplo
+INSERT INTO product_boms (id, code, name, kind, unit, category, current_qty, reserved_qty, ready_qty, sell_price, cost_price, bom_composition, items) VALUES
+    ('prod_001', 'PROD-CARTAZ-001', 'Cartaz A3 Colorido', 'PRODUTO', 'unidades', 'Impressos', 50, 10, 40, 25.50, 12.00,
+     '{"items":[{"insumo_code":"MAT-PAPEL-001","insumo_name":"Papel A4 80g (resma)","quantity":0.5,"unit":"resmas"},{"insumo_code":"MAT-TINTA-001","insumo_name":"Tinta Preta (litro)","quantity":0.1,"unit":"litros"},{"insumo_code":"MAT-LAM-001","insumo_name":"Laminado Brilho (m2)","quantity":0.1,"unit":"m2"}]}'::jsonb,
+     '[{"insumo_code":"MAT-PAPEL-001","insumo_name":"Papel A4 80g (resma)","quantity":0.5,"unit":"resmas"},{"insumo_code":"MAT-TINTA-001","insumo_name":"Tinta Preta (litro)","quantity":0.1,"unit":"litros"},{"insumo_code":"MAT-LAM-001","insumo_name":"Laminado Brilho (m2)","quantity":0.1,"unit":"m2"}]'::jsonb),
+    ('prod_002', 'PROD-FOLDER-001', 'Folder A4 Dobrado', 'PRODUTO', 'unidades', 'Impressos', 100, 20, 80, 15.75, 8.50,
+     '{"items":[{"insumo_code":"MAT-PAPEL-001","insumo_name":"Papel A4 80g (resma)","quantity":0.3,"unit":"resmas"},{"insumo_code":"MAT-COLA-001","insumo_name":"Cola PVA (kg)","quantity":0.05,"unit":"kg"}]}'::jsonb,
+     '[{"insumo_code":"MAT-PAPEL-001","insumo_name":"Papel A4 80g (resma)","quantity":0.3,"unit":"resmas"},{"insumo_code":"MAT-COLA-001","insumo_name":"Cola PVA (kg)","quantity":0.05,"unit":"kg"}]'::jsonb),
+    ('prod_003', 'PROD-BANNER-001', 'Banner Lona 2x3m', 'PRODUTO', 'unidades', 'Outdoors', 10, 2, 8, 85.00, 40.00,
+     '{"items":[{"insumo_code":"MAT-TINTA-001","insumo_name":"Tinta Preta (litro)","quantity":0.5,"unit":"litros"},{"insumo_code":"MAT-LAM-001","insumo_name":"Laminado Brilho (m2)","quantity":6.0,"unit":"m2"}]}'::jsonb,
+     '[{"insumo_code":"MAT-TINTA-001","insumo_name":"Tinta Preta (litro)","quantity":0.5,"unit":"litros"},{"insumo_code":"MAT-LAM-001","insumo_name":"Laminado Brilho (m2)","quantity":6.0,"unit":"m2"}]'::jsonb)
+ON CONFLICT (id) DO NOTHING;
+
+-- SKU Links de marketplace (exemplo)
+INSERT INTO sku_links (imported_sku, master_product_sku) VALUES
+    ('ML-12345678901', 'PROD-CARTAZ-001'),
+    ('ML-87654321098', 'PROD-FOLDER-001'),
+    ('ML-11111111111', 'PROD-BANNER-001'),
+    ('ML-99999999999', 'PROD-CARTAZ-001')
+ON CONFLICT (imported_sku) DO NOTHING;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 24. VERIFICAÇÃO FINAL
 -- ─────────────────────────────────────────────────────────────────────────────
 SELECT
     table_name,
@@ -932,6 +934,12 @@ WHERE table_schema = 'public'
   )
 ORDER BY table_name;
 
+SELECT
+    (SELECT COUNT(*) FROM users)       AS "Usuarios",
+    (SELECT COUNT(*) FROM stock_items)  AS "Insumos",
+    (SELECT COUNT(*) FROM product_boms) AS "Produtos",
+    (SELECT COUNT(*) FROM sku_links)    AS "SKU_Links";
+
 -- ============================================================================
--- FIM DA MIGRAÇÃO v4.0
+-- FIM — ERP v5.0 (2025-06-04)
 -- ============================================================================
