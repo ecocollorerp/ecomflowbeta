@@ -1,6 +1,6 @@
 -- ============================================================================
 -- ERP FÁBRICA PRO — SETUP LIMPO SUPABASE
--- Versão: 5.1 (2026-03-05)
+-- Versão: 5.2 (2026-03-05)
 --
 -- INSTRUÇÕES:
 --   1. Supabase → SQL Editor → New Query
@@ -17,6 +17,10 @@ DROP VIEW  IF EXISTS vw_dados_analiticos CASCADE;
 
 DROP TABLE IF EXISTS production_plan_items CASCADE;
 DROP TABLE IF EXISTS production_plans      CASCADE;
+DROP TABLE IF EXISTS sync_log              CASCADE;
+DROP TABLE IF EXISTS sync_config           CASCADE;
+DROP TABLE IF EXISTS order_items           CASCADE;
+DROP TABLE IF EXISTS estoque_pronto        CASCADE;
 DROP TABLE IF EXISTS grinding_batches      CASCADE;
 DROP TABLE IF EXISTS weighing_batches      CASCADE;
 DROP TABLE IF EXISTS stock_movements       CASCADE;
@@ -355,6 +359,67 @@ CREATE TABLE stock_pack_groups (
 );
 CREATE INDEX idx_pack_groups_name ON stock_pack_groups (name);
 
+-- 19. estoque_pronto (pacotes prontos para expedição)
+CREATE TABLE estoque_pronto (
+    id                    UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    batch_id              TEXT,
+    lote_numero           TEXT,
+    stock_item_id         TEXT,
+    quantidade_total      REAL         DEFAULT 0,
+    quantidade_disponivel REAL         DEFAULT 0,
+    localizacao           TEXT,
+    status                TEXT         DEFAULT 'PRONTO',
+    observacoes           TEXT,
+    produtos              JSONB        DEFAULT '[]'::jsonb,
+    created_by            TEXT,
+    created_at            TIMESTAMPTZ  DEFAULT NOW(),
+    updated_at            TIMESTAMPTZ  DEFAULT NOW()
+);
+CREATE INDEX idx_estoque_pronto_status ON estoque_pronto (status);
+CREATE INDEX idx_estoque_pronto_created_at ON estoque_pronto (created_at DESC);
+
+-- 20. order_items (itens dos pedidos — Bling / ML / Shopee)
+CREATE TABLE order_items (
+    id                UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id          TEXT         NOT NULL,
+    bling_id          TEXT,
+    bling_item_id     TEXT,
+    item_id           TEXT,
+    canal             TEXT,
+    sku               TEXT         NOT NULL DEFAULT '',
+    descricao         TEXT,
+    unidade           TEXT         DEFAULT 'UN',
+    quantidade        REAL         DEFAULT 1,
+    valor_unitario    REAL         DEFAULT 0,
+    subtotal          REAL         DEFAULT 0,
+    status            TEXT         DEFAULT 'pendente',
+    sincronizado_em   TIMESTAMPTZ,
+    deletado_em       TIMESTAMPTZ,
+    criado_em         TIMESTAMPTZ  DEFAULT NOW()
+);
+CREATE UNIQUE INDEX idx_order_items_bling ON order_items (bling_item_id, order_id) WHERE bling_item_id IS NOT NULL;
+CREATE UNIQUE INDEX idx_order_items_item  ON order_items (item_id, order_id)       WHERE item_id IS NOT NULL;
+CREATE INDEX idx_order_items_order_id ON order_items (order_id);
+CREATE INDEX idx_order_items_sku      ON order_items (sku);
+
+-- 21. sync_log (registro de sincronizações)
+CREATE TABLE sync_log (
+    id         UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tipo       TEXT,
+    bling_id   TEXT,
+    sucesso    BOOLEAN      DEFAULT FALSE,
+    mensagem   TEXT,
+    created_at TIMESTAMPTZ  DEFAULT NOW()
+);
+CREATE INDEX idx_sync_log_tipo       ON sync_log (tipo);
+CREATE INDEX idx_sync_log_created_at ON sync_log (created_at DESC);
+
+-- 22. sync_config (configuração de sincronizações)
+CREATE TABLE sync_config (
+    chave TEXT PRIMARY KEY,
+    valor TEXT
+);
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- PASSO 4: ROW LEVEL SECURITY (acesso aberto via anon key)
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -454,7 +519,7 @@ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE ts jsonb; ty jsonb; fn jsonb; co jsonb;
 BEGIN
     EXECUTE 'SELECT jsonb_agg(jsonb_build_object(''name'',t,''exists'',EXISTS(SELECT FROM pg_tables WHERE schemaname=''public'' AND tablename=t))) FROM unnest($1::text[]) t'
-        USING ARRAY['stock_items','orders','stock_movements','users','scan_logs','product_boms','sku_links','weighing_batches','production_plans','shopping_list_items','stock_pack_groups'] INTO ts;
+        USING ARRAY['stock_items','orders','stock_movements','users','scan_logs','product_boms','sku_links','weighing_batches','production_plans','shopping_list_items','stock_pack_groups','estoque_pronto','order_items','sync_log','sync_config'] INTO ts;
     EXECUTE 'SELECT jsonb_agg(jsonb_build_object(''name'',t,''exists'',EXISTS(SELECT FROM pg_type WHERE typname=t))) FROM unnest($1::text[]) t'
         USING ARRAY['canal_type','order_status_value'] INTO ty;
     EXECUTE 'SELECT jsonb_agg(jsonb_build_object(''name'',t,''exists'',EXISTS(SELECT FROM pg_proc WHERE proname=t))) FROM unnest($1::text[]) t'
@@ -462,7 +527,7 @@ BEGIN
     SELECT jsonb_agg(jsonb_build_object('table',t,'column',c,'exists',
         EXISTS(SELECT FROM information_schema.columns WHERE table_name=t AND column_name=c)))
     INTO co FROM (VALUES('stock_items','barcode'),('stock_items','substitute_product_code')) AS v(t,c);
-    RETURN jsonb_build_object('tables_status',ts,'types_status',ty,'functions_status',fn,'columns_status',co,'db_version','5.1');
+    RETURN jsonb_build_object('tables_status',ts,'types_status',ty,'functions_status',fn,'columns_status',co,'db_version','5.2');
 END; $$;
 
 -- 7.3 adjust_stock_quantity (busca em stock_items E product_boms)
@@ -603,6 +668,9 @@ BEGIN
     DELETE FROM public.import_history;
     DELETE FROM public.admin_notices;
     DELETE FROM public.etiquetas_historico;
+    DELETE FROM public.order_items;
+    DELETE FROM public.sync_log;
+    DELETE FROM public.estoque_pronto;
     UPDATE public.stock_items SET current_qty = 0;
     UPDATE public.product_boms SET current_qty = 0, reserved_qty = 0, ready_qty = 0;
     RETURN 'Banco de dados limpo com sucesso.';
@@ -632,5 +700,5 @@ ORDER BY table_name;
 SELECT 'SETUP COMPLETO! Login: admin / supersuecocollor' AS resultado;
 
 -- ============================================================================
--- FIM — ERP v5.1 (2026-03-05)
+-- FIM — ERP v5.2 (2026-03-05)
 -- ============================================================================
