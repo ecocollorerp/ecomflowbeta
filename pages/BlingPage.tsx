@@ -40,6 +40,7 @@ interface BlingPageProps {
     onLoadZpl: (zpl: string, includeDanfe?: boolean) => void;
     stockItems?: StockItem[];
     skuLinks?: SkuLink[];
+    allOrders?: OrderItem[];
 }
 
 type EnrichedBlingOrder = OrderItem & { invoice?: BlingInvoice };
@@ -674,7 +675,7 @@ const BlingConfigModal: React.FC<{
     );
 };
 
-const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, onLaunchSuccess, addToast, setCurrentPage, onLoadZpl, stockItems: erpStockItems = [], skuLinks: erpSkuLinks = [] }) => {
+const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, onLaunchSuccess, addToast, setCurrentPage, onLoadZpl, stockItems: erpStockItems = [], skuLinks: erpSkuLinks = [], allOrders: erpAllOrders = [] }) => {
     const integrations = generalSettings.integrations;
     const settings = integrations?.bling;
     
@@ -1580,7 +1581,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 {canImportPedidos && <button onClick={() => setActiveTab('sincronizacao')} className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'sincronizacao' ? 'border-blue-600 text-blue-700 bg-blue-50/50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}><Download size={16}/> Sincronização</button>}
                 {scopeSettings.estoque && <button onClick={() => setActiveTab('estoque')} className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'estoque' ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}><TrendingDown size={16}/> Estoque</button>}
                 {canViewProducts && <button onClick={() => setActiveTab('catalogo')} className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'catalogo' ? 'border-purple-600 text-purple-700 bg-purple-50/50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}><Package size={16}/> Catálogo</button>}
-                <button onClick={() => setActiveTab('nfe')} className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'nfe' ? 'border-blue-600 text-blue-700 bg-blue-50/50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}><FileText size={16}/> NFe & SEFAZ</button>
+                <button onClick={() => setActiveTab('nfe')} className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'nfe' ? 'border-purple-600 text-purple-700 bg-purple-50/50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}><FileText size={16}/> Pedidos & Docs</button>
             </div>
 
             {/* Content: Sincronização */}
@@ -2758,7 +2759,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
 
             {/* Content: NFe & SEFAZ */}
             {activeTab === 'nfe' && (
-                <NFeManager isAuthenticated={true} blingToken={settings?.apiKey} />
+                <NFeManager isAuthenticated={true} blingToken={settings?.apiKey} orders={erpAllOrders as any} addToast={addToast} />
             )}
 
             <BlingConfigModal 

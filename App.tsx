@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef, startTransition } from 'react';
 import Sidebar from './components/Sidebar';
 import GlobalHeader from './components/GlobalHeader'; 
 import { ImporterPage } from './pages/ImporterPage';
@@ -780,17 +780,23 @@ const App: React.FC = () => {
                         break;
                     case 'start':
                         if (result.warnings.length > 0) {
-                            setEtiquetasState(prev => ({ ...prev, warnings: result.warnings }));
+                            startTransition(() => {
+                                setEtiquetasState(prev => ({ ...prev, warnings: result.warnings }));
+                            });
                         }
                         if (result.hasMlWithoutDanfe) {
-                            setEtiquetasState(prev => ({ ...prev, includeDanfe: false }));
+                            startTransition(() => {
+                                setEtiquetasState(prev => ({ ...prev, includeDanfe: false }));
+                            });
                         }
-                        setEtiquetasState(prev => ({
-                            ...prev,
-                            zplPages: result.zplPages,
-                            extractedData: result.extractedData,
-                            previews: new Array(result.zplPages.length).fill('')
-                        }));
+                        startTransition(() => {
+                            setEtiquetasState(prev => ({
+                                ...prev,
+                                zplPages: result.zplPages,
+                                extractedData: result.extractedData,
+                                previews: new Array(result.zplPages.length).fill('')
+                            }));
+                        });
                         
                         const newPrintedIndices = new Set<number>();
                         if (result.printedStatus) {
@@ -806,13 +812,20 @@ const App: React.FC = () => {
                         if (result.preview === 'ERROR') {
                             errorCount++;
                         }
-                        setEtiquetasState(prev => {
-                            const newPreviews = [...prev.previews];
-                            newPreviews[result.index] = result.preview;
-                            const progress = Math.round(((result.index + 1) / prev.zplPages.length) * 100);
-                            setLabelProcessingProgress(progress);
-                            return { ...prev, previews: newPreviews };
+                        // Usar startTransition para não bloquear inputs do usuário
+                        // (ex: digitando no modal de vincular/criar produto)
+                        startTransition(() => {
+                            setEtiquetasState(prev => {
+                                const newPreviews = [...prev.previews];
+                                newPreviews[result.index] = result.preview;
+                                return { ...prev, previews: newPreviews };
+                            });
                         });
+                        // Progress update fica fora, para feedback imediato
+                        {
+                            const totalPages = etiquetasState.zplInput.split('^XA').length - 1 || 1;
+                            setLabelProcessingProgress(Math.round(((result.index + 1) / Math.max(totalPages, 1)) * 100));
+                        }
                         break;
                     case 'done':
                         setLabelProgressMessage('Concluído');
@@ -1831,7 +1844,7 @@ const App: React.FC = () => {
         case 'relatorios': return <RelatoriosPage stockItems={stockItems} stockMovements={stockMovements} orders={allOrders} weighingBatches={weighingBatches} scanHistory={scanHistory} produtosCombinados={produtosCombinados} users={users} returns={returns} generalSettings={generalSettings} grindingBatches={grindingBatches} />
         case 'financeiro': return <FinancePage allOrders={allOrders} stockItems={stockItems} skuLinks={skuLinks} produtosCombinados={produtosCombinados} generalSettings={generalSettings} onDeleteOrders={handleDeleteOrders} onLaunchOrders={handleLaunchSuccess} onNavigateToSettings={() => { _setCurrentPage('configuracoes-gerais'); localStorage.setItem('erp_current_page', 'configuracoes-gerais'); }} />
         case 'etiquetas': return <EtiquetasPage settings={etiquetasSettings} onSettingsSave={handleSaveEtiquetasSettings} generalSettings={generalSettings} uiSettings={uiSettings} onSetUiSettings={setUiSettings as any} stockItems={stockItems} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} onAddNewItem={handleAddNewItem} etiquetasState={etiquetasState} setEtiquetasState={setEtiquetasState} currentUser={currentUser!} allOrders={allOrders} etiquetasHistory={etiquetasHistory} onSaveHistory={handleSaveEtiquetaHistory} onGetHistoryDetails={handleGetEtiquetaHistoryDetails} onProcessZpl={handleProcessZpl} isProcessing={isProcessingLabels} progressMessage={labelProgressMessage} />
-        case 'bling': return <BlingPage generalSettings={generalSettings} onLaunchSuccess={handleLaunchSuccess} addToast={addToast} setCurrentPage={setCurrentPage} onLoadZpl={handleLoadZplFromBling} onSaveSettings={handleSaveGeneralSettings} stockItems={stockItems} skuLinks={skuLinks} />;
+        case 'bling': return <BlingPage generalSettings={generalSettings} onLaunchSuccess={handleLaunchSuccess} addToast={addToast} setCurrentPage={setCurrentPage} onLoadZpl={handleLoadZplFromBling} onSaveSettings={handleSaveGeneralSettings} stockItems={stockItems} skuLinks={skuLinks} allOrders={allOrders} />;
         case 'integracoes': return <IntegracoesPage generalSettings={generalSettings} onSaveSettings={handleSaveGeneralSettings} onLaunchSuccess={handleLaunchSuccess} addToast={addToast} setCurrentPage={setCurrentPage} />;
         case 'passo-a-passo': return <PassoAPassoPage />
         case 'ajuda': return <AjudaPage />

@@ -1,683 +1,567 @@
-import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import {
   FileText,
-  Upload,
-  Send,
   CheckCircle,
   AlertCircle,
   Loader,
   RotateCcw,
-  Lock,
-  Eye,
-  EyeOff,
   Filter,
-  Plus,
   Download,
+  Calendar,
+  Package,
+  ShoppingBag,
+  Tag,
+  Search,
+  Printer,
+  ExternalLink,
+  Info,
 } from 'lucide-react';
+
+// Tipos
 
 interface NFeManagerProps {
   isAuthenticated: boolean;
   blingToken?: string;
   onStatusChange?: (status: string) => void;
+  orders?: OrderLocal[];
+  orderItems?: OrderItemLocal[];
+  origemConfig?: OrigemConfig;
+  onSaveOrigemConfig?: (config: OrigemConfig) => void;
+  addToast?: (msg: string, type: 'success' | 'error' | 'info') => void;
 }
 
-interface NFeItem {
+interface OrderLocal {
   id: string;
-  numero: string;
-  serie?: string;
-  emissao?: number;
-  cliente?: { nome?: string } | string;
-  valor?: number;
-  pedidoId?: string;
-  status: string;
-  chaveAcesso?: string;
-  erroDetalhes?: string;
+  orderId?: string;
+  order_id?: string;
+  tracking?: string;
+  sku?: string;
+  canal?: string;
+  data?: string;
+  status?: string;
+  customer_name?: string;
+  customer_cpf_cnpj?: string;
+  price_gross?: number;
+  price_total?: number;
+  price_net?: number;
+  qty_final?: number;
 }
 
-interface CertificadoItem {
+interface OrderItemLocal {
   id: string;
-  nome: string;
-  cnpj: string;
-  valido: boolean;
-  dataValidade: number;
-  tipo: string;
+  order_id: string;
+  sku: string;
+  descricao?: string;
+  quantidade?: number;
+  valor_unitario?: number;
+  subtotal?: number;
+  canal?: string;
+  status?: string;
 }
 
-interface NFeConfigState {
-  cnpj: string;
-  uf: string;
-  serie: number;
-  versaoPadrao: string;
-  ambientePadrao: 'HOMOLOGAÇÃO' | 'PRODUÇÃO';
-  estrategiaSefaz: 'bling' | 'direto';
+export interface OrigemConfig {
+  fontes: ('ML' | 'SHOPEE' | 'BLING' | 'SITE' | 'ALL')[];
+  autoSync: boolean;
 }
 
-const defaultConfig: NFeConfigState = {
-  cnpj: '',
-  uf: 'SP',
-  serie: 1,
-  versaoPadrao: '4.00',
-  ambientePadrao: 'HOMOLOGAÇÃO',
-  estrategiaSefaz: 'direto',
+const DEFAULT_ORIGEM: OrigemConfig = {
+  fontes: ['ML', 'SHOPEE', 'SITE'],
+  autoSync: true,
 };
 
-async function requestJson(url: string, options?: RequestInit) {
-  const response = await fetch(url, options);
-  const text = await response.text();
-  let data: any = {};
-
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = { message: text };
-    }
-  }
-
-  if (!response.ok) {
-    const errorMessage = data?.error || data?.message || `Erro HTTP ${response.status}`;
-    throw new Error(errorMessage);
-  }
-
-  return data;
-}
-
-const toBase64 = async (file: File): Promise<string> => {
-  const buffer = await file.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  return btoa(binary);
+const today = () => new Date().toISOString().split('T')[0];
+const thirtyDaysAgo = () => {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  return d.toISOString().split('T')[0];
 };
 
-export const NFeManager: React.FC<NFeManagerProps> = ({ isAuthenticated, blingToken, onStatusChange }) => {
-  const [activeTab, setActiveTab] = useState<'nfes' | 'certificados' | 'config'>('nfes');
-  const [nfes, setNfes] = useState<NFeItem[]>([]);
-  const [certificados, setCertificados] = useState<CertificadoItem[]>([]);
+const platformLabel: Record<string, string> = {
+  ML: 'Mercado Livre',
+  SHOPEE: 'Shopee',
+  SITE: 'Site Proprio',
+  BLING: 'Bling',
+  ALL: 'Todos',
+};
+
+const platformColor: Record<string, string> = {
+  ML: 'bg-yellow-100 text-yellow-800 border-yellow-200',
+  SHOPEE: 'bg-orange-100 text-orange-800 border-orange-200',
+  SITE: 'bg-blue-100 text-blue-800 border-blue-200',
+  BLING: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+};
+
+const statusColor: Record<string, string> = {
+  BIPADO: 'bg-green-100 text-green-800',
+  NORMAL: 'bg-blue-100 text-blue-800',
+  ERRO: 'bg-red-100 text-red-800',
+  DEVOLVIDO: 'bg-gray-200 text-gray-700',
+  SOLUCIONADO: 'bg-purple-100 text-purple-800',
+};
+
+export const NFeManager: React.FC<NFeManagerProps> = ({
+  isAuthenticated,
+  blingToken,
+  onStatusChange,
+  orders = [],
+  orderItems = [],
+  origemConfig,
+  onSaveOrigemConfig,
+  addToast,
+}) => {
+  const [activeTab, setActiveTab] = useState<'pedidos' | 'config' | 'emissao'>('pedidos');
+  const [dateFrom, setDateFrom] = useState(thirtyDaysAgo());
+  const [dateTo, setDateTo] = useState(today());
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterPlatform, setFilterPlatform] = useState<string>('ALL');
+  const [filterStatus, setFilterStatus] = useState<string>('ALL');
+  const [showProcessed, setShowProcessed] = useState(true);
+  const [config, setConfig] = useState<OrigemConfig>(origemConfig || DEFAULT_ORIGEM);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [showCertUpload, setShowCertUpload] = useState(false);
-  const [certPassword, setCertPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [filterStatus, setFilterStatus] = useState('TODOS');
-  const [selectedCertId, setSelectedCertId] = useState<string>('');
-  const [ambienteEnvio, setAmbienteEnvio] = useState<'PRODUÇÃO' | 'HOMOLOGAÇÃO'>('HOMOLOGAÇÃO');
-  const [nfeConfig, setNfeConfig] = useState<NFeConfigState>(defaultConfig);
 
-  const setMessage = (type: 'success' | 'error', message: string) => {
-    if (type === 'success') {
-      setSuccess(message);
-      setError(null);
-    } else {
-      setError(message);
-      setSuccess(null);
+  const itemsByOrderId = useMemo(() => {
+    const map = new Map<string, OrderItemLocal[]>();
+    for (const item of orderItems) {
+      const key = item.order_id;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(item);
     }
-    if (onStatusChange) onStatusChange(`${type}:${message}`);
+    return map;
+  }, [orderItems]);
+
+  const filteredOrders = useMemo(() => {
+    let result = orders;
+    if (filterPlatform !== 'ALL') {
+      result = result.filter(o => (o.canal || '').toUpperCase() === filterPlatform);
+    }
+    if (config.fontes.length > 0 && !config.fontes.includes('ALL')) {
+      result = result.filter(o => {
+        const canal = (o.canal || '').toUpperCase();
+        return config.fontes.includes(canal as any) || !canal;
+      });
+    }
+    if (filterStatus !== 'ALL') {
+      result = result.filter(o => (o.status || '') === filterStatus);
+    }
+    if (dateFrom) {
+      result = result.filter(o => {
+        const d = o.data || '';
+        return d >= dateFrom;
+      });
+    }
+    if (dateTo) {
+      result = result.filter(o => {
+        const d = o.data || '';
+        return d <= dateTo;
+      });
+    }
+    if (!showProcessed) {
+      result = result.filter(o => (o.status || '').toUpperCase() !== 'BIPADO');
+    }
+    if (searchTerm.trim()) {
+      const q = searchTerm.trim().toLowerCase();
+      result = result.filter(o =>
+        (o.orderId || o.order_id || '').toLowerCase().includes(q) ||
+        (o.customer_name || '').toLowerCase().includes(q) ||
+        (o.sku || '').toLowerCase().includes(q) ||
+        (o.tracking || '').toLowerCase().includes(q)
+      );
+    }
+    return [...result].sort((a, b) => (b.data || '').localeCompare(a.data || ''));
+  }, [orders, filterPlatform, filterStatus, dateFrom, dateTo, showProcessed, searchTerm, config.fontes]);
+
+  const platformStats = useMemo(() => {
+    const stats: Record<string, { total: number; bipados: number; pendentes: number; valor: number }> = {};
+    for (const o of filteredOrders) {
+      const canal = (o.canal || 'OUTRO').toUpperCase();
+      if (!stats[canal]) stats[canal] = { total: 0, bipados: 0, pendentes: 0, valor: 0 };
+      stats[canal].total++;
+      if ((o.status || '').toUpperCase() === 'BIPADO') stats[canal].bipados++;
+      else stats[canal].pendentes++;
+      stats[canal].valor += (o.price_net || o.price_total || 0);
+    }
+    return stats;
+  }, [filteredOrders]);
+
+  const handleSaveConfig = () => {
+    if (onSaveOrigemConfig) {
+      onSaveOrigemConfig(config);
+    }
+    if (addToast) addToast('Configuracao de origem salva!', 'success');
   };
 
-  const loadNFes = async () => {
-    try {
-      setLoading(true);
-      const query = filterStatus !== 'TODOS' ? `?status=${encodeURIComponent(filterStatus)}` : '';
-      const payload = await requestJson(`/api/nfe/listar${query}`);
-      const list = payload?.nfes?.nfes || [];
-      setNfes(list);
-    } catch (err: any) {
-      setMessage('error', err.message || 'Erro ao carregar NFes');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadCertificados = async () => {
-    try {
-      const payload = await requestJson('/api/nfe/certificados');
-      const list = payload?.certificados || [];
-      setCertificados(list);
-      if (!selectedCertId && list.length > 0) {
-        setSelectedCertId(list[0].id);
+  const handleToggleFonte = (fonte: 'ML' | 'SHOPEE' | 'BLING' | 'SITE' | 'ALL') => {
+    setConfig(prev => {
+      if (fonte === 'ALL') return { ...prev, fontes: ['ALL'] };
+      const fontes = prev.fontes.filter(f => f !== 'ALL');
+      if (fontes.includes(fonte)) {
+        return { ...prev, fontes: fontes.filter(f => f !== fonte) };
       }
-    } catch (err: any) {
-      setMessage('error', err.message || 'Erro ao carregar certificados');
-    }
+      return { ...prev, fontes: [...fontes, fonte] };
+    });
   };
-
-  const loadConfig = async () => {
-    try {
-      const payload = await requestJson('/api/nfe/configuracao');
-      const cfg = payload?.configuracao || {};
-      setNfeConfig((prev) => ({
-        ...prev,
-        cnpj: cfg.cnpj || prev.cnpj,
-        uf: cfg.uf || prev.uf,
-        serie: Number(cfg.serie || prev.serie || 1),
-        versaoPadrao: cfg.versaoPadrao || prev.versaoPadrao,
-        ambientePadrao: cfg.ambientePadrao || prev.ambientePadrao,
-        estrategiaSefaz: cfg.estrategiaSefaz || prev.estrategiaSefaz,
-      }));
-    } catch (err: any) {
-      setMessage('error', err.message || 'Erro ao carregar configuração NFe');
-    }
-  };
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    loadNFes();
-    loadCertificados();
-    loadConfig();
-  }, [isAuthenticated]);
-
-  const handleCertUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    if (!certPassword.trim()) {
-      setMessage('error', 'Digite a senha do certificado');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const arquivo = await toBase64(file);
-
-      await requestJson('/api/nfe/certificado/carregar', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-certificado-senha': certPassword,
-        },
-        body: JSON.stringify({ arquivo }),
-      });
-
-      await loadCertificados();
-      setCertPassword('');
-      setShowCertUpload(false);
-      setMessage('success', `✅ Certificado ${file.name} carregado com sucesso`);
-      setTimeout(() => setSuccess(null), 3000);
-    } catch (err: any) {
-      setMessage('error', err.message || 'Erro ao carregar certificado');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleGerarNFe = async () => {
-    const pedidoId = window.prompt('Digite o ID do pedido para gerar a NFe:');
-    if (!pedidoId) return;
-
-    try {
-      setLoading(true);
-      await requestJson('/api/nfe/gerar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pedidoId }),
-      });
-      await loadNFes();
-      setMessage('success', `✅ NFe gerada para o pedido ${pedidoId}`);
-      setTimeout(() => setSuccess(null), 3000);
-    } catch (err: any) {
-      setMessage('error', err.message || 'Erro ao gerar NFe');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAssinarNFe = async (nfeId: string) => {
-    const certificadoId = selectedCertId || certificados[0]?.id;
-    if (!certificadoId) {
-      setMessage('error', 'Carregue e selecione um certificado A1 primeiro');
-      return;
-    }
-
-    try {
-      setLoading(true);
-      await requestJson('/api/nfe/assinar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nfeId, certificadoId }),
-      });
-      await loadNFes();
-      setMessage('success', '✅ NFe assinada com sucesso');
-      setTimeout(() => setSuccess(null), 3000);
-    } catch (err: any) {
-      setMessage('error', err.message || 'Erro ao assinar NFe');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleEnviarSefaz = async (nfe: NFeItem) => {
-    try {
-      setLoading(true);
-      if (nfeConfig.estrategiaSefaz === 'bling') {
-        if (!blingToken) {
-          throw new Error('Token do Bling não encontrado para envio via Bling');
-        }
-
-        await requestJson('/api/nfe/enviar-bling', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${blingToken}`,
-          },
-          body: JSON.stringify({
-            nfeId: nfe.id,
-            pedidoId: nfe.pedidoId,
-            ambiente: ambienteEnvio,
-            via: 'bling',
-          }),
-        });
-      } else {
-        await requestJson('/api/nfe/enviar', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ nfeId: nfe.id, ambiente: ambienteEnvio }),
-        });
-      }
-
-      await loadNFes();
-      setMessage('success', `✅ NFe enviada para SEFAZ em ${ambienteEnvio}`);
-      setTimeout(() => setSuccess(null), 3000);
-    } catch (err: any) {
-      setMessage('error', err.message || 'Erro ao enviar NFe para SEFAZ');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDownloadXml = async (nfe: NFeItem) => {
-    try {
-      const response = await fetch(`/api/nfe/${nfe.id}/xml`);
-      if (!response.ok) throw new Error('Não foi possível baixar XML');
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `nfe-${nfe.numero}.xml`;
-      link.click();
-      URL.revokeObjectURL(url);
-    } catch (err: any) {
-      setMessage('error', err.message || 'Erro ao baixar XML');
-    }
-  };
-
-  const handleSaveConfig = async () => {
-    try {
-      setLoading(true);
-      await requestJson('/api/nfe/configuracao', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cnpj: nfeConfig.cnpj,
-          uf: nfeConfig.uf,
-          serie: nfeConfig.serie,
-          versaoPadrao: nfeConfig.versaoPadrao,
-          ambientePadrao: nfeConfig.ambientePadrao,
-          estrategiaSefaz: nfeConfig.estrategiaSefaz,
-        }),
-      });
-      setMessage('success', '✅ Configurações de NFe salvas');
-      setTimeout(() => setSuccess(null), 3000);
-    } catch (err: any) {
-      setMessage('error', err.message || 'Erro ao salvar configuração');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'AUTORIZADA': return 'bg-green-100 text-green-800';
-      case 'REJEITADA': return 'bg-red-100 text-red-800';
-      case 'ENVIADA': return 'bg-blue-100 text-blue-800';
-      case 'ASSINADA': return 'bg-yellow-100 text-yellow-800';
-      case 'CANCELADA': return 'bg-gray-300 text-gray-900';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const filteredNfes = useMemo(
-    () => filterStatus === 'TODOS' ? nfes : nfes.filter((nfe) => nfe.status === filterStatus),
-    [nfes, filterStatus]
-  );
-
-  if (!isAuthenticated) return null;
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-        <div className="flex items-center gap-3">
-          <FileText className="w-6 h-6 text-purple-600" />
-          <h2 className="text-xl font-bold text-gray-800">Gerenciador NFe / SEFAZ</h2>
-        </div>
-        <p className="text-sm text-gray-600 mt-2">Fluxo real: gerar, assinar com A1, enviar para SEFAZ e baixar XML.</p>
-      </div>
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex gap-3">
-          <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0" />
-          <div>
-            <p className="font-semibold text-red-800">Erro</p>
-            <p className="text-red-700 text-sm">{error}</p>
+      {/* Header */}
+      <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-200">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-purple-100 rounded-xl">
+              <FileText className="w-6 h-6 text-purple-600" />
+            </div>
+            <div>
+              <h2 className="text-xl font-black text-gray-900 uppercase">Pedidos & Documentos Fiscais</h2>
+              <p className="text-sm text-gray-500">Visualize pedidos, dados dos produtos, etiquetas de envio e DANFE simplificada</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="bg-blue-50 text-blue-700 px-3 py-1 rounded-full font-bold text-xs border border-blue-200">
+              {filteredOrders.length} pedido{filteredOrders.length !== 1 ? 's' : ''}
+            </span>
           </div>
         </div>
-      )}
+      </div>
 
-      {success && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex gap-3">
-          <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-          <p className="text-green-800 font-semibold text-sm">{success}</p>
-        </div>
-      )}
-
-      <div className="flex border-b overflow-x-auto bg-white rounded-lg shadow-sm">
+      {/* Tabs */}
+      <div className="flex border-b overflow-x-auto bg-white rounded-xl shadow-sm">
         {[
-          { id: 'nfes', label: '📋 Notas Fiscais' },
-          { id: 'certificados', label: '🔐 Certificados A1' },
-          { id: 'config', label: '⚙️ Configuração SEFAZ' },
-        ].map((tab) => (
+          { id: 'pedidos', label: 'Pedidos' },
+          { id: 'config', label: 'Configuracao' },
+          { id: 'emissao', label: 'Emissao NFe' },
+        ].map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
-            className={`flex items-center gap-2 px-6 py-4 text-xs font-bold uppercase tracking-widest border-b-2 transition-all ${
+            className={`+"flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all "+`+(
               activeTab === tab.id
-                ? 'border-purple-600 text-purple-700 bg-purple-50'
+                ? 'border-purple-600 text-purple-700 bg-purple-50/50'
                 : 'border-transparent text-gray-400 hover:text-gray-600'
-            }`}
+            )}
           >
             {tab.label}
           </button>
         ))}
       </div>
 
-      {activeTab === 'nfes' && (
-        <div className="space-y-6">
-          <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200 space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+      {/* Tab: Pedidos */}
+      {activeTab === 'pedidos' && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-2xl shadow-sm p-5 border border-gray-200">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 items-end">
               <div>
-                <label className="block text-xs font-bold text-gray-600 uppercase mb-2">Filtrar por Status</label>
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">De</label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={e => setDateFrom(e.target.value)}
+                  className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-purple-400"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Ate</label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={e => setDateTo(e.target.value)}
+                  className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-purple-400"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Plataforma</label>
+                <select
+                  value={filterPlatform}
+                  onChange={e => setFilterPlatform(e.target.value)}
+                  className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-purple-400"
+                >
+                  <option value="ALL">Todas</option>
+                  <option value="ML">Mercado Livre</option>
+                  <option value="SHOPEE">Shopee</option>
+                  <option value="SITE">Site</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Status</label>
                 <select
                   value={filterStatus}
-                  onChange={(e) => setFilterStatus(e.target.value)}
-                  className="w-full p-3 border border-gray-300 rounded-lg"
+                  onChange={e => setFilterStatus(e.target.value)}
+                  className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-purple-400"
                 >
-                  <option value="TODOS">Todas</option>
-                  <option value="RASCUNHO">Rascunho</option>
-                  <option value="ASSINADA">Assinada</option>
-                  <option value="AUTORIZADA">Autorizada</option>
-                  <option value="REJEITADA">Rejeitada</option>
-                  <option value="CANCELADA">Cancelada</option>
+                  <option value="ALL">Todos</option>
+                  <option value="NORMAL">Pendente</option>
+                  <option value="BIPADO">Bipado</option>
+                  <option value="ERRO">Erro</option>
+                  <option value="DEVOLVIDO">Devolvido</option>
                 </select>
               </div>
-
+              <div className="flex items-end gap-2">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-gray-600 p-2.5">
+                  <input
+                    type="checkbox"
+                    checked={showProcessed}
+                    onChange={e => setShowProcessed(e.target.checked)}
+                    className="h-4 w-4 rounded"
+                  />
+                  Mostrar processados
+                </label>
+              </div>
               <div>
-                <label className="block text-xs font-bold text-gray-600 uppercase mb-2">Ambiente SEFAZ</label>
-                <select
-                  value={ambienteEnvio}
-                  onChange={(e) => setAmbienteEnvio(e.target.value as any)}
-                  className="w-full p-3 border border-gray-300 rounded-lg"
-                >
-                  <option value="HOMOLOGAÇÃO">🧪 Homologação</option>
-                  <option value="PRODUÇÃO">🚀 Produção</option>
-                </select>
+                <div className="relative">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                    placeholder="Buscar..."
+                    className="w-full pl-9 pr-3 p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-purple-400"
+                  />
+                </div>
               </div>
-
-              <button
-                onClick={handleGerarNFe}
-                disabled={loading}
-                className="flex items-center justify-center gap-2 px-6 py-3 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 disabled:opacity-50"
-              >
-                <Plus className="w-4 h-4" /> Gerar NFe
-              </button>
-
-              <button
-                onClick={loadNFes}
-                disabled={loading}
-                className="flex items-center justify-center gap-2 px-6 py-3 bg-purple-600 text-white font-bold rounded-lg hover:bg-purple-700 disabled:opacity-50"
-              >
-                {loading ? <Loader className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
-                Atualizar
-              </button>
             </div>
           </div>
 
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+          {Object.keys(platformStats).length > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {Object.entries(platformStats).map(([canal, stats]) => (
+                <div
+                  key={canal}
+                  className={`+"rounded-xl p-4 border "+`+(platformColor[canal] || 'bg-gray-50 text-gray-800 border-gray-200')}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-black uppercase">{platformLabel[canal] || canal}</span>
+                    <span className="text-lg font-black">{stats.total}</span>
+                  </div>
+                  <div className="flex items-center gap-3 text-[10px] font-bold">
+                    <span className="text-green-600">{stats.bipados} ok</span>
+                    <span className="text-orange-600">{stats.pendentes} pend</span>
+                    <span>R$ {stats.valor.toFixed(2)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-gray-100 border-b border-gray-200">
+                <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
-                    <th className="p-4 text-left font-bold text-gray-700">Número</th>
-                    <th className="p-4 text-left font-bold text-gray-700">Pedido</th>
-                    <th className="p-4 text-left font-bold text-gray-700">Cliente</th>
-                    <th className="p-4 text-left font-bold text-gray-700">Valor</th>
-                    <th className="p-4 text-left font-bold text-gray-700">Status</th>
-                    <th className="p-4 text-left font-bold text-gray-700">Ações</th>
+                    <th className="p-3 text-left text-[10px] font-black text-gray-500 uppercase">Pedido</th>
+                    <th className="p-3 text-left text-[10px] font-black text-gray-500 uppercase">Data</th>
+                    <th className="p-3 text-left text-[10px] font-black text-gray-500 uppercase">Canal</th>
+                    <th className="p-3 text-left text-[10px] font-black text-gray-500 uppercase">Cliente</th>
+                    <th className="p-3 text-left text-[10px] font-black text-gray-500 uppercase">Produto / SKU</th>
+                    <th className="p-3 text-left text-[10px] font-black text-gray-500 uppercase">Qtd</th>
+                    <th className="p-3 text-left text-[10px] font-black text-gray-500 uppercase">Valor</th>
+                    <th className="p-3 text-left text-[10px] font-black text-gray-500 uppercase">Status</th>
+                    <th className="p-3 text-left text-[10px] font-black text-gray-500 uppercase">Rastreio</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {filteredNfes.length === 0 ? (
+                <tbody className="divide-y divide-gray-100">
+                  {filteredOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="p-8 text-center text-gray-500">Nenhuma NFe encontrada</td>
+                      <td colSpan={9} className="p-12 text-center text-gray-400">
+                        <Package size={32} className="mx-auto mb-2 opacity-40" />
+                        <p className="font-bold">Nenhum pedido encontrado</p>
+                        <p className="text-xs mt-1">Ajuste os filtros ou importe pedidos pelo Importador/Integracoes</p>
+                      </td>
                     </tr>
                   ) : (
-                    filteredNfes.map((nfe) => (
-                      <tr key={nfe.id} className="hover:bg-gray-50">
-                        <td className="p-4 font-mono font-bold text-gray-800">{nfe.numero}</td>
-                        <td className="p-4 text-gray-700">{nfe.pedidoId || '-'}</td>
-                        <td className="p-4 text-gray-700">{typeof nfe.cliente === 'string' ? nfe.cliente : nfe.cliente?.nome || '-'}</td>
-                        <td className="p-4 font-bold text-green-600">
-                          {(Number(nfe.valor || 0)).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                        </td>
-                        <td className="p-4">
-                          <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold ${getStatusColor(nfe.status)}`}>
-                            {nfe.status}
-                          </span>
-                          {nfe.erroDetalhes && <p className="text-xs text-red-600 mt-1">⚠️ {nfe.erroDetalhes}</p>}
-                        </td>
-                        <td className="p-4">
-                          <div className="flex gap-2 flex-wrap">
-                            {(nfe.status === 'RASCUNHO' || nfe.status === 'PENDENTE') && (
-                              <button
-                                onClick={() => handleAssinarNFe(nfe.id)}
-                                className="px-2 py-1 text-xs bg-yellow-100 text-yellow-800 rounded hover:bg-yellow-200 font-bold"
-                              >
-                                🔏 Assinar
-                              </button>
-                            )}
+                    filteredOrders.slice(0, 200).map(order => {
+                      const orderId = order.orderId || order.order_id || order.id;
+                      const items = itemsByOrderId.get(orderId) || [];
+                      const canal = (order.canal || '').toUpperCase();
+                      const st = (order.status || 'NORMAL').toUpperCase();
 
-                            {nfe.status === 'ASSINADA' && (
-                              <button
-                                onClick={() => handleEnviarSefaz(nfe)}
-                                className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded hover:bg-blue-200 font-bold"
-                              >
-                                <Send className="w-3 h-3 inline mr-1" />Enviar
-                              </button>
+                      return (
+                        <tr key={order.id} className="hover:bg-gray-50/80 transition-colors">
+                          <td className="p-3">
+                            <span className="font-mono font-bold text-gray-900 text-xs">{orderId}</span>
+                          </td>
+                          <td className="p-3 text-xs text-gray-600 whitespace-nowrap">
+                            {order.data ? new Date(order.data + 'T00:00:00').toLocaleDateString('pt-BR') : '\u2014'}
+                          </td>
+                          <td className="p-3">
+                            <span className={`+"inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase border "+`+(platformColor[canal] || 'bg-gray-100 text-gray-600 border-gray-200')}>
+                              {platformLabel[canal] || canal || '\u2014'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-xs text-gray-700 max-w-[150px] truncate" title={order.customer_name || ''}>
+                            {order.customer_name || '\u2014'}
+                          </td>
+                          <td className="p-3">
+                            {items.length > 0 ? (
+                              <div className="space-y-0.5">
+                                {items.slice(0, 3).map((item, i) => (
+                                  <div key={i} className="text-[10px]">
+                                    <span className="font-mono font-bold text-purple-700">{item.sku}</span>
+                                    {item.descricao && <span className="text-gray-500 ml-1 truncate max-w-[120px] inline-block align-bottom">{item.descricao}</span>}
+                                    <span className="text-gray-400 ml-1">x{item.quantidade || 1}</span>
+                                  </div>
+                                ))}
+                                {items.length > 3 && <span className="text-[9px] text-gray-400">+{items.length - 3} itens</span>}
+                              </div>
+                            ) : (
+                              <span className="font-mono text-xs text-gray-500">{order.sku || '\u2014'}</span>
                             )}
-
-                            {(nfe.status === 'REJEITADA' || nfe.status === 'ERRO_SEFAZ') && (
-                              <button
-                                onClick={() => handleEnviarSefaz(nfe)}
-                                className="px-2 py-1 text-xs bg-orange-100 text-orange-800 rounded hover:bg-orange-200 font-bold"
-                              >
-                                🔄 Reenviar
-                              </button>
-                            )}
-
-                            <button
-                              onClick={() => handleDownloadXml(nfe)}
-                              className="px-2 py-1 text-xs bg-gray-100 text-gray-800 rounded hover:bg-gray-200 font-bold"
-                            >
-                              <Download className="w-3 h-3 inline mr-1" />XML
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
+                          </td>
+                          <td className="p-3 text-xs font-bold text-gray-700 text-center">{order.qty_final || 1}</td>
+                          <td className="p-3 text-xs font-bold text-green-700">
+                            {(order.price_net || order.price_total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                          </td>
+                          <td className="p-3">
+                            <span className={`+"inline-block px-2 py-0.5 rounded-full text-[9px] font-black uppercase "+`+(statusColor[st] || 'bg-gray-100 text-gray-700')}>
+                              {st}
+                            </span>
+                          </td>
+                          <td className="p-3 text-[10px] font-mono text-gray-500 max-w-[120px] truncate" title={order.tracking || ''}>
+                            {order.tracking || '\u2014'}
+                          </td>
+                        </tr>
+                      );
+                    })
                   )}
                 </tbody>
               </table>
             </div>
+            {filteredOrders.length > 200 && (
+              <div className="p-3 text-center text-xs text-gray-400 border-t bg-gray-50">
+                Mostrando 200 de {filteredOrders.length} pedidos. Use os filtros para refinar.
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {activeTab === 'certificados' && (
+      {/* Tab: Configuracao */}
+      {activeTab === 'config' && (
         <div className="space-y-6">
-          {!showCertUpload ? (
-            <button
-              onClick={() => setShowCertUpload(true)}
-              className="w-full flex items-center justify-center gap-2 px-6 py-8 bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-dashed border-purple-300 rounded-lg hover:border-purple-500 transition"
-            >
-              <Upload className="w-5 h-5 text-purple-600" />
-              <span className="font-bold text-purple-800">Carregar Certificado Digital A1 (.pfx/.p12)</span>
-            </button>
-          ) : (
-            <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200 space-y-4">
-              <h3 className="font-bold text-gray-800">Carregar Certificado Digital A1</h3>
+          <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-200">
+            <h3 className="text-lg font-black text-gray-900 uppercase tracking-tight mb-4">Origem dos Pedidos</h3>
+            <p className="text-sm text-gray-500 mb-4">Selecione de onde os pedidos devem ser importados automaticamente.</p>
 
-              <div>
-                <label className="block text-xs font-bold text-gray-600 uppercase mb-2">Senha do Certificado</label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={certPassword}
-                    onChange={(e) => setCertPassword(e.target.value)}
-                    placeholder="Digite a senha do .pfx"
-                    className="w-full p-3 border border-gray-300 rounded-lg pr-10"
-                  />
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+              {(['ML', 'SHOPEE', 'SITE', 'ALL'] as const).map(fonte => {
+                const isActive = config.fontes.includes(fonte) || config.fontes.includes('ALL');
+                return (
                   <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    key={fonte}
+                    onClick={() => handleToggleFonte(fonte)}
+                    className={`+"p-4 rounded-xl border-2 text-center transition-all "+`+(
+                      isActive
+                        ? 'border-purple-500 bg-purple-50 text-purple-800'
+                        : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
+                    )}
                   >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    <span className="text-lg block mb-1">
+                      {fonte === 'ML' ? '\uD83D\uDFE1' : fonte === 'SHOPEE' ? '\uD83D\uDFE0' : fonte === 'SITE' ? '\uD83D\uDD35' : '\uD83C\uDF10'}
+                    </span>
+                    <span className="text-xs font-black uppercase">{platformLabel[fonte] || fonte}</span>
+                    {isActive && <CheckCircle size={14} className="text-purple-600 mx-auto mt-1" />}
                   </button>
-                </div>
-              </div>
+                );
+              })}
+            </div>
 
+            <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-200">
               <div>
-                <label className="block text-xs font-bold text-gray-600 uppercase mb-2">Arquivo Certificado</label>
-                <input
-                  type="file"
-                  accept=".pfx,.p12"
-                  onChange={handleCertUpload}
-                  className="w-full p-3 border border-gray-300 rounded-lg"
-                />
+                <p className="font-bold text-sm text-gray-800">Sincronizacao Automatica</p>
+                <p className="text-xs text-gray-500">Buscar pedidos automaticamente ao abrir a pagina</p>
               </div>
-
               <button
-                onClick={() => {
-                  setShowCertUpload(false);
-                  setCertPassword('');
-                }}
-                className="w-full px-4 py-2 bg-gray-200 text-gray-800 font-bold rounded-lg hover:bg-gray-300"
+                onClick={() => setConfig(prev => ({ ...prev, autoSync: !prev.autoSync }))}
+                className={`+"w-12 h-6 rounded-full transition-colors relative "+`+(
+                  config.autoSync ? 'bg-purple-500' : 'bg-gray-300'
+                )}
               >
-                Fechar Upload
+                <span className={`+"absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all "+`+(
+                  config.autoSync ? 'left-6' : 'left-0.5'
+                )} />
               </button>
             </div>
-          )}
 
-          <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200 space-y-4">
-            <h3 className="font-bold text-gray-800">Certificados Carregados</h3>
+            <button
+              onClick={handleSaveConfig}
+              className="w-full mt-4 px-6 py-3 bg-purple-600 text-white font-black uppercase text-xs tracking-widest rounded-xl hover:bg-purple-700 transition-all"
+            >
+              Salvar Configuracao
+            </button>
+          </div>
 
-            {certificados.length > 0 && (
-              <div>
-                <label className="block text-xs font-bold text-gray-600 uppercase mb-2">Certificado padrão para assinatura</label>
-                <select
-                  value={selectedCertId}
-                  onChange={(e) => setSelectedCertId(e.target.value)}
-                  className="w-full p-3 border border-gray-300 rounded-lg"
-                >
-                  {certificados.map((cert) => (
-                    <option key={cert.id} value={cert.id}>{cert.nome} - {cert.cnpj}</option>
-                  ))}
-                </select>
+          <div className="p-5 bg-blue-50 border border-blue-200 rounded-2xl">
+            <div className="flex items-start gap-3">
+              <Info size={18} className="text-blue-600 flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-blue-800">
+                <p className="font-bold mb-1">Como funciona a importacao de pedidos?</p>
+                <ul className="space-y-1 text-xs">
+                  <li>Mercado Livre / Shopee: Configure na aba Integracoes do menu lateral</li>
+                  <li>Bling: Configure na aba de Sincronizacao desta pagina</li>
+                  <li>Planilha: Use a aba Importacao para CSV/XLS</li>
+                  <li>Os pedidos importados aparecem aqui automaticamente com dados do produto</li>
+                </ul>
               </div>
-            )}
-
-            {certificados.length === 0 ? (
-              <p className="text-gray-600 text-sm">Nenhum certificado carregado</p>
-            ) : (
-              certificados.map((cert) => (
-                <div key={cert.id} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                  <p className="font-bold text-gray-800">{cert.nome}</p>
-                  <p className="text-sm text-gray-600">CNPJ: {cert.cnpj}</p>
-                  <p className="text-xs text-gray-500">Tipo: {cert.tipo} | Válido até: {new Date(cert.dataValidade).toLocaleDateString('pt-BR')}</p>
-                </div>
-              ))
-            )}
+            </div>
           </div>
         </div>
       )}
 
-      {activeTab === 'config' && (
-        <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200 space-y-6">
-          <h3 className="font-bold text-gray-800">Configurações de NFe / SEFAZ</h3>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-gray-600 uppercase mb-2">CNPJ da Empresa</label>
-              <input
-                type="text"
-                value={nfeConfig.cnpj}
-                onChange={(e) => setNfeConfig((prev) => ({ ...prev, cnpj: e.target.value }))}
-                className="w-full p-3 border border-gray-300 rounded-lg"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-600 uppercase mb-2">UF</label>
-              <select
-                value={nfeConfig.uf}
-                onChange={(e) => setNfeConfig((prev) => ({ ...prev, uf: e.target.value }))}
-                className="w-full p-3 border border-gray-300 rounded-lg"
-              >
-                <option value="SP">São Paulo (SP)</option>
-                <option value="RJ">Rio de Janeiro (RJ)</option>
-                <option value="MG">Minas Gerais (MG)</option>
-                <option value="RS">Rio Grande do Sul (RS)</option>
-                <option value="BA">Bahia (BA)</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-600 uppercase mb-2">Série de Emissão</label>
-              <input
-                type="number"
-                min={1}
-                value={nfeConfig.serie}
-                onChange={(e) => setNfeConfig((prev) => ({ ...prev, serie: Number(e.target.value || 1) }))}
-                className="w-full p-3 border border-gray-300 rounded-lg"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-gray-600 uppercase mb-2">Estratégia SEFAZ</label>
-              <select
-                value={nfeConfig.estrategiaSefaz}
-                onChange={(e) => setNfeConfig((prev) => ({ ...prev, estrategiaSefaz: e.target.value as 'bling' | 'direto' }))}
-                className="w-full p-3 border border-gray-300 rounded-lg"
-              >
-                <option value="direto">SEFAZ Direto (com A1 local)</option>
-                <option value="bling">Via Bling (OAuth)</option>
-              </select>
+      {/* Tab: Emissao NFe */}
+      {activeTab === 'emissao' && (
+        <div className="space-y-6">
+          <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-6">
+            <div className="flex items-start gap-3">
+              <AlertCircle size={24} className="text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="font-black text-amber-900 text-lg">Emissao de NFe - Em Desenvolvimento</h3>
+                <p className="text-sm text-amber-800 mt-2">
+                  A emissao direta de Nota Fiscal Eletronica requer um servidor backend com certificado digital A1
+                  e conexao com a SEFAZ. Esta funcionalidade esta reservada para implementacao futura.
+                </p>
+                <div className="mt-4 space-y-2 text-xs text-amber-700">
+                  <p className="font-bold">Alternativas disponiveis agora:</p>
+                  <ul className="space-y-1 ml-2">
+                    <li>Use o Bling para emitir NFe diretamente na plataforma</li>
+                    <li>Gere etiquetas de envio pelo Bling (aba Emissao/ZPL)</li>
+                    <li>A DANFE simplificada e gerada automaticamente nas etiquetas</li>
+                    <li>Pedidos importados ja recebem dados dos produtos vinculados</li>
+                  </ul>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
-            <p><strong>SEFAZ Direto:</strong> usa certificado A1 carregado na aba de certificados.</p>
-            <p><strong>Via Bling:</strong> exige token OAuth ativo do Bling.</p>
+          <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-200">
+            <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <ExternalLink size={18} className="text-blue-600" />
+              Links Uteis
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <a
+                href="https://www.bling.com.br/notas-fiscais"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 p-4 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 transition-all"
+              >
+                <FileText size={20} className="text-emerald-600" />
+                <div>
+                  <p className="font-bold text-sm text-emerald-900">Emitir NFe via Bling</p>
+                  <p className="text-xs text-emerald-700">Acesse o painel do Bling para emitir notas</p>
+                </div>
+              </a>
+              <a
+                href="https://www.nfe.fazenda.gov.br/portal/principal.aspx"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 p-4 bg-blue-50 border border-blue-200 rounded-xl hover:bg-blue-100 transition-all"
+              >
+                <FileText size={20} className="text-blue-600" />
+                <div>
+                  <p className="font-bold text-sm text-blue-900">Portal NFe SEFAZ</p>
+                  <p className="text-xs text-blue-700">Consultar notas no portal da Fazenda</p>
+                </div>
+              </a>
+            </div>
           </div>
-
-          <button
-            onClick={handleSaveConfig}
-            disabled={loading}
-            className="w-full px-6 py-3 bg-purple-600 text-white font-bold rounded-lg hover:bg-purple-700 disabled:opacity-50"
-          >
-            {loading ? <Loader className="w-4 h-4 animate-spin inline mr-2" /> : null}
-            💾 Salvar Configurações
-          </button>
         </div>
       )}
     </div>
