@@ -269,8 +269,18 @@ async function startServer() {
       let pagina = 1;
       let continuar = true;
 
+      // Mapear status textual → idsSituacoes do Bling v3
+      const statusIdMap: Record<string, string[]> = {
+        'EM ABERTO': ['6'],
+        'EM ANDAMENTO': ['15'],
+        'ATENDIDO': ['9'],
+        'EM ABERTO,ATENDIDO': ['6', '9'],
+      };
+      const situacaoIds = statusIdMap[status] || []; // vazio = TODOS
+
       while (continuar) {
-        const url = `https://www.bling.com.br/Api/v3/pedidos/vendas?dataInicial=${dataInicio}&dataFinal=${dataFim}&limite=100&pagina=${pagina}`;
+        const situacoesQs = situacaoIds.map((id: string, i: number) => `&idsSituacoes[${i}]=${id}`).join('');
+        const url = `https://www.bling.com.br/Api/v3/pedidos/vendas?dataInicial=${dataInicio}&dataFinal=${dataFim}&limite=100&pagina=${pagina}${situacoesQs}`;
         const pageResp = await fetch(url, {
           headers: { 'Authorization': token, 'Accept': 'application/json' }
         });
@@ -298,21 +308,16 @@ async function startServer() {
         if (pagina > 20) continuar = false;
       }
 
-      console.log(`📋 [SYNC PEDIDOS] Total raw: ${allRawOrders.length} em ${pagina} página(s)`);
-
-      const statusMap: Record<string, number> = {
-        'EM ABERTO': 6,
-        'EM ANDAMENTO': 15,
-        'ATENDIDO': 9
-      };
+      console.log(`📋 [SYNC PEDIDOS] Total raw: ${allRawOrders.length} em ${pagina} página(s) | situacoes API: ${situacaoIds.join(',') || 'TODOS'}`);
 
       // ── Montar pedidos COMPLETOS (um por order) com itens aninhados ────────
+      // Filtro de situação já foi aplicado pela API via idsSituacoes
+      // Apenas filtramos por canal se solicitado
       const completeOrders: any[] = allRawOrders
         .filter((order: any) => {
+          if (canal === 'ALL') return true;
           const detectedCanal = parseCanal(order?.loja?.nome || order?.origem || order?.tipo);
-          const situation = Number(order?.situacao?.id || order?.situacao || 0);
-          if (status !== 'TODOS' && statusMap[status] && situation !== statusMap[status]) return false;
-          if (canal !== 'ALL' && detectedCanal !== canal) return false;
+          return detectedCanal === canal;
           return true;
         })
         .map((order: any) => {

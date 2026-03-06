@@ -720,6 +720,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     const [expandedVendasIds, setExpandedVendasIds] = useState<Set<string>>(new Set());
 
     // ── Estado da aba Notas Fiscais (multi-select ZPL) ───────────────────────
+    const [nfeCanalFilter, setNfeCanalFilter] = useState<string>('TODOS');
     const [selectedNotasIds, setSelectedNotasIds] = useState<Set<string>>(new Set());
     const [isBatchZplNotas, setIsBatchZplNotas] = useState(false);
     const [batchZplNotasProgress, setBatchZplNotasProgress] = useState<{ current: number; total: number } | null>(null);
@@ -1475,7 +1476,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             const matchesSearch = !searchTerm || (
                 (order.orderId && order.orderId.toLowerCase().includes(searchLower)) ||
                 (order.blingId && order.blingId.toLowerCase().includes(searchLower)) ||
-                (order.customer_name && order.customer_name.toLowerCase().includes(searchLower))
+                (order.customer_name && order.customer_name.toLowerCase().includes(searchLower)) ||
+                ((order as any).loja && (order as any).loja.toLowerCase().includes(searchLower))
             );
             
             let matchesNfe = true;
@@ -1487,9 +1489,22 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                  else if (filterNfeStatus === 'SEM_NOTA') matchesNfe = !order.invoice;
             }
 
-            return matchesSearch && matchesNfe;
+            // Filtro de loja/canal
+            let matchesCanal = true;
+            if (nfeCanalFilter !== 'TODOS') {
+                const orderCanal = (order as any).canal || '';
+                const orderLoja = (order as any).loja || '';
+                if (['ML', 'SHOPEE', 'SITE'].includes(nfeCanalFilter)) {
+                    matchesCanal = orderCanal === nfeCanalFilter;
+                } else {
+                    // Filtro por nome exato da loja (canais customizados do Bling)
+                    matchesCanal = orderLoja.toUpperCase().includes(nfeCanalFilter.toUpperCase());
+                }
+            }
+
+            return matchesSearch && matchesNfe && matchesCanal;
         });
-    }, [enrichedOrders, searchTerm, filterNfeStatus]);
+    }, [enrichedOrders, searchTerm, filterNfeStatus, nfeCanalFilter]);
 
     if (isHandlingCallback) {
         return (
@@ -1590,14 +1605,37 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         <div className="flex justify-between items-start mb-5 flex-wrap gap-3">
                             <div>
                                 <h2 className="text-xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
-                                    <ShoppingBag className="text-yellow-500"/> Pedidos de Vendas
+                                    <ShoppingBag className="text-yellow-500"/> Importação — Pedidos de Vendas
                                     {filteredVendasOrders.length > 0 && <span className="text-sm text-slate-400 font-bold normal-case tracking-normal ml-1">({filteredVendasOrders.length})</span>}
                                 </h2>
-                                <p className="text-[11px] text-slate-400 mt-0.5">Situação: <strong className="text-yellow-600">Em Aberto</strong> — direto do Bling. Gere NF-e ou ZPL sem sair daqui.</p>
+                                <p className="text-[11px] text-slate-400 mt-0.5">
+                                    Filtro API: <strong className="text-yellow-600">
+                                        {vendasSituacao === '6' ? 'Em Aberto' : vendasSituacao === '9' ? 'Atendido' : vendasSituacao === '15' ? 'Em Andamento' : vendasSituacao === '6,9' ? 'Em Aberto + Atendido' : 'Todas'}
+                                    </strong> — direto do Bling v3. Gere NF-e ou ZPL sem sair daqui.
+                                </p>
                             </div>
                             <div className="flex items-center gap-2 flex-wrap">
                                 {selectedVendasIds.size > 0 && (
                                     <>
+                                        <button
+                                            onClick={async () => {
+                                                const ids = Array.from(selectedVendasIds);
+                                                const orders = filteredVendasOrders.filter(o => ids.includes(o.blingId || o.orderId));
+                                                let ok = 0, fail = 0;
+                                                for (const ord of orders) {
+                                                    if (vendasInvoiceMap.has(ord.blingId || ord.orderId)) { ok++; continue; }
+                                                    try {
+                                                        await handleGerarNFeDoPedido(ord.orderId || ord.blingNumero, ord, false);
+                                                        ok++;
+                                                    } catch { fail++; }
+                                                }
+                                                addToast(`NF-e em lote: ${ok} gerada(s)${fail > 0 ? `, ${fail} falha(s)` : ''}`, fail > 0 ? 'info' : 'success');
+                                            }}
+                                            disabled={!!gerandoNFeId}
+                                            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-lg shadow-emerald-100 hover:bg-emerald-700 disabled:opacity-50 transition-all active:scale-95"
+                                        >
+                                            {gerandoNFeId ? <Loader2 size={14} className="animate-spin"/> : <FileText size={14}/>} NF-e ({selectedVendasIds.size})
+                                        </button>
                                         <button onClick={handleBatchZpl} disabled={isGeneratingBatchZpl} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-lg shadow-blue-100 hover:bg-blue-700 disabled:opacity-50 transition-all active:scale-95">
                                             {isGeneratingBatchZpl ? <Loader2 size={14} className="animate-spin"/> : <Printer size={14}/>} ZPL ({selectedVendasIds.size})
                                         </button>
@@ -1753,13 +1791,23 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                 : <span className="text-slate-300 text-[9px]">—</span>}
                                                         </td>
                                                         <td className="p-3 font-black text-emerald-600 whitespace-nowrap">{Number(order.total || 0).toLocaleString('pt-BR', {style:'currency',currency:'BRL'})}</td>
-                                                        <td className="p-3"><span className="text-[9px] font-black px-2 py-1 rounded-full bg-slate-100 text-slate-600 uppercase">{order.status || '-'}</span></td>
+                                                        <td className="p-3">
+                                                            {(() => {
+                                                                const st = (order.status || '').toLowerCase();
+                                                                const color = st.includes('aberto') ? 'bg-yellow-100 text-yellow-800'
+                                                                    : st.includes('atendido') ? 'bg-emerald-100 text-emerald-700'
+                                                                    : st.includes('andamento') ? 'bg-blue-100 text-blue-700'
+                                                                    : st.includes('cancel') ? 'bg-red-100 text-red-600'
+                                                                    : 'bg-slate-100 text-slate-600';
+                                                                return <span className={`text-[9px] font-black px-2 py-1 rounded-full uppercase ${color}`}>{order.status || '-'}</span>;
+                                                            })()}
+                                                        </td>
                                                         {/* ERP column */}
                                                         <td className="p-3">
                                                             {erpImportedBlingIds.has(String(order.blingId || '')) || erpImportedBlingIds.has(String(order.orderId || '')) ? (
-                                                                <span className="text-[9px] font-black px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 whitespace-nowrap">✅ Importado</span>
+                                                                <span className="text-[9px] font-black px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 whitespace-nowrap">✅ Processado ERP</span>
                                                             ) : (
-                                                                <span className="text-[9px] font-black px-2 py-1 rounded-full bg-slate-100 text-slate-400 whitespace-nowrap">Não importado</span>
+                                                                <span className="text-[9px] font-black px-2 py-1 rounded-full bg-slate-100 text-slate-400 whitespace-nowrap">—</span>
                                                             )}
                                                         </td>
                                                         {/* NFe column */}
@@ -2014,8 +2062,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl border border-slate-100">
                                     <div className="pl-3 pr-2"><ShoppingBag size={18} className="text-slate-400"/></div>
                                     <select
-                                        value={vendasCanalFilter}
-                                        onChange={e => setVendasCanalFilter(e.target.value as any)}
+                                        value={nfeCanalFilter}
+                                        onChange={e => setNfeCanalFilter(e.target.value)}
                                         className="flex-grow p-2 bg-transparent font-bold text-sm text-slate-700 outline-none"
                                     >
                                         <option value="TODOS">Todas as Lojas</option>
