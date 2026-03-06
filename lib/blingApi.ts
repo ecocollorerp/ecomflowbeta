@@ -46,8 +46,11 @@ function handleBlingError(data: any, defaultMessage: string): void {
     }
 }
 
-// Helper for V3 fetch with Auth header
-async function fetchV3(endpoint: string, apiKey: string, params: Record<string, string> = {}) {
+// Helper for V3 fetch with Auth header + auto-retry on rate limit (429)
+async function fetchV3(endpoint: string, apiKey: string, params: Record<string, string> = {}, _retryCount = 0): Promise<any> {
+    const MAX_RETRIES = 3;
+    const BASE_DELAY_MS = 1200; // Bling permite ~3 req/s; espera 1.2s entre retries
+
     let cleanKey = apiKey ? apiKey.trim() : '';
     if (!cleanKey.toLowerCase().startsWith('bearer ')) {
         cleanKey = `Bearer ${cleanKey}`;
@@ -67,6 +70,14 @@ async function fetchV3(endpoint: string, apiKey: string, params: Record<string, 
         }
     });
 
+    // ── Rate limit (429) — retry automático com backoff ─────────────────
+    if (response.status === 429 && _retryCount < MAX_RETRIES) {
+        const delay = BASE_DELAY_MS * (_retryCount + 1);
+        console.warn(`⏳ [Bling] Rate limit em ${endpoint} — retry ${_retryCount + 1}/${MAX_RETRIES} em ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+        return fetchV3(endpoint, apiKey, params, _retryCount + 1);
+    }
+
     if (!response.ok) {
         const text = await response.text();
         let json;
@@ -76,6 +87,11 @@ async function fetchV3(endpoint: string, apiKey: string, params: Record<string, 
             throw new Error(`Erro na requisição Bling v3 (${response.status}): ${text}`);
         }
         
+        // Rate limit esgotou retries
+        if (response.status === 429) {
+            throw new Error('Limite de requisições do Bling atingido. Aguarde alguns segundos e tente novamente.');
+        }
+
         // Verifica erro de token expirado
         if (json.error === "The access token provided is invalid" || json.error === "invalid_token" || response.status === 401) {
              throw new Error("TOKEN_EXPIRED"); // Erro especial para o frontend capturar

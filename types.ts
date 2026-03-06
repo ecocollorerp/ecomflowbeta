@@ -27,7 +27,7 @@ export interface BipagemSettings {
 export interface ToastMessage {
     id: number;
     message: string;
-    type: 'success' | 'error' | 'info';
+    type: 'success' | 'error' | 'info' | 'warning';
 }
 
 export interface AdminNotice {

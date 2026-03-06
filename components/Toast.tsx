@@ -1,6 +1,6 @@
 // components/Toast.tsx
 import React, { useEffect, useState } from 'react';
-import { X, CheckCircle, AlertTriangle, Info } from 'lucide-react';
+import { X, CheckCircle, AlertTriangle, Info, AlertCircle } from 'lucide-react';
 import { ToastMessage } from '../types';
 
 interface ToastProps {
@@ -41,9 +41,14 @@ const Toast: React.FC<ToastProps> = ({ toast, removeToast }) => {
             bg: 'bg-[var(--color-info-bg)] border-[var(--color-info-border)]',
             text: 'text-[var(--color-info-text)]',
         },
+        warning: {
+            icon: <AlertCircle className="h-5 w-5 text-amber-500" />,
+            bg: 'bg-amber-50 border-amber-200',
+            text: 'text-amber-800',
+        },
     };
 
-    const { icon, bg, text } = typeInfo[toast.type];
+    const { icon, bg, text } = typeInfo[toast.type] || typeInfo.info;
 
     return (
         <div

@@ -36,7 +36,7 @@ interface BlingPageProps {
     generalSettings: GeneralSettings;
     onSaveSettings: (settings: GeneralSettings | ((prev: GeneralSettings) => GeneralSettings)) => void;
     onLaunchSuccess: (orders: OrderItem[]) => Promise<void>; // Updated to Promise for await support
-    addToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    addToast: (message: string, type: 'success' | 'error' | 'info' | 'warning') => void;
     setCurrentPage: (page: string) => void;
     onLoadZpl: (zpl: string, includeDanfe?: boolean) => void;
     stockItems?: StockItem[];
