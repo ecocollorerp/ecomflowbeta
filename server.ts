@@ -1964,8 +1964,33 @@ async function startServer() {
   });
 
   // ────────────────────────────────────────────────────────────────────────────
-  // NOTAS FISCAIS DE SAÍDA — listar, baixar XML/DANFE
+  // NOTAS FISCAIS DE SAÍDA — listar, emitir, baixar XML/DANFE
   // ────────────────────────────────────────────────────────────────────────────
+
+  // POST /api/bling/nfe/:id/enviar — Enviar NF-e pendente para SEFAZ
+  app.post('/api/bling/nfe/:id/enviar', async (req, res) => {
+    try {
+      const rawAuth = req.headers.authorization || '';
+      const token = rawAuth.startsWith('Bearer ') ? rawAuth : `Bearer ${rawAuth}`;
+      if (!rawAuth) return res.status(401).json({ error: 'Token obrigatório' });
+
+      const url = `https://www.bling.com.br/Api/v3/nfe/${req.params.id}/enviar`;
+      console.log(`📤 [NFe Enviar] POST ${url}`);
+      const resp = await blingFetchRetry(url, {
+        method: 'POST',
+        headers: { Authorization: token, Accept: 'application/json', 'Content-Type': 'application/json' },
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) return res.status(resp.status).json({ error: data?.error?.description || data?.error?.message || `Erro ${resp.status}`, detail: data });
+
+      console.log(`✅ [NFe Enviar] NF-e ${req.params.id} enviada com sucesso`);
+      res.json({ success: true, data });
+    } catch (error: any) {
+      console.error('❌ [NFe Enviar]:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get('/api/bling/nfe/listar-saida', async (req, res) => {
     try {
       const rawAuth = req.headers.authorization || '';
@@ -1983,7 +2008,7 @@ async function startServer() {
 
       const url = `https://www.bling.com.br/Api/v3/nfe?${params.toString()}`;
       console.log(`📋 [NFe Saída] GET ${url}`);
-      const resp = await fetch(url, { headers: { Authorization: token, Accept: 'application/json' } });
+      const resp = await blingFetchRetry(url, { headers: { Authorization: token, Accept: 'application/json' } });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) return res.status(resp.status).json({ error: data?.error?.description || `Erro ${resp.status}`, detail: data });
 
@@ -2002,7 +2027,7 @@ async function startServer() {
       const token = rawAuth.startsWith('Bearer ') ? rawAuth : `Bearer ${rawAuth}`;
       if (!rawAuth) return res.status(401).json({ error: 'Token obrigatório' });
 
-      const resp = await fetch(`https://www.bling.com.br/Api/v3/nfe/${req.params.id}`, {
+      const resp = await blingFetchRetry(`https://www.bling.com.br/Api/v3/nfe/${req.params.id}`, {
         headers: { Authorization: token, Accept: 'application/json' },
       });
       const data = await resp.json().catch(() => ({}));
@@ -2015,6 +2040,21 @@ async function startServer() {
   // ────────────────────────────────────────────────────────────────────────────
   // BUSCAR ETIQUETAS DE ENVIO DO BLING (logística/remessas)
   // ────────────────────────────────────────────────────────────────────────────
+  // Helper: fetch Bling c/ auto-retry em 429
+  async function blingFetchRetry(url: string, init: RequestInit, retries = 3, baseDelay = 1200): Promise<Response> {
+    for (let i = 0; i <= retries; i++) {
+      const resp = await fetch(url, init);
+      if (resp.status === 429 && i < retries) {
+        const delay = baseDelay * (i + 1);
+        console.warn(`⏳ [Bling 429] retry ${i + 1}/${retries} em ${delay}ms — ${url}`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      return resp;
+    }
+    return fetch(url, init); // fallback
+  }
+
   app.post('/api/bling/etiquetas/buscar', async (req, res) => {
     try {
       const { pedidoVendaIds } = req.body as { pedidoVendaIds: (string | number)[] };
@@ -2031,8 +2071,12 @@ async function startServer() {
 
       for (const pvId of pedidoVendaIds) {
         try {
+          // Delay entre chamadas para não estourar rate limit do Bling (~3 req/s)
+          if (pedidoVendaIds.indexOf(pvId) > 0) {
+            await new Promise(r => setTimeout(r, 400));
+          }
           // Busca detalhes do pedido para obter info de transporte
-          const pvResp = await fetch(
+          const pvResp = await blingFetchRetry(
             `https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(pvId)}`,
             { headers: readH },
           );
@@ -2115,6 +2159,7 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
       req.path === '/api/bling/nfe/criar-emitir' ||
       req.path.startsWith('/api/bling/nfe/listar-saida') ||
       req.path.startsWith('/api/bling/nfe/detalhe') ||
+      req.path.match(/^\/api\/bling\/nfe\/\d+\/enviar/) ||
       req.path === '/api/bling/canais-venda' ||
       req.path.startsWith('/api/bling/pedido-venda') ||
       req.path.startsWith('/api/bling/vendas')

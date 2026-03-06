@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { GeneralSettings, OrderItem, BlingInvoice, BlingProduct, BlingSettings, BlingScopeSettings, StockItem, SkuLink } from '../types';
-import { fetchBlingOrders, fetchBlingInvoices, fetchEtiquetaZplForPedido, fetchEtiquetasLote, fetchBlingProducts, executeBlingTokenExchange, executeTokenRefresh, syncBlingOrders, syncBlingInvoices, fetchNfeSaida, fetchNfeDetalhe, fetchPedidoVendaDetalhe, atualizarPedidoVenda } from '../lib/blingApi';
+import { fetchBlingOrders, fetchBlingInvoices, fetchEtiquetaZplForPedido, fetchEtiquetasLote, fetchBlingProducts, executeBlingTokenExchange, executeTokenRefresh, syncBlingOrders, syncBlingInvoices, fetchNfeSaida, fetchNfeDetalhe, fetchPedidoVendaDetalhe, atualizarPedidoVenda, enviarNfe } from '../lib/blingApi';
 import type { NfeSaida } from '../lib/blingApi';
 import { addPendingZplItem } from '../utils/pendingZpl';
 import { BlingSync } from '../components/BlingSync';
@@ -739,11 +739,21 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     // Modal NF-e — escolha entre Bling ou ERP próprio
     const [showGerarNFeModal, setShowGerarNFeModal] = useState(false);
     const [nfeModalOrder, setNfeModalOrder] = useState<any | null>(null);
-    // NF-e de saída do Bling (notas emitidas)
-    const [nfeSaida, setNfeSaida] = useState<NfeSaida[]>([]);
+    // NF-e de saída do Bling — persiste no localStorage por dia
+    const nfeSaidaStorageKey = `nfeSaida_${new Date().toISOString().slice(0, 10)}`;
+    const [nfeSaida, setNfeSaida] = useState<NfeSaida[]>(() => {
+        try {
+            const cached = localStorage.getItem(nfeSaidaStorageKey);
+            if (cached) return JSON.parse(cached) as NfeSaida[];
+        } catch { /* ignore */ }
+        return [];
+    });
     const [isLoadingNfeSaida, setIsLoadingNfeSaida] = useState(false);
-    const [nfeSaidaFiltro, setNfeSaidaFiltro] = useState<'todas' | 'autorizadas' | 'pendentes'>('autorizadas');
+    const [nfeSaidaFiltro, setNfeSaidaFiltro] = useState<'todas' | 'pendentes' | 'autorizadas_sem_danfe' | 'emitida_danfe'>('todas');
     const [nfeSaidaSearch, setNfeSaidaSearch] = useState('');
+    const [selectedNfeSaidaIds, setSelectedNfeSaidaIds] = useState<Set<number>>(new Set());
+    const [emitindoNfeId, setEmitindoNfeId] = useState<number | null>(null);
+    const [isBatchEmitindo, setIsBatchEmitindo] = useState(false);
     // Editar pedido de venda (dados fiscais, nome)
     const [editPedidoModal, setEditPedidoModal] = useState<{ id: string; data: any } | null>(null);
     const [isSavingPedido, setIsSavingPedido] = useState(false);
@@ -1201,20 +1211,32 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         finally { setGeneratingZplId(null); }
     };
 
-    // ── NOTAS FISCAIS DE SAÍDA — buscar no Bling ────────────────────────────
+    // ── NOTAS FISCAIS DE SAÍDA — buscar no Bling (todas situações, filtragem local) ──
+    const persistNfeSaida = (notas: NfeSaida[]) => {
+        try { localStorage.setItem(nfeSaidaStorageKey, JSON.stringify(notas)); } catch { /* quota */ }
+        try {
+            const today = new Date().toISOString().slice(0, 10);
+            for (let i = localStorage.length - 1; i >= 0; i--) {
+                const k = localStorage.key(i);
+                if (k && k.startsWith('nfeSaida_') && k !== `nfeSaida_${today}`) localStorage.removeItem(k);
+            }
+        } catch { /* ignore */ }
+    };
+
     const handleFetchNfeSaida = async () => {
         setIsLoadingNfeSaida(true);
         try {
             const token = await getValidToken();
             if (!token) throw new Error('Token inválido.');
-            const situacaoMap: Record<string, number | undefined> = { todas: undefined, autorizadas: 5, pendentes: 1 };
+            // Busca TODAS as notas (sem filtro de situação na API), filtragem é local
             const notas = await fetchNfeSaida(token, {
                 dataInicial: filters.startDate,
                 dataFinal: filters.endDate,
-                situacao: situacaoMap[nfeSaidaFiltro],
             });
             setNfeSaida(notas);
-            addToast(`${notas.length} nota(s) fiscal(is) de saída encontrada(s).`, notas.length > 0 ? 'success' : 'info');
+            persistNfeSaida(notas);
+            setSelectedNfeSaidaIds(new Set());
+            addToast(`${notas.length} nota(s) fiscal(is) encontrada(s).`, notas.length > 0 ? 'success' : 'info');
         } catch (err: any) {
             addToast(`Erro ao buscar NF-e de saída: ${err.message}`, 'error');
         } finally {
@@ -1291,6 +1313,122 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             addToast(`Erro: ${err.message}`, 'error');
         }
     };
+
+    // ── Emitir NF-e pendente (enviar para SEFAZ) ────────────────────────────
+    const handleEmitirNfe = async (nfe: NfeSaida) => {
+        setEmitindoNfeId(nfe.id);
+        try {
+            const token = await getValidToken();
+            if (!token) throw new Error('Token inválido.');
+            await enviarNfe(token, nfe.id);
+            addToast(`NF-e ${nfe.numero || nfe.id} enviada para SEFAZ com sucesso!`, 'success');
+            // Atualiza status local da NF-e
+            setNfeSaida(prev => {
+                const updated = prev.map(n => n.id === nfe.id ? { ...n, situacao: 3, situacaoDescr: 'Aguardando Recibo' } : n);
+                persistNfeSaida(updated);
+                return updated;
+            });
+        } catch (err: any) {
+            addToast(`Erro ao emitir NF-e ${nfe.numero || nfe.id}: ${err.message}`, 'error');
+        } finally {
+            setEmitindoNfeId(null);
+        }
+    };
+
+    // ── Emitir NF-e em lote (envia todas selecionadas para SEFAZ) ───────────
+    const handleBatchEmitirNfe = async () => {
+        const pendentes = nfeSaida.filter(n => selectedNfeSaidaIds.has(n.id) && n.situacao === 1);
+        if (pendentes.length === 0) {
+            addToast('Nenhuma NF-e pendente selecionada para emissão.', 'warning');
+            return;
+        }
+        setIsBatchEmitindo(true);
+        let ok = 0, fail = 0;
+        for (const nfe of pendentes) {
+            try {
+                const token = await getValidToken();
+                if (!token) throw new Error('Token inválido.');
+                await enviarNfe(token, nfe.id);
+                ok++;
+                setNfeSaida(prev => prev.map(n => n.id === nfe.id ? { ...n, situacao: 3, situacaoDescr: 'Aguardando Recibo' } : n));
+            } catch {
+                fail++;
+            }
+            // delay entre emissões para rate limit
+            await new Promise(r => setTimeout(r, 600));
+        }
+        persistNfeSaida(nfeSaida);
+        setSelectedNfeSaidaIds(new Set());
+        setIsBatchEmitindo(false);
+        addToast(`${ok} NF-e enviada(s) para SEFAZ.${fail > 0 ? ` ${fail} falha(s).` : ''}`, fail > 0 ? 'warning' : 'success');
+    };
+
+    // ── Gerar etiqueta ZPL a partir de NF-e (busca detalhe para obter pedido) ──
+    const handleGerarEtiquetaNfe = async (nfe: NfeSaida) => {
+        setEmitindoNfeId(nfe.id);
+        try {
+            const token = await getValidToken();
+            if (!token) throw new Error('Token inválido.');
+            // Busca detalhe da NF-e para obter vendas vinculadas
+            const detalhe = await fetchNfeDetalhe(token, nfe.id);
+            const vendas = detalhe?.data?.vendas || detalhe?.vendas || [];
+            const pedidoVendaId = vendas[0]?.id || detalhe?.data?.pedidoVenda?.id;
+            if (!pedidoVendaId) {
+                // Tenta usar o número da NF-e como fallback
+                const zpl = await fetchEtiquetaZplForPedido(token, String(nfe.id));
+                if (zpl) {
+                    setZplModeModal({ zpl, loteId: `ZPL-NFe-${nfe.numero || nfe.id}`, descricao: `NF-e ${nfe.numero}` });
+                    addToast('Etiqueta ZPL gerada!', 'success');
+                } else {
+                    addToast('Não foi possível gerar etiqueta para esta NF-e.', 'warning');
+                }
+                return;
+            }
+            const zpl = await fetchEtiquetaZplForPedido(token, String(pedidoVendaId));
+            if (zpl) {
+                setZplModeModal({ zpl, loteId: `ZPL-NFe-${nfe.numero || nfe.id}`, descricao: `NF-e ${nfe.numero} — Pedido ${pedidoVendaId}` });
+                addToast('Etiqueta ZPL gerada!', 'success');
+            } else {
+                addToast('Etiqueta vazia retornada.', 'warning');
+            }
+        } catch (err: any) {
+            addToast(`Erro: ${err.message}`, 'error');
+        } finally {
+            setEmitindoNfeId(null);
+        }
+    };
+
+    // ── NF-e — filtro local ─────────────────────────────────────────────────
+    const filteredNfeSaida = useMemo(() => {
+        let result = nfeSaida;
+        // Filtro por situação
+        if (nfeSaidaFiltro === 'pendentes') {
+            result = result.filter(n => n.situacao === 1);
+        } else if (nfeSaidaFiltro === 'autorizadas_sem_danfe') {
+            result = result.filter(n => n.situacao === 5 && !n.linkDanfe);
+        } else if (nfeSaidaFiltro === 'emitida_danfe') {
+            result = result.filter(n => n.situacao === 6 || (n.situacao === 5 && !!n.linkDanfe));
+        }
+        // Filtro por busca
+        if (nfeSaidaSearch.trim()) {
+            const term = nfeSaidaSearch.trim().toLowerCase();
+            result = result.filter(n =>
+                (n.numero && n.numero.toLowerCase().includes(term)) ||
+                (n.contato?.nome && n.contato.nome.toLowerCase().includes(term)) ||
+                (n.chaveAcesso && n.chaveAcesso.includes(term)) ||
+                (n.numeroVenda && n.numeroVenda.includes(term))
+            );
+        }
+        return result;
+    }, [nfeSaida, nfeSaidaFiltro, nfeSaidaSearch]);
+
+    // Contadores por situação
+    const nfeCounts = useMemo(() => ({
+        todas: nfeSaida.length,
+        pendentes: nfeSaida.filter(n => n.situacao === 1).length,
+        autorizadas_sem_danfe: nfeSaida.filter(n => n.situacao === 5 && !n.linkDanfe).length,
+        emitida_danfe: nfeSaida.filter(n => n.situacao === 6 || (n.situacao === 5 && !!n.linkDanfe)).length,
+    }), [nfeSaida]);
 
     // ── Editar pedido de venda (corrigir dados fiscais) ──────────────────────
     const handleSalvarPedido = async () => {
@@ -2104,457 +2242,305 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 </div>
             )}
 
-            {/* Content: NF-e — Notas Fiscais */}
+            {/* Content: NF-e — Notas Fiscais de Saída (Vendas > Notas Fiscais) */}
             {activeTab === 'nfe' && (
-                <div className="flex gap-4 items-start animate-in fade-in slide-in-from-bottom-4">
-
-                    {/* Painel principal */}
-                    <div className="flex-1 bg-white p-8 rounded-3xl border border-gray-200 shadow-xl min-w-0">
+                <div className="animate-in fade-in slide-in-from-bottom-4">
+                    <div className="bg-white p-6 md:p-8 rounded-3xl border border-gray-200 shadow-xl">
 
                         {/* Cabeçalho */}
                         <div className="flex justify-between items-start mb-6 flex-wrap gap-3">
                             <div>
                                 <h2 className="text-xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
-                                    <FileText className="text-emerald-600"/> Notas Fiscais
-                                    {enrichedOrders.length > 0 && <span className="text-sm text-slate-400 font-bold normal-case tracking-normal ml-1">({filteredEnrichedOrders.length})</span>}
+                                    <FileText className="text-emerald-600"/> Notas Fiscais de Saída
+                                    {nfeSaida.length > 0 && <span className="text-sm text-slate-400 font-bold normal-case tracking-normal ml-1">({filteredNfeSaida.length}/{nfeSaida.length})</span>}
                                 </h2>
-                                <p className="text-[11px] text-slate-400 mt-0.5">Gerencie NF-e: envie pendentes, imprima DANFE + etiqueta de transporte.</p>
+                                <p className="text-[11px] text-slate-400 mt-0.5">Vendas {'>'} Notas Fiscais — Emita pendentes, imprima DANFE + etiqueta de transporte.</p>
                             </div>
                             <div className="flex items-center gap-2">
-                                {settings?.autoSync && (
-                                    <div className="text-[10px] font-bold text-purple-600 bg-purple-50 px-3 py-1 rounded-full border border-purple-100 flex items-center gap-2">
-                                        <RefreshCw size={10} className="animate-spin"/> Tempo Real
-                                    </div>
+                                {nfeSaida.length > 0 && (
+                                    <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
+                                        Dados salvos do dia {new Date().toLocaleDateString('pt-BR')}
+                                    </span>
                                 )}
                             </div>
                         </div>
 
-                        {/* Barra de progresso */}
-                        {isBatchZplNotas && batchZplNotasProgress && (
-                            <div className="mb-6 bg-blue-50 border border-blue-200 rounded-2xl p-4">
-                                <div className="flex items-center justify-between mb-2">
-                                    <span className="text-xs font-black text-blue-700 flex items-center gap-2">
-                                        <Loader2 size={12} className="animate-spin"/> Gerando etiquetas ZPL em lote…
-                                    </span>
-                                    <span className="text-xs font-bold text-blue-600">{batchZplNotasProgress.current} / {batchZplNotasProgress.total}</span>
+                        {/* Contadores rápidos */}
+                        {nfeSaida.length > 0 && (
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                                <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100 text-center">
+                                    <p className="text-2xl font-black text-slate-800">{nfeCounts.todas}</p>
+                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total</p>
                                 </div>
-                                <div className="w-full bg-blue-200 rounded-full h-2.5 overflow-hidden">
-                                    <div
-                                        className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
-                                        style={{ width: `${Math.round((batchZplNotasProgress.current / batchZplNotasProgress.total) * 100)}%` }}
-                                    />
+                                <div className="bg-yellow-50 rounded-2xl p-3 border border-yellow-100 text-center">
+                                    <p className="text-2xl font-black text-yellow-700">{nfeCounts.pendentes}</p>
+                                    <p className="text-[10px] font-black text-yellow-600 uppercase tracking-widest">Pendentes</p>
                                 </div>
-                                <p className="text-[10px] text-blue-500 mt-1">Aguardando 400ms entre chamadas para evitar rate-limit…</p>
-                            </div>
-                        )}
-
-                        {/* Banner último lote */}
-                        {lastCompletedLote && (
-                            <div className="mb-6 bg-emerald-50 border border-emerald-200 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3">
-                                <div>
-                                    <p className="text-xs font-black text-emerald-700">
-                                        ✅ Lote {lastCompletedLote.id} — {lastCompletedLote.success} gerada(s){lastCompletedLote.failed.length > 0 ? `, ${lastCompletedLote.failed.length} falha(s)` : ''}
-                                    </p>
-                                    <p className="text-[10px] text-emerald-600 mt-0.5">{new Date(lastCompletedLote.timestamp).toLocaleString('pt-BR')}</p>
+                                <div className="bg-blue-50 rounded-2xl p-3 border border-blue-100 text-center">
+                                    <p className="text-2xl font-black text-blue-700">{nfeCounts.autorizadas_sem_danfe}</p>
+                                    <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Autoriz. s/ DANFE</p>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <button
-                                        onClick={() => setZplModeModal({ zpl: lastCompletedLote.zplContent, loteId: lastCompletedLote.id })}
-                                        className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-all"
-                                    >
-                                        <Printer size={12}/> Imprimir Etiquetas
-                                    </button>
-                                    <button onClick={() => setLastCompletedLote(null)} className="text-emerald-400 hover:text-emerald-600 p-1">
-                                        <X size={14}/>
-                                    </button>
+                                <div className="bg-green-50 rounded-2xl p-3 border border-green-100 text-center">
+                                    <p className="text-2xl font-black text-green-700">{nfeCounts.emitida_danfe}</p>
+                                    <p className="text-[10px] font-black text-green-600 uppercase tracking-widest">Emitida DANFE</p>
                                 </div>
                             </div>
                         )}
 
-                        {/* Filtros de Consulta API */}
+                        {/* Filtros de data + buscar */}
                         <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 mb-6">
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2"><Cloud size={12}/> Filtros de Busca (API Bling)</p>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                                 <div>
-                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">Data de Início</label>
-                                    <input type="date" value={filters.startDate} onChange={e => setFilters(p => ({...p, startDate: e.target.value}))} className="w-full p-3 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-blue-500"/>
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Data Início</label>
+                                    <input type="date" value={filters.startDate} onChange={e => setFilters(p => ({...p, startDate: e.target.value}))} className="w-full p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500"/>
                                 </div>
                                 <div>
-                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">Data de Fim</label>
-                                    <input type="date" value={filters.endDate} onChange={e => setFilters(p => ({...p, endDate: e.target.value}))} className="w-full p-3 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-blue-500"/>
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Data Fim</label>
+                                    <input type="date" value={filters.endDate} onChange={e => setFilters(p => ({...p, endDate: e.target.value}))} className="w-full p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500"/>
                                 </div>
-                                <div>
-                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">Status do Pedido</label>
-                                    <select value={filters.status} onChange={e => setFilters(p => ({...p, status: e.target.value as any}))} className="w-full p-3 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-blue-500">
-                                        <option value="EM ABERTO">Em Aberto</option>
-                                        <option value="EM ANDAMENTO">Em Andamento</option>
-                                        <option value="ATENDIDO">Atendido</option>
-                                        <option value="TODOS">Todos</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <button onClick={handleFetchOrdersAndInvoices} disabled={isSyncing} className="w-full mt-4 flex items-center justify-center gap-3 py-3 bg-orange-500 text-white font-black uppercase text-xs tracking-widest rounded-xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-lg shadow-orange-100 active:scale-95">
-                                {isSyncing ? <Loader2 className="animate-spin" size={16}/> : <Zap size={16}/>} {isSyncing ? 'Buscando...' : 'Consultar Manualmente'}
-                            </button>
-                        </div>
-
-                        {/* Filtros Locais */}
-                        {enrichedOrders.length > 0 && (
-                            <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4 animate-in slide-in-from-top-2">
                                 <div className="relative">
-                                    <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"/>
-                                    <input
-                                        type="text"
-                                        value={searchTerm}
-                                        onChange={e => setSearchTerm(e.target.value)}
-                                        placeholder="Buscar por Nome do Cliente ou Número do Pedido..."
-                                        className="w-full pl-12 p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-blue-500"
-                                    />
-                                </div>
-                                <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl border border-slate-100">
-                                    <div className="pl-3 pr-2"><Filter size={18} className="text-slate-400"/></div>
-                                    <select
-                                        value={filterNfeStatus}
-                                        onChange={e => setFilterNfeStatus(e.target.value as any)}
-                                        className="flex-grow p-2 bg-transparent font-bold text-sm text-slate-700 outline-none"
-                                    >
-                                        <option value="TODOS">Todas as Situações</option>
-                                        <option value="PENDENTE">Pendentes</option>
-                                        <option value="EMITIDA">Emitidas</option>
-                                        <option value="AUTORIZADA_SEM_DANFE">Autorizadas sem DANFE</option>
-                                        <option value="SEM_NOTA">Sem Nota Gerada</option>
-                                    </select>
-                                </div>
-                                <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-xl border border-slate-100">
-                                    <div className="pl-3 pr-2"><ShoppingBag size={18} className="text-slate-400"/></div>
-                                    <select
-                                        value={nfeCanalFilter}
-                                        onChange={e => setNfeCanalFilter(e.target.value)}
-                                        className="flex-grow p-2 bg-transparent font-bold text-sm text-slate-700 outline-none"
-                                    >
-                                        <option value="TODOS">Todas as Lojas</option>
-                                        <option value="ML">Mercado Livre</option>
-                                        <option value="SHOPEE">Shopee</option>
-                                        <option value="SITE">Site / Outros</option>
-                                        {blingCanais.filter(c => !['ML','SHOPEE','SITE'].some(k => c.descricao.toUpperCase().includes(k))).map(c => (
-                                            <option key={c.id} value={c.descricao}>{c.descricao}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Tabela + multi-select */}
-                        {enrichedOrders.length > 0 && (() => {
-                            const zplEligibleIds = filteredEnrichedOrders.filter(o => o.invoice?.idPedidoVenda).map(o => o.id);
-                            const allZplSelected = zplEligibleIds.length > 0 && zplEligibleIds.every(id => selectedNotasIds.has(id));
-                            const someSelected = selectedNotasIds.size > 0;
-
-                            const toggleSelectNota = (id: string) => {
-                                setSelectedNotasIds(prev => {
-                                    const next = new Set(prev);
-                                    next.has(id) ? next.delete(id) : next.add(id);
-                                    return next;
-                                });
-                            };
-
-                            const toggleSelectAllZpl = () => {
-                                if (allZplSelected) {
-                                    setSelectedNotasIds(new Set());
-                                } else {
-                                    setSelectedNotasIds(new Set(zplEligibleIds));
-                                }
-                            };
-
-                            return (
-                                <div className="space-y-3">
-                                    {canGerarEtiquetas && (
-                                        <div className={`flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-2xl border transition-all ${someSelected ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-100'}`}>
-                                            <div className="flex items-center gap-3">
-                                                <button
-                                                    onClick={toggleSelectAllZpl}
-                                                    className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-xl border transition-all bg-white border-slate-200 hover:border-blue-400 hover:bg-blue-50 text-slate-600"
-                                                >
-                                                    {allZplSelected ? <CheckSquare size={14} className="text-blue-600"/> : <Square size={14}/>}
-                                                    {allZplSelected ? 'Desmarcar Todos' : `Selecionar com ZPL (${zplEligibleIds.length})`}
-                                                </button>
-                                                {someSelected && (
-                                                    <span className="text-[10px] font-black text-blue-600 bg-blue-100 px-2.5 py-1 rounded-full">
-                                                        {selectedNotasIds.size} selecionada(s)
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                {someSelected && (
-                                                    <>
-                                                        <button
-                                                            onClick={() => setSelectedNotasIds(new Set())}
-                                                            className="text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 transition-all"
-                                                        >
-                                                            Limpar
-                                                        </button>
-                                                        <button
-                                                            onClick={handleBatchZplNotas}
-                                                            disabled={isBatchZplNotas}
-                                                            className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-all shadow shadow-blue-200"
-                                                        >
-                                                            {isBatchZplNotas ? <Loader2 size={12} className="animate-spin"/> : <Printer size={12}/>}
-                                                            {isBatchZplNotas
-                                                                ? `Gerando… (${batchZplNotasProgress?.current ?? 0}/${batchZplNotasProgress?.total ?? selectedNotasIds.size})`
-                                                                : `Gerar ZPL em Lote (${selectedNotasIds.size})`}
-                                                        </button>
-                                                    </>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    <div className="overflow-hidden border border-slate-100 rounded-2xl">
-                                        <div className="overflow-x-auto">
-                                            <table className="min-w-full text-sm">
-                                                <thead className="bg-slate-900 text-white">
-                                                    <tr>
-                                                        {canGerarEtiquetas && (
-                                                            <th className="p-4 w-10">
-                                                                <button onClick={toggleSelectAllZpl} className="flex items-center justify-center w-5 h-5 rounded border-2 border-white/40 hover:border-white transition-colors">
-                                                                    {allZplSelected ? <CheckSquare size={14} className="text-blue-300"/> : <Square size={14} className="text-white/50"/>}
-                                                                </button>
-                                                            </th>
-                                                        )}
-                                                        {['Pedido Loja', 'Pedido Bling', 'Cliente', 'Data', 'Valor', 'Status NF', 'Ações'].map(h =>
-                                                            <th key={h} className="p-4 text-left text-[10px] font-black uppercase tracking-widest">{h}</th>
-                                                        )}
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-slate-100">
-                                                    {filteredEnrichedOrders.map(order => {
-                                                        const isSelected = selectedNotasIds.has(order.id);
-                                                        const canZpl = !!order.invoice?.idPedidoVenda;
-                                                        return (
-                                                            <tr key={order.id} className={`hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50/60' : ''}`}>
-                                                                {canGerarEtiquetas && (
-                                                                    <td className="p-4 w-10">
-                                                                        {canZpl ? (
-                                                                            <button onClick={() => toggleSelectNota(order.id)} className="flex items-center justify-center w-5 h-5 rounded border-2 transition-colors border-slate-300 hover:border-blue-500">
-                                                                                {isSelected ? <CheckSquare size={14} className="text-blue-600"/> : <Square size={14} className="text-slate-300"/>}
-                                                                            </button>
-                                                                        ) : (
-                                                                            <span className="block w-5 h-5"/>
-                                                                        )}
-                                                                    </td>
-                                                                )}
-                                                                <td className="p-4 font-black text-slate-700">{order.orderId}</td>
-                                                                <td className="p-4 font-mono text-xs text-gray-500">{order.blingId || '-'}</td>
-                                                                <td className="p-4 font-bold text-slate-600">{order.customer_name}</td>
-                                                                <td className="p-4 text-slate-500">{order.data}</td>
-                                                                <td className="p-4 font-black text-emerald-600">{order.price_total.toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'})}</td>
-                                                                <td className="p-4">
-                                                                    <div className="flex flex-wrap items-center gap-1.5">
-                                                                        <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${order.invoice ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'}`}>
-                                                                            {order.invoice?.situacao || 'Não Gerada'}
-                                                                        </span>
-                                                                        {zplGeneratedIds.has(order.id) && (
-                                                                            <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest bg-blue-100 text-blue-700 flex items-center gap-1">
-                                                                                <Printer size={9}/> ZPL Gerada
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                </td>
-                                                                <td className="p-4">
-                                                                    <div className="flex items-center gap-2 flex-wrap">
-                                                                        {!order.invoice && (
-                                                                            <>
-                                                                                <button
-                                                                                    onClick={() => handleGerarNFeDoPedido(order.orderId, order, false)}
-                                                                                    disabled={gerandoNFeId === order.orderId}
-                                                                                    className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl hover:bg-emerald-100 border border-emerald-100 disabled:opacity-50 transition-all"
-                                                                                >
-                                                                                    {gerandoNFeId === order.orderId ? <Loader2 size={14} className="animate-spin"/> : <FileText size={14}/>} Gerar NF
-                                                                                </button>
-                                                                                <button
-                                                                                    onClick={() => handleGerarNFeDoPedido(order.orderId, order, true)}
-                                                                                    disabled={gerandoNFeId === order.orderId}
-                                                                                    className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest bg-indigo-50 text-indigo-700 px-3 py-2 rounded-xl hover:bg-indigo-100 border border-indigo-100 disabled:opacity-50 transition-all"
-                                                                                >
-                                                                                    {gerandoNFeId === order.orderId ? <Loader2 size={14} className="animate-spin"/> : <Send size={14}/>} Gerar+Emitir
-                                                                                </button>
-                                                                            </>
-                                                                        )}
-                                                                        {/* Editar pedido de venda (corrigir dados fiscais, nome) */}
-                                                                        {order.blingId && !order.invoice && (
-                                                                            <button
-                                                                                onClick={async () => {
-                                                                                    try {
-                                                                                        const token = await getValidToken();
-                                                                                        if (!token) return;
-                                                                                        const detalhe = await fetchPedidoVendaDetalhe(token, order.blingId);
-                                                                                        const ped = detalhe?.data || detalhe;
-                                                                                        setEditPedidoModal({
-                                                                                            id: order.blingId,
-                                                                                            data: {
-                                                                                                contato: { nome: ped?.contato?.nome || order.customer_name, numeroDocumento: ped?.contato?.numeroDocumento || '' },
-                                                                                                observacoes: ped?.observacoes || '',
-                                                                                                observacoesInternas: ped?.observacoesInternas || '',
-                                                                                            },
-                                                                                        });
-                                                                                    } catch (err: any) { addToast(`Erro ao carregar pedido: ${err.message}`, 'error'); }
-                                                                                }}
-                                                                                title="Editar dados do pedido (nome, CPF, obs)"
-                                                                                className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest bg-amber-50 text-amber-700 px-2.5 py-2 rounded-xl hover:bg-amber-100 border border-amber-100 transition-all"
-                                                                            >
-                                                                                <Settings size={12}/> Editar
-                                                                            </button>
-                                                                        )}
-                                                                        {order.invoice?.linkDanfe && (
-                                                                            <a href={order.invoice.linkDanfe} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest bg-orange-50 text-orange-600 px-3 py-2 rounded-xl hover:bg-orange-100 border border-orange-100 transition-all">
-                                                                                <FileText size={14}/> DANFE
-                                                                            </a>
-                                                                        )}
-                                                                        {canGerarEtiquetas && (
-                                                                            <button
-                                                                                onClick={() => handleGenerateZpl(order.invoice!)}
-                                                                                disabled={generatingZplId === order.invoice?.id || !canZpl || isBatchZplNotas}
-                                                                                title={!canZpl ? 'Gere a NF primeiro' : 'Gerar Etiqueta ZPL'}
-                                                                                className="flex items-center gap-1 text-[10px] font-black uppercase tracking-widest bg-blue-50 text-blue-600 px-3 py-2 rounded-xl hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                                                                            >
-                                                                                {generatingZplId === order.invoice?.id ? <Loader2 className="animate-spin" size={14}/> : <Printer size={14}/>} ZPL
-                                                                            </button>
-                                                                        )}
-                                                                    </div>
-                                                                </td>
-                                                            </tr>
-                                                        );
-                                                    })}
-                                                </tbody>
-                                            </table>
-                                        </div>
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Buscar</label>
+                                    <div className="relative">
+                                        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+                                        <input type="text" value={nfeSaidaSearch} onChange={e => setNfeSaidaSearch(e.target.value)} placeholder="Número, cliente, chave..." className="w-full pl-10 p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500"/>
                                     </div>
                                 </div>
-                            );
-                        })()}
-
-                    </div>
-                    {/* fim painel principal */}
-
-                    {/* ── Painel Notas Fiscais de Saída (buscar DANFE / XML do Bling) ── */}
-                    <div className="flex-1 bg-white p-6 rounded-3xl border border-gray-200 shadow-xl min-w-0 mt-4">
-                        <div className="flex justify-between items-start mb-4 flex-wrap gap-3">
-                            <div>
-                                <h3 className="text-lg font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
-                                    <Download className="text-orange-600" size={18}/> Notas Fiscais de Saída
-                                </h3>
-                                <p className="text-[11px] text-slate-400 mt-0.5">Consulte NF-e emitidas no Bling. Baixe DANFE, XML ou copie a chave de acesso.</p>
+                                <button onClick={handleFetchNfeSaida} disabled={isLoadingNfeSaida} className="flex items-center justify-center gap-2 py-2.5 bg-emerald-600 text-white font-black uppercase text-xs tracking-widest rounded-xl hover:bg-emerald-700 disabled:opacity-50 transition-all shadow-lg shadow-emerald-100 active:scale-95">
+                                    {isLoadingNfeSaida ? <Loader2 size={14} className="animate-spin"/> : <Cloud size={14}/>} {isLoadingNfeSaida ? 'Buscando...' : 'Buscar NF-e'}
+                                </button>
                             </div>
                         </div>
 
-                        <div className="flex flex-wrap items-end gap-3 mb-4">
-                            <div>
-                                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Situação</label>
-                                <select value={nfeSaidaFiltro} onChange={e => setNfeSaidaFiltro(e.target.value as any)} className="p-2 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-orange-400">
-                                    <option value="autorizadas">Autorizadas</option>
-                                    <option value="pendentes">Pendentes</option>
-                                    <option value="todas">Todas</option>
-                                </select>
-                            </div>
-                            <div className="relative flex-1 min-w-[180px]">
-                                <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-                                <input
-                                    type="text" value={nfeSaidaSearch} onChange={e => setNfeSaidaSearch(e.target.value)}
-                                    placeholder="Buscar por número ou cliente..."
-                                    className="w-full pl-10 p-2 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-orange-400"
-                                />
-                            </div>
-                            <button onClick={handleFetchNfeSaida} disabled={isLoadingNfeSaida} className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white font-black uppercase text-xs tracking-widest rounded-xl hover:bg-orange-600 disabled:opacity-50 transition-all shadow-lg shadow-orange-100 active:scale-95">
-                                {isLoadingNfeSaida ? <Loader2 size={14} className="animate-spin"/> : <Download size={14}/>} Buscar NF-e
-                            </button>
+                        {/* Filtro por situação (abas) */}
+                        <div className="flex flex-wrap gap-2 mb-4">
+                            {([
+                                { key: 'todas', label: 'Todas', count: nfeCounts.todas, color: 'slate' },
+                                { key: 'pendentes', label: 'Pendentes', count: nfeCounts.pendentes, color: 'yellow' },
+                                { key: 'autorizadas_sem_danfe', label: 'Autorizada sem DANFE', count: nfeCounts.autorizadas_sem_danfe, color: 'blue' },
+                                { key: 'emitida_danfe', label: 'Emitida DANFE', count: nfeCounts.emitida_danfe, color: 'green' },
+                            ] as const).map(tab => {
+                                const isActive = nfeSaidaFiltro === tab.key;
+                                const colors: Record<string, string> = {
+                                    slate: isActive ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+                                    yellow: isActive ? 'bg-yellow-500 text-white' : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100',
+                                    blue: isActive ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100',
+                                    green: isActive ? 'bg-green-600 text-white' : 'bg-green-50 text-green-700 hover:bg-green-100',
+                                };
+                                return (
+                                    <button
+                                        key={tab.key}
+                                        onClick={() => { setNfeSaidaFiltro(tab.key); setSelectedNfeSaidaIds(new Set()); }}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${colors[tab.color]}`}
+                                    >
+                                        {tab.label}
+                                        <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-black ${isActive ? 'bg-white/20' : 'bg-black/5'}`}>{tab.count}</span>
+                                    </button>
+                                );
+                            })}
                         </div>
 
-                        {nfeSaida.length > 0 && (() => {
-                            const term = nfeSaidaSearch.toLowerCase();
-                            const filtered = nfeSaida.filter(n =>
-                                !term ||
-                                (n.numero && n.numero.includes(term)) ||
-                                (n.contato?.nome && n.contato.nome.toLowerCase().includes(term)) ||
-                                (n.chaveAcesso && n.chaveAcesso.includes(term))
-                            );
-
-                            // Agrupar por data de emissão
-                            const grouped = new Map<string, NfeSaida[]>();
-                            filtered.forEach(n => {
-                                const dt = n.dataEmissao ? n.dataEmissao.split(' ')[0].split('T')[0] : 'Sem data';
-                                if (!grouped.has(dt)) grouped.set(dt, []);
-                                grouped.get(dt)!.push(n);
-                            });
-                            // Ordenar datas decrescente
-                            const sortedDates = [...grouped.keys()].sort((a, b) => b.localeCompare(a));
-
-                            return (
-                                <div className="space-y-4">
-                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{filtered.length} nota(s) encontrada(s) — organizadas por data</p>
-                                    {sortedDates.map(date => {
-                                        const notas = grouped.get(date)!;
-                                        const dateLabel = date === 'Sem data' ? date : new Date(date + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
-                                        return (
-                                            <div key={date} className="border border-slate-100 rounded-2xl overflow-hidden">
-                                                <div className="bg-slate-50 px-4 py-2 border-b border-slate-100 flex items-center gap-2">
-                                                    <Clock size={12} className="text-slate-400"/>
-                                                    <span className="text-xs font-black text-slate-600 uppercase tracking-wide">{dateLabel}</span>
-                                                    <span className="text-[10px] text-slate-400 font-bold ml-auto">{notas.length} nota(s)</span>
-                                                </div>
-                                                <table className="min-w-full text-sm">
-                                                    <thead className="bg-slate-800 text-white">
-                                                        <tr>
-                                                            {['Nº', 'Cliente', 'Valor', 'Situação', 'Ações'].map(h =>
-                                                                <th key={h} className="p-3 text-left text-[9px] font-black uppercase tracking-widest">{h}</th>
-                                                            )}
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody className="divide-y divide-slate-50">
-                                                        {notas.map(nfe => (
-                                                            <tr key={nfe.id} className="hover:bg-orange-50/40 transition-colors">
-                                                                <td className="p-3 font-black text-slate-700">{nfe.numero || nfe.id}</td>
-                                                                <td className="p-3 font-bold text-slate-600 max-w-[200px] truncate">{nfe.contato?.nome || '-'}</td>
-                                                                <td className="p-3 font-black text-emerald-600">{nfe.valorTotal != null ? nfe.valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '-'}</td>
-                                                                <td className="p-3">
-                                                                    <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
-                                                                        nfe.situacao === 5 || nfe.situacao === 6 ? 'bg-green-100 text-green-700' :
-                                                                        nfe.situacao === 1 ? 'bg-yellow-100 text-yellow-700' :
-                                                                        nfe.situacao === 2 ? 'bg-red-100 text-red-700' :
-                                                                        'bg-gray-100 text-gray-500'
-                                                                    }`}>{nfe.situacaoDescr}</span>
-                                                                </td>
-                                                                <td className="p-3">
-                                                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                                                        <button onClick={() => handleAbrirDanfe(nfe)} title="Abrir DANFE" className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-orange-50 text-orange-600 px-2.5 py-1.5 rounded-lg hover:bg-orange-100 border border-orange-100 transition-all">
-                                                                            <Eye size={12}/> DANFE
-                                                                        </button>
-                                                                        <button onClick={() => handleDownloadXml(nfe)} title="Baixar XML" className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-blue-50 text-blue-600 px-2.5 py-1.5 rounded-lg hover:bg-blue-100 border border-blue-100 transition-all">
-                                                                            <Download size={12}/> XML
-                                                                        </button>
-                                                                        <button onClick={() => handleCopiarChave(nfe)} title="Copiar chave de acesso" className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-slate-50 text-slate-600 px-2.5 py-1.5 rounded-lg hover:bg-slate-100 border border-slate-100 transition-all">
-                                                                            <Copy size={12}/> Chave
-                                                                        </button>
-                                                                    </div>
-                                                                </td>
-                                                            </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        );
-                                    })}
+                        {/* Barra de ações em lote */}
+                        {selectedNfeSaidaIds.size > 0 && (
+                            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 mb-4 rounded-2xl bg-emerald-50 border border-emerald-200">
+                                <div className="flex items-center gap-3">
+                                    <span className="text-[10px] font-black text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full">
+                                        {selectedNfeSaidaIds.size} selecionada(s)
+                                    </span>
                                 </div>
-                            );
-                        })()}
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <button onClick={() => setSelectedNfeSaidaIds(new Set())} className="text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 transition-all">
+                                        Limpar
+                                    </button>
+                                    {nfeSaida.some(n => selectedNfeSaidaIds.has(n.id) && n.situacao === 1) && (
+                                        <button onClick={handleBatchEmitirNfe} disabled={isBatchEmitindo} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-yellow-500 text-white hover:bg-yellow-600 disabled:opacity-50 transition-all shadow shadow-yellow-200">
+                                            {isBatchEmitindo ? <Loader2 size={12} className="animate-spin"/> : <Send size={12}/>}
+                                            {isBatchEmitindo ? 'Emitindo...' : 'Emitir Selecionadas'}
+                                        </button>
+                                    )}
+                                    <button onClick={handleBatchZplNotas} disabled={isBatchZplNotas} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-all shadow shadow-blue-200">
+                                        {isBatchZplNotas ? <Loader2 size={12} className="animate-spin"/> : <Printer size={12}/>}
+                                        Etiquetas em Lote
+                                    </button>
+                                </div>
+                            </div>
+                        )}
 
-                        {nfeSaida.length === 0 && !isLoadingNfeSaida && (
-                            <div className="text-center py-10 text-slate-300">
-                                <FileText size={48} className="mx-auto mb-3 opacity-30"/>
-                                <p className="text-sm font-bold">Clique em "Buscar NF-e" para carregar notas fiscais de saída do Bling.</p>
+                        {/* Progresso batch emissão */}
+                        {isBatchEmitindo && (
+                            <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-2xl p-4">
+                                <span className="text-xs font-black text-yellow-700 flex items-center gap-2">
+                                    <Loader2 size={12} className="animate-spin"/> Enviando NF-e para SEFAZ... Aguarde.
+                                </span>
+                            </div>
+                        )}
+
+                        {/* Tabela de NF-e */}
+                        {filteredNfeSaida.length > 0 ? (
+                            <div className="overflow-hidden border border-slate-100 rounded-2xl">
+                                <div className="overflow-x-auto">
+                                    <table className="min-w-full text-sm">
+                                        <thead className="bg-slate-900 text-white sticky top-0">
+                                            <tr>
+                                                <th className="p-3 w-10">
+                                                    <button
+                                                        onClick={() => {
+                                                            const allIds = new Set(filteredNfeSaida.map(n => n.id));
+                                                            const allSel = filteredNfeSaida.every(n => selectedNfeSaidaIds.has(n.id));
+                                                            setSelectedNfeSaidaIds(allSel ? new Set() : allIds);
+                                                        }}
+                                                        className="flex items-center justify-center w-5 h-5 rounded border-2 border-white/40 hover:border-white transition-colors"
+                                                    >
+                                                        {filteredNfeSaida.length > 0 && filteredNfeSaida.every(n => selectedNfeSaidaIds.has(n.id))
+                                                            ? <CheckSquare size={14} className="text-emerald-300"/>
+                                                            : <Square size={14} className="text-white/50"/>}
+                                                    </button>
+                                                </th>
+                                                {['Número', 'Nome', 'Data Emissão', 'Data Saída', 'Nº Venda', 'Situação', 'Valor (R$)', 'Ações'].map(h =>
+                                                    <th key={h} className="p-3 text-left text-[9px] font-black uppercase tracking-widest">{h}</th>
+                                                )}
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {filteredNfeSaida.map(nfe => {
+                                                const isSelected = selectedNfeSaidaIds.has(nfe.id);
+                                                const isPendente = nfe.situacao === 1;
+                                                const isAutorizada = nfe.situacao === 5;
+                                                const isEmitida = nfe.situacao === 6;
+                                                const isAutorizadaSemDanfe = isAutorizada && !nfe.linkDanfe;
+                                                const isEmitidaDanfe = isEmitida || (isAutorizada && !!nfe.linkDanfe);
+                                                const isLoading = emitindoNfeId === nfe.id;
+
+                                                const formatDate = (d?: string) => {
+                                                    if (!d) return '-';
+                                                    const parts = d.split('T')[0].split('-');
+                                                    return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d;
+                                                };
+
+                                                return (
+                                                    <tr key={nfe.id} className={`hover:bg-slate-50 transition-colors ${isSelected ? 'bg-emerald-50/60' : ''} ${isPendente ? 'bg-yellow-50/30' : ''}`}>
+                                                        <td className="p-3 w-10">
+                                                            <button
+                                                                onClick={() => setSelectedNfeSaidaIds(prev => {
+                                                                    const next = new Set(prev);
+                                                                    next.has(nfe.id) ? next.delete(nfe.id) : next.add(nfe.id);
+                                                                    return next;
+                                                                })}
+                                                                className="flex items-center justify-center w-5 h-5 rounded border-2 transition-colors border-slate-300 hover:border-emerald-500"
+                                                            >
+                                                                {isSelected ? <CheckSquare size={14} className="text-emerald-600"/> : <Square size={14} className="text-slate-300"/>}
+                                                            </button>
+                                                        </td>
+                                                        <td className="p-3 font-black text-slate-700">{nfe.numero || nfe.id}</td>
+                                                        <td className="p-3 font-bold text-slate-600 max-w-[180px] truncate" title={nfe.contato?.nome}>{nfe.contato?.nome || '-'}</td>
+                                                        <td className="p-3 text-slate-500 text-xs">{formatDate(nfe.dataEmissao)}</td>
+                                                        <td className="p-3 text-slate-500 text-xs">{formatDate(nfe.dataSaida)}</td>
+                                                        <td className="p-3 font-mono text-xs text-slate-400">{nfe.numeroVenda || '-'}</td>
+                                                        <td className="p-3">
+                                                            <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest whitespace-nowrap ${
+                                                                isPendente ? 'bg-yellow-100 text-yellow-700 border border-yellow-200' :
+                                                                isEmitidaDanfe ? 'bg-green-100 text-green-700 border border-green-200' :
+                                                                isAutorizadaSemDanfe ? 'bg-blue-100 text-blue-700 border border-blue-200' :
+                                                                nfe.situacao === 2 ? 'bg-red-100 text-red-700 border border-red-200' :
+                                                                nfe.situacao === 3 ? 'bg-orange-100 text-orange-700 border border-orange-200' :
+                                                                nfe.situacao === 4 ? 'bg-red-100 text-red-700 border border-red-200' :
+                                                                'bg-gray-100 text-gray-500 border border-gray-200'
+                                                            }`}>
+                                                                {isPendente ? 'Pendente' :
+                                                                 isEmitidaDanfe ? 'Emitida DANFE' :
+                                                                 isAutorizadaSemDanfe ? 'Autoriz. s/ DANFE' :
+                                                                 nfe.situacaoDescr}
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-3 font-black text-emerald-600 whitespace-nowrap">
+                                                            {nfe.valorTotal != null ? nfe.valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '-'}
+                                                        </td>
+                                                        <td className="p-3">
+                                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                                {/* Pendente — botão Emitir */}
+                                                                {isPendente && (
+                                                                    <button
+                                                                        onClick={() => handleEmitirNfe(nfe)}
+                                                                        disabled={isLoading || isBatchEmitindo}
+                                                                        title="Enviar NF-e para SEFAZ"
+                                                                        className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-yellow-100 text-yellow-800 px-2.5 py-1.5 rounded-lg hover:bg-yellow-200 border border-yellow-200 disabled:opacity-50 transition-all"
+                                                                    >
+                                                                        {isLoading ? <Loader2 size={11} className="animate-spin"/> : <Send size={11}/>} Emitir
+                                                                    </button>
+                                                                )}
+                                                                {/* Autorizada/Emitida — DANFE */}
+                                                                {(isEmitidaDanfe || isAutorizadaSemDanfe) && (
+                                                                    <button onClick={() => handleAbrirDanfe(nfe)} title="Abrir DANFE" className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-orange-50 text-orange-600 px-2.5 py-1.5 rounded-lg hover:bg-orange-100 border border-orange-100 transition-all">
+                                                                        <Eye size={11}/> DANFE
+                                                                    </button>
+                                                                )}
+                                                                {/* XML */}
+                                                                {(isEmitidaDanfe || isAutorizadaSemDanfe) && (
+                                                                    <button onClick={() => handleDownloadXml(nfe)} title="Baixar XML" className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-blue-50 text-blue-600 px-2.5 py-1.5 rounded-lg hover:bg-blue-100 border border-blue-100 transition-all">
+                                                                        <Download size={11}/> XML
+                                                                    </button>
+                                                                )}
+                                                                {/* Chave */}
+                                                                {(isEmitidaDanfe || isAutorizadaSemDanfe) && (
+                                                                    <button onClick={() => handleCopiarChave(nfe)} title="Copiar chave de acesso" className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-slate-50 text-slate-600 px-2.5 py-1.5 rounded-lg hover:bg-slate-100 border border-slate-100 transition-all">
+                                                                        <Copy size={11}/> Chave
+                                                                    </button>
+                                                                )}
+                                                                {/* Etiqueta (para notas autorizadas/emitidas) */}
+                                                                {(isEmitidaDanfe || isAutorizadaSemDanfe) && canGerarEtiquetas && (
+                                                                    <button
+                                                                        onClick={() => handleGerarEtiquetaNfe(nfe)}
+                                                                        disabled={isLoading}
+                                                                        title="Gerar Etiqueta de Envio + DANFE"
+                                                                        className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-indigo-50 text-indigo-700 px-2.5 py-1.5 rounded-lg hover:bg-indigo-100 border border-indigo-100 disabled:opacity-50 transition-all"
+                                                                    >
+                                                                        {isLoading ? <Loader2 size={11} className="animate-spin"/> : <Printer size={11}/>} Etiqueta
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="text-center py-16 text-slate-300">
+                                {isLoadingNfeSaida ? (
+                                    <>
+                                        <Loader2 size={48} className="mx-auto mb-4 opacity-40 animate-spin text-emerald-500"/>
+                                        <p className="font-bold text-sm text-emerald-700">Buscando notas fiscais do Bling...</p>
+                                        <p className="text-xs mt-1">Consultando todas as páginas do período selecionado.</p>
+                                    </>
+                                ) : nfeSaida.length > 0 ? (
+                                    <>
+                                        <Filter size={48} className="mx-auto mb-4 opacity-20"/>
+                                        <p className="font-bold text-sm">Nenhuma nota corresponde ao filtro atual.</p>
+                                        <p className="text-xs mt-1">Tente alterar o filtro de situação ou a busca.</p>
+                                    </>
+                                ) : (
+                                    <>
+                                        <FileText size={48} className="mx-auto mb-4 opacity-20"/>
+                                        <p className="font-bold text-sm">Nenhuma nota fiscal carregada.</p>
+                                        <p className="text-xs mt-1">Selecione o período e clique em <strong className="text-emerald-600">Buscar NF-e</strong> para carregar as notas fiscais de saída do Bling.</p>
+                                    </>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Resumo rodapé */}
+                        {filteredNfeSaida.length > 0 && (
+                            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                    {filteredNfeSaida.length} nota(s) — Total: {filteredNfeSaida.reduce((sum, n) => sum + (n.valorTotal || 0), 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                    Período: {filters.startDate ? new Date(filters.startDate + 'T12:00:00').toLocaleDateString('pt-BR') : '—'} até {filters.endDate ? new Date(filters.endDate + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}
+                                </span>
                             </div>
                         )}
                     </div>
-
                 </div>
             )}
 

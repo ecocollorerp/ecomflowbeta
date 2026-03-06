@@ -46,6 +46,27 @@ function handleBlingError(data: any, defaultMessage: string): void {
     }
 }
 
+/**
+ * Helper genérico de retry para qualquer fetch (endpoints locais do server).
+ * Tenta novamente em caso de HTTP 429 (rate limit) com backoff progressivo.
+ */
+async function fetchWithRetry(
+    input: RequestInfo | URL,
+    init?: RequestInit,
+    _retryCount = 0,
+): Promise<Response> {
+    const MAX_RETRIES = 3;
+    const BASE_DELAY_MS = 1200;
+    const resp = await fetch(input, init);
+    if (resp.status === 429 && _retryCount < MAX_RETRIES) {
+        const delay = BASE_DELAY_MS * (_retryCount + 1);
+        console.warn(`⏳ [fetchWithRetry] 429 — retry ${_retryCount + 1}/${MAX_RETRIES} em ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+        return fetchWithRetry(input, init, _retryCount + 1);
+    }
+    return resp;
+}
+
 // Helper for V3 fetch with Auth header + auto-retry on rate limit (429)
 async function fetchV3(endpoint: string, apiKey: string, params: Record<string, string> = {}, _retryCount = 0): Promise<any> {
     const MAX_RETRIES = 3;
@@ -279,7 +300,7 @@ export async function fetchEtiquetaZplForPedido(apiKey: string, idPedidoVenda: s
 
     // Chama endpoint server-side que busca dados reais do pedido no Bling
     try {
-        const resp = await fetch('/api/bling/etiquetas/buscar', {
+        const resp = await fetchWithRetry('/api/bling/etiquetas/buscar', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -332,7 +353,7 @@ export async function fetchEtiquetasLote(apiKey: string, pedidoVendaIds: string[
     fail: number;
     results: Array<{ pedidoVendaId: string; success: boolean; zpl?: string; numero?: string; nomeCliente?: string; error?: string }>;
 }> {
-    const resp = await fetch('/api/bling/etiquetas/buscar', {
+    const resp = await fetchWithRetry('/api/bling/etiquetas/buscar', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -348,7 +369,7 @@ export async function fetchEtiquetasLote(apiKey: string, pedidoVendaIds: string[
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// NOTAS FISCAIS DE SAÍDA — listar, detalhar, baixar XML/DANFE
+// NOTAS FISCAIS DE SAÍDA — listar, emitir, detalhar, baixar XML/DANFE
 // ──────────────────────────────────────────────────────────────────────────────
 
 export interface NfeSaida {
@@ -359,53 +380,91 @@ export interface NfeSaida {
     situacao?: number; // 1=Pendente, 5=Autorizada, 6=Emitida, 2=Cancelada...
     situacaoDescr?: string;
     dataEmissao?: string;
+    dataSaida?: string;
     valorTotal?: number;
-    contato?: { id?: number; nome?: string };
+    contato?: { id?: number; nome?: string; numeroDocumento?: string };
     linkDanfe?: string;
     linkXml?: string;
     xml?: string;
+    numeroVenda?: string; // número do pedido de venda vinculado
 }
+
+// Mapeamento de situação ID → descrição legível (exportado para uso externo)
+export const NFE_SIT_MAP: Record<number, string> = {
+    1: 'Pendente', 2: 'Cancelada', 3: 'Aguardando Recibo', 4: 'Rejeitada',
+    5: 'Autorizada', 6: 'Emitida', 7: 'Denegada', 8: 'Encerrada',
+};
 
 /**
  * Busca notas fiscais de saída do Bling (tipo=1) com filtros de data e situação.
+ * Suporta paginação automática para buscar TODAS as notas do período.
  */
 export async function fetchNfeSaida(
     apiKey: string,
     opts: { dataInicial?: string; dataFinal?: string; situacao?: number; pagina?: number } = {}
 ): Promise<NfeSaida[]> {
     const authH = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
-    const params: Record<string, string> = {};
-    if (opts.dataInicial) params.dataInicial = opts.dataInicial;
-    if (opts.dataFinal) params.dataFinal = opts.dataFinal;
-    if (opts.situacao) params.situacao = String(opts.situacao);
-    if (opts.pagina) params.pagina = String(opts.pagina);
+    const allNotas: NfeSaida[] = [];
+    let pagina = opts.pagina || 1;
+    const MAX_PAGES = 10; // segurança
 
-    const resp = await fetch(`/api/bling/nfe/listar-saida?${new URLSearchParams(params).toString()}`, {
-        headers: { Authorization: authH, Accept: 'application/json' },
+    for (let p = 0; p < MAX_PAGES; p++) {
+        const params: Record<string, string> = {};
+        if (opts.dataInicial) params.dataInicial = opts.dataInicial;
+        if (opts.dataFinal) params.dataFinal = opts.dataFinal;
+        if (opts.situacao) params.situacao = String(opts.situacao);
+        params.pagina = String(pagina);
+
+        const resp = await fetchWithRetry(`/api/bling/nfe/listar-saida?${new URLSearchParams(params).toString()}`, {
+            headers: { Authorization: authH, Accept: 'application/json' },
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err?.error || `Erro ${resp.status}`);
+        }
+        const data = await resp.json();
+        const notas: any[] = data?.notas || data?.data || [];
+        if (notas.length === 0) break;
+
+        allNotas.push(...notas.map((n: any) => ({
+            id: n.id,
+            numero: n.numero ? String(n.numero) : undefined,
+            serie: n.serie ? String(n.serie) : undefined,
+            chaveAcesso: n.chaveAcesso || n.chave_acesso || undefined,
+            situacao: n.situacao,
+            situacaoDescr: NFE_SIT_MAP[n.situacao] || `Situação ${n.situacao}`,
+            dataEmissao: n.dataEmissao || n.dataOperacao || n.data,
+            dataSaida: n.dataOperacao || n.dataEmissao || n.data,
+            valorTotal: n.valorNota || n.total || n.valor || undefined,
+            contato: n.contato ? { id: n.contato.id, nome: n.contato.nome, numeroDocumento: n.contato.numeroDocumento } : undefined,
+            linkDanfe: n.linkDanfe || n.link || n.linkDANFE || undefined,
+            linkXml: n.linkXml || n.xml || undefined,
+            numeroVenda: n.numeroPedidoCompra || n.numeroLoja || undefined,
+        })));
+
+        if (notas.length < 100) break; // última página
+        pagina++;
+        // Delay entre páginas
+        await new Promise(r => setTimeout(r, 500));
+    }
+
+    return allNotas;
+}
+
+/**
+ * Envia (emite) uma NF-e pendente para a SEFAZ via Bling.
+ */
+export async function enviarNfe(apiKey: string, nfeId: number): Promise<any> {
+    const authH = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+    const resp = await fetchWithRetry(`/api/bling/nfe/${nfeId}/enviar`, {
+        method: 'POST',
+        headers: { Authorization: authH, Accept: 'application/json', 'Content-Type': 'application/json' },
     });
     if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         throw new Error(err?.error || `Erro ${resp.status}`);
     }
-    const data = await resp.json();
-    const notas: any[] = data?.notas || data?.data || [];
-
-    // Mapeamento de situação ID → descrição legível
-    const sitMap: Record<number, string> = { 1: 'Pendente', 2: 'Cancelada', 3: 'Aguardando Recibo', 4: 'Rejeitada', 5: 'Autorizada', 6: 'Emitida', 7: 'Denegada', 8: 'Encerrada' };
-
-    return notas.map((n: any) => ({
-        id: n.id,
-        numero: n.numero ? String(n.numero) : undefined,
-        serie: n.serie ? String(n.serie) : undefined,
-        chaveAcesso: n.chaveAcesso || n.chave_acesso || undefined,
-        situacao: n.situacao,
-        situacaoDescr: sitMap[n.situacao] || `Situação ${n.situacao}`,
-        dataEmissao: n.dataEmissao || n.dataOperacao || n.data,
-        valorTotal: n.valorNota || n.total || n.valor || undefined,
-        contato: n.contato || undefined,
-        linkDanfe: n.linkDanfe || n.link || n.linkDANFE || undefined,
-        linkXml: n.linkXml || n.xml || undefined,
-    }));
+    return resp.json();
 }
 
 /**
@@ -413,7 +472,7 @@ export async function fetchNfeSaida(
  */
 export async function fetchNfeDetalhe(apiKey: string, nfeId: number): Promise<any> {
     const authH = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
-    const resp = await fetch(`/api/bling/nfe/detalhe/${nfeId}`, {
+    const resp = await fetchWithRetry(`/api/bling/nfe/detalhe/${nfeId}`, {
         headers: { Authorization: authH, Accept: 'application/json' },
     });
     if (!resp.ok) {
@@ -428,7 +487,7 @@ export async function fetchNfeDetalhe(apiKey: string, nfeId: number): Promise<an
  */
 export async function fetchPedidoVendaDetalhe(apiKey: string, pedidoId: string | number): Promise<any> {
     const authH = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
-    const resp = await fetch(`/api/bling/pedido-venda/${pedidoId}`, {
+    const resp = await fetchWithRetry(`/api/bling/pedido-venda/${pedidoId}`, {
         headers: { Authorization: authH, Accept: 'application/json' },
     });
     if (!resp.ok) {
@@ -444,7 +503,7 @@ export async function fetchPedidoVendaDetalhe(apiKey: string, pedidoId: string |
  */
 export async function atualizarPedidoVenda(apiKey: string, pedidoId: string | number, dados: any): Promise<any> {
     const authH = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
-    const resp = await fetch(`/api/bling/pedido-venda/${pedidoId}`, {
+    const resp = await fetchWithRetry(`/api/bling/pedido-venda/${pedidoId}`, {
         method: 'PUT',
         headers: { Authorization: authH, 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify(dados),
