@@ -1,8 +1,70 @@
 
-import { ExtractedZplData, ZplSettings, OrderItem, GeneralSettings } from '../types';
+import { ExtractedZplData, ZplSettings, OrderItem, GeneralSettings, SkuLink, StockItem } from '../types';
 import { getMultiplicadorFromSku } from '../lib/sku';
 import { splitZpl, filterAndPairZplPages, simpleHash } from '../utils/zplUtils';
 import { renderZpl } from './pdfGenerator';
+
+/**
+ * Consolida SKUs vinculadas para seus produtos principais
+ * Exemplo: Se SKU-001 é vinculada ao SKU-MAIN, converte {sku: 'SKU-001', qty: 5} para {sku: 'SKU-MAIN', qty: 5}
+ * @param skus Array de SKUs com quantidades
+ * @param skuLinks Mapa de vinculações (SKU importada -> SKU produto principal)
+ * @param stockItems Mapa de itens de estoque para obter informações do produto
+ * @returns Array consolidado com apenas produtos principais
+ */
+export const consolidateSkusByMasterProduct = (
+    skus: Array<{ sku: string; qty: number }>,
+    skuLinks?: SkuLink[],
+    stockItems?: StockItem[]
+): Array<{ sku: string; qty: number; product?: StockItem }> => {
+    if (!skuLinks || skuLinks.length === 0) {
+        // Se não há vinculações, retorna os SKUs originais
+        const itemMap = new Map(stockItems?.map(item => [item.code.toUpperCase(), item]) ?? []);
+        return skus.map(s => ({
+            sku: s.sku,
+            qty: s.qty,
+            product: itemMap.get(s.sku.toUpperCase())
+        }));
+    }
+    
+    // Criar mapa de vinculações para lookup rápido
+    const skuLinkMap = new Map(
+        skuLinks.map(link => [link.importedSku.toUpperCase(), link.masterProductSku.toUpperCase()])
+    );
+    
+    // Criar mapa de itens de estoque
+    const itemMap = new Map(
+        stockItems?.map(item => [item.code.toUpperCase(), item]) ?? []
+    );
+    
+    // Consolidar SKUs por produto principal
+    const consolidated = new Map<string, { sku: string; qty: number; product?: StockItem }>();
+    
+    for (const { sku, qty } of skus) {
+        const normalizedSku = sku.toUpperCase();
+        
+        // Verificar se é uma SKU vinculada
+        const masterSku = skuLinkMap.get(normalizedSku);
+        const finalSku = masterSku || normalizedSku;
+        
+        // Buscar informações do produto
+        const product = itemMap.get(finalSku);
+        
+        // Consolidar quantidade
+        if (consolidated.has(finalSku)) {
+            const existing = consolidated.get(finalSku)!;
+            existing.qty += qty;
+        } else {
+            consolidated.set(finalSku, {
+                sku: finalSku,
+                qty,
+                product
+            });
+        }
+    }
+    
+    return Array.from(consolidated.values());
+};
 
 export const extractFields = async (zplPage: string, patterns: ZplSettings['regex']): Promise<ExtractedZplData> => {
     const skus: { sku: string; qty: number }[] = [];

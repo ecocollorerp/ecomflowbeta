@@ -7,6 +7,7 @@ import ConfirmActionModal from '../components/ConfirmActionModal';
 import Pagination from '../components/Pagination';
 import LogErrorModal from '../components/LogErrorModal';
 import SolutionModal from '../components/SolutionModal';
+import { PLATFORM_SELECT_OPTIONS } from '../utils/platformLabels';
 
 // --- Helper Functions & Types ---
 
@@ -581,7 +582,11 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                             <div className="flex-shrink-0 flex flex-wrap gap-4 justify-between items-center mb-4">
                                 <div className="flex flex-wrap gap-4 items-center">
                                     <div className="relative flex-grow min-w-[250px]"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" /><input type="text" placeholder="Buscar..." value={filters.search} onChange={e => handleFilterChange('search', e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md"/></div>
-                                    <select value={filters.canal} onChange={e => handleFilterChange('canal', e.target.value)} className="p-2 text-sm border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800"><option value="ALL">Todos Canais</option><option value="ML">Mercado Livre</option><option value="SHOPEE">Shopee</option><option value="SITE">Site</option></select>
+                                    <select value={filters.canal} onChange={e => handleFilterChange('canal', e.target.value)} className="p-2 text-sm border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800">
+                                        {PLATFORM_SELECT_OPTIONS.map(option => (
+                                            <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
+                                    </select>
                                     <select value={filters.status} onChange={e => handleFilterChange('status', e.target.value)} className="p-2 text-sm border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800">
                                         <option value="ALL">Todos Status</option>
                                         {[...ORDER_STATUS_VALUES, 'ATRASADO', 'PARCIALMENTE BIPADO'].map(status => <option key={status} value={status}>{status}</option>)}

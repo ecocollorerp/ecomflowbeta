@@ -8,7 +8,7 @@ import { etiquetaBlingFluxoCompleto } from '../services/etiquetaBlingFluxoComple
 import { importacaoControllerService } from '../services/importacaoControllerService';
 
 export interface UseFluxoCompleteProps {
-  tipoPedidos?: 'nfe' | 'mercado_livre';
+  tipoPedidos?: 'nfe' | 'mercado_livre' | 'shopee';
   addToast?: (msg: string, tipo: 'success' | 'error' | 'info') => void;
 }
 
@@ -64,12 +64,27 @@ export const useFluxoCompleteEtiquetas = ({
           return true;
         } else if (tipoPedidos === 'mercado_livre') {
           const resultado =
-            await importacaoControllerService.buscarMercadoLivreComEtiquetaPronta(
-              token
+            await importacaoControllerService.buscarPedidosEmAbertoPorPlataforma(
+              token,
+              'MERCADO_LIVRE',
+              { quantidadeDesejada }
             );
-          setPedidosSelecionados(resultado.pedidos);
+          setPedidosSelecionados(resultado.pedidosDisponiveis);
           addToast?.(
-            `✅ Carregado ${resultado.pedidos.length} / ${resultado.total} pedidos com etiqueta`,
+            `✅ Carregado ${resultado.pedidosDisponiveis.length} de ${resultado.total} pedidos Mercado Livre em aberto`,
+            'success'
+          );
+          return true;
+        } else if (tipoPedidos === 'shopee') {
+          const resultado =
+            await importacaoControllerService.buscarPedidosEmAbertoPorPlataforma(
+              token,
+              'SHOPEE',
+              { quantidadeDesejada }
+            );
+          setPedidosSelecionados(resultado.pedidosDisponiveis);
+          addToast?.(
+            `✅ Carregado ${resultado.pedidosDisponiveis.length} de ${resultado.total} pedidos Shopee em aberto`,
             'success'
           );
           return true;

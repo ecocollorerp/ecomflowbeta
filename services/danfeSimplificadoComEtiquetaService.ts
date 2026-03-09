@@ -513,16 +513,47 @@ Todos os arquivos consolidados (DANFE + Etiqueta) estão prontos para download.
     const origem = (pedido.origem || '').toUpperCase();
     const nomeLojaVirtual = (pedido.nomeLojaVirtual || '').toUpperCase();
 
-    if (canal.includes('SHOPEE') || origem.includes('SHOPEE')) return 'SHOPEE';
-    if (
-      canal.includes('MERCADO LIVRE') ||
-      origem.includes('MERCADO LIVRE') ||
-      nomeLojaVirtual.includes('MERCADO LIVRE')
-    )
-      return 'MERCADO_LIVRE';
+    // 🔍 Procurar por "Número loja virtual" nas informações adicionais para detectar plataforma
+    let numeroLojaVirtualExtraido = pedido.numeroLoja || pedido.numeroLojaVirtual || pedido.numeroPedidoCompra;
+    let plataformaDetectada: 'SHOPEE' | 'MERCADO_LIVRE' | 'SITE' = 'SITE';
+    
+    const camposTexto = [
+      pedido?.observacoes,
+      pedido?.observacoesInternas, 
+      pedido?.informacoesAdicionais,
+      pedido?.dadosAdicionais,
+      JSON.stringify(pedido?.informacoesAdicionais || {}),
+      JSON.stringify(pedido?.dadosAdicionais || {})
+    ].filter(Boolean);
+    
+    for (const campo of camposTexto) {
+      if (typeof campo === 'string') {
+        const match = campo.match(/(?:Número\s+(?:loja\s+virtual|da\s+loja)|Order\s+ID|Pedido\s+original)\s*[:\-]?\s*([A-Za-z0-9\-_]+)/i);
+        if (match && match[1]) {
+          numeroLojaVirtualExtraido = match[1].trim();
+          break;
+        }
+      }
+    }
 
-    return 'SITE';
-  }
+    if (canal.includes('SHOPEE') || origem.includes('SHOPEE') || numeroLojaVirtualExtraido?.toUpperCase().includes('SP')) {
+      plataformaDetectada = 'SHOPEE';
+    } else if (canal.includes('MERCADO LIVRE') || origem.includes('MERCADO LIVRE') || nomeLojaVirtual.includes('MERCADO LIVRE') || numeroLojaVirtualExtraido?.match(/ML[A-Z0-9]+/i)) {
+      plataformaDetectada = 'MERCADO_LIVRE';
+    } else if (numeroLojaVirtualExtraido && numeroLojaVirtualExtraido !== pedido.numeroLoja) {
+      // Se encontramos um número diferente nas informações adicionais, tentar identificar a plataforma
+      if (numeroLojaVirtualExtraido.match(/ML[A-Z0-9]+/i)) {
+        plataformaDetectada = 'MERCADO_LIVRE';
+      } else if (numeroLojaVirtualExtraido.toUpperCase().includes('SP') || numeroLojaVirtualExtraido.match(/\d{10,}/)) {
+        plataformaDetectada = 'SHOPEE';
+      } else {
+        plataformaDetectada = 'SITE';
+      }
+    } else {
+      plataformaDetectada = 'SITE';
+    }
+
+    return plataformaDetectada;
 }
 
 export const danfeSimplificadoComEtiquetaService =

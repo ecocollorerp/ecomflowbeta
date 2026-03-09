@@ -122,18 +122,49 @@ export class ImportacaoControllerService {
           const nomeLojaStr = (pedido?.nomeLojaVirtual || '').toUpperCase();
           const idLojaVirtual = pedido?.idLojaVirtual || pedido?.lojaVirtualId;
           
-          if (canalStr.includes('SHOPEE') || nomeLojaStr.includes('SHOPEE')) {
+          // 🔍 Procurar por "Número loja virtual" nas informações adicionais
+          let numeroLojaVirtualExtraido = pedido.numeroLoja;
+          
+          // Verificar em observacoes e outras campos que podem conter informações adicionais
+          const camposTexto = [
+            pedido?.observacoes,
+            pedido?.observacoesInternas,
+            pedido?.informacoesAdicionais,
+            pedido?.dadosAdicionais,
+            JSON.stringify(pedido?.informacoesAdicionais || {}),
+            JSON.stringify(pedido?.dadosAdicionais || {})
+          ].filter(Boolean);
+          
+          for (const campo of camposTexto) {
+            if (typeof campo === 'string') {
+              // Procurar por padrões como "Número loja virtual: 12345" ou "Número da loja: 12345"
+              const match = campo.match(/(?:Número\s+(?:loja\s+virtual|da\s+loja)|Order\s+ID|Pedido\s+original)\s*[:\-]?\s*([A-Za-z0-9\-_]+)/i);
+              if (match && match[1]) {
+                numeroLojaVirtualExtraido = match[1].trim();
+                break;
+              }
+            }
+          }
+          
+          if (canalStr.includes('SHOPEE') || nomeLojaStr.includes('SHOPEE') || numeroLojaVirtualExtraido?.toUpperCase().includes('SP')) {
             origem = 'SHOPEE';
-          } else if (canalStr.includes('MERCADO') || nomeLojaStr.includes('MERCADO')) {
+          } else if (canalStr.includes('MERCADO') || nomeLojaStr.includes('MERCADO') || numeroLojaVirtualExtraido?.match(/ML[A-Z0-9]+/i)) {
             origem = 'MERCADO_LIVRE';
           } else if (canalStr.includes('SITE') || canalStr.includes('TRAY') || canalStr.includes('WOOCOMMERCE') || nomeLojaStr.includes('SITE')) {
             origem = 'SITE';
+          } else if (numeroLojaVirtualExtraido && numeroLojaVirtualExtraido !== pedido.numeroLoja) {
+            // Se encontramos um número diferente nas informações adicionais, tentar identificar a plataforma
+            if (numeroLojaVirtualExtraido.match(/ML[A-Z0-9]+/i)) {
+              origem = 'MERCADO_LIVRE';
+            } else if (numeroLojaVirtualExtraido.toUpperCase().includes('SP') || numeroLojaVirtualExtraido.match(/\d{10,}/)) {
+              origem = 'SHOPEE';
+            }
           }
 
           return {
             id: `bling_${pedido.id}`,
             numero: pedido.numero,
-            numeroLoja: pedido.numeroLoja,
+            numeroLoja: numeroLojaVirtualExtraido || pedido.numeroLoja,
             dataCompra: pedido.data || new Date().toISOString(),
             cliente: {
               nome: pedido?.contato?.nome || 'Sem nome',
@@ -325,33 +356,169 @@ export class ImportacaoControllerService {
       // Retornar a quantidade desejada
       const pedidosSelecionados = todosOsPedidos.slice(0, quantidadeDesejada);
 
-      return {
-        pedidosDisponiveis: pedidosSelecionados.map((pedido: any) => ({
-          id: `bling_${pedido.id}`,
-          numero: pedido.numero,
-          numeroLoja: pedido.numeroLoja,
-          dataCompra: pedido.data || new Date().toISOString(),
-          cliente: {
-            nome: pedido?.contato?.nome || 'Sem nome',
-            cpfCnpj: pedido?.contato?.numeroDocumento || '-',
-            email: pedido?.contato?.email,
+  /**
+   * 📋 Buscar TODOS os pedidos em aberto filtrados por plataforma (Mercado Livre ou Shopee)
+   * Carrega todos os pedidos em aberto até não haver mais, somando progressivamente
+   */
+  static async buscarPedidosEmAbertoPorPlataforma(
+    token: string,
+    plataforma: 'MERCADO_LIVRE' | 'SHOPEE',
+    opcoes: {
+      quantidadeDesejada?: number;
+      dataInicio?: string;
+      dataFim?: string;
+      apenasComEtiqueta?: boolean; // Para MercadoLivre: filtrar apenas pedidos com etiqueta disponível
+    } = {}
+  ): Promise<{
+    pedidosDisponiveis: PedidoblingNaoVinculado[];
+    total: number;
+    quantidadeDesejada: number;
+    plataforma: string;
+  }> {
+    try {
+      console.log(`📋 Buscando pedidos em aberto da ${plataforma}...`);
+
+      const { quantidadeDesejada = 100, dataInicio, dataFim, apenasComEtiqueta = false } = opcoes;
+
+      // Carregar TODOS os pedidos em aberto (paginação infinita)
+      let todosOsPedidos: any[] = [];
+      let pagina = 1;
+      const limite = 100;
+      let continuarCarregando = true;
+
+      // Mapeamento de plataforma para filtros do Bling
+      const filtrosPlataforma = {
+        MERCADO_LIVRE: {
+          canal: 'MERCADO',
+          loja: 'MERCADO'
+        },
+        SHOPEE: {
+          canal: 'SHOPEE',
+          loja: 'SHOPEE'
+        }
+      };
+
+      const filtro = filtrosPlataforma[plataforma];
+
+      while (continuarCarregando) {
+        let url = `https://www.bling.com.br/Api/v3/pedidos/vendas?limite=${limite}&pagina=${pagina}&idsSituacoes=6&idsSituacoes=15`;
+
+        if (dataInicio) url += `&dataInicial=${dataInicio}`;
+        if (dataFim) url += `&dataFinal=${dataFim}`;
+
+        const resp = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/json',
           },
-          origem: 'SITE' as const,
-          itens: (pedido?.itens || []).map((item: any) => ({
-            descricao: item.descricao,
-            sku: item.codigo,
-            quantidade: item.quantidade,
-            valor: item.valor,
-          })),
-          total: pedido.total || 0,
-          status: pedido.status || 'aberto',
-          jaImportado: false,
+        });
+
+        if (!resp.ok) {
+          throw new Error(`Erro ao buscar pedidos: ${resp.status}`);
+        }
+
+        const data = await resp.json();
+        const pedidos = data?.data || [];
+
+        if (pedidos.length === 0) {
+          continuarCarregando = false;
+        } else {
+          // Filtrar por plataforma
+          const pedidosFiltrados = pedidos.filter((pedido: any) => {
+            const canal = (pedido?.canal || pedido?.canaldados || '').toUpperCase();
+            const nomeLoja = (pedido?.loja?.nome || pedido?.nomeLojaVirtual || '').toUpperCase();
+
+            if (plataforma === 'MERCADO_LIVRE') {
+              const ehMercadoLivre = canal.includes('MERCADO') || nomeLoja.includes('MERCADO') || canal.includes('ML');
+              
+              // Se apenasComEtiqueta for true, filtrar apenas pedidos com etiqueta disponível
+              if (apenasComEtiqueta && ehMercadoLivre) {
+                // Procurar por campo "etiqueta" ou "tag" ou "numero" que indique disponibilidade
+                const temEtiqueta = pedido?.etiqueta || pedido?.tag || pedido?.numeroEtiqueta;
+                const estaDisponivel = pedido?.situacao === 'DISPONÍVEL' || pedido?.etiquetaDisponivel === true;
+                return temEtiqueta || estaDisponivel;
+              }
+              
+              return ehMercadoLivre;
+            } else if (plataforma === 'SHOPEE') {
+              return canal.includes('SHOPEE') || nomeLoja.includes('SHOPEE');
+            }
+            return false;
+          });
+
+          todosOsPedidos = [...todosOsPedidos, ...pedidosFiltrados];
+          pagina++;
+
+          console.log(
+            `   📥 Carregado: ${todosOsPedidos.length} pedidos ${plataforma} (página ${pagina - 1})`
+          );
+
+          // Continuar até carregar pelo menos a quantidade desejada ou não haver mais páginas
+          if (todosOsPedidos.length >= quantidadeDesejada || pedidos.length < limite) {
+            continuarCarregando = false;
+          }
+        }
+
+        // Segurança: máximo 50 páginas
+        if (pagina > 50) {
+          continuarCarregando = false;
+        }
+      }
+
+      // Retornar a quantidade desejada ou todos se houver menos
+      const pedidosSelecionados = todosOsPedidos.slice(0, quantidadeDesejada);
+
+      return {
+        pedidosDisponiveis: pedidosSelecionados.map((pedido: any) => {
+          // 🔍 Extrair número da loja virtual das informações adicionais
+          let numeroLojaVirtualExtraido = pedido.numeroLoja;
+          
+          const camposTexto = [
+            pedido?.observacoes,
+            pedido?.observacoesInternas,
+            pedido?.informacoesAdicionais,
+            pedido?.dadosAdicionais,
+            JSON.stringify(pedido?.informacoesAdicionais || {}),
+            JSON.stringify(pedido?.dadosAdicionais || {})
+          ].filter(Boolean);
+          
+          for (const campo of camposTexto) {
+            if (typeof campo === 'string') {
+              const match = campo.match(/(?:Número\s+(?:loja\s+virtual|da\s+loja)|Order\s+ID|Pedido\s+original)\s*[:\-]?\s*([A-Za-z0-9\-_]+)/i);
+              if (match && match[1]) {
+                numeroLojaVirtualExtraido = match[1].trim();
+                break;
+              }
+            }
+          }
+
+          return {
+            id: `bling_${pedido.id}`,
+            numero: pedido.numero,
+            numeroLoja: numeroLojaVirtualExtraido || pedido.numeroLoja,
+            dataCompra: pedido.data || new Date().toISOString(),
+            cliente: {
+              nome: pedido?.contato?.nome || 'Sem nome',
+              cpfCnpj: pedido?.contato?.numeroDocumento || '-',
+              email: pedido?.contato?.email,
+            },
+            origem: plataforma,
+            itens: (pedido?.itens || []).map((item: any) => ({
+              descricao: item.descricao,
+              sku: item.codigo,
+              quantidade: item.quantidade,
+              valor: item.valor,
+            })),
+            total: pedido.total || 0,
+            status: pedido.situacao?.descricao || 'Em aberto',
+            jaImportado: false,
         })),
         total: todosOsPedidos.length,
         quantidadeDesejada,
+        plataforma,
       };
     } catch (error: any) {
-      console.error('❌ Erro ao buscar pedidos NFe:', error.message);
+      console.error(`❌ Erro ao buscar pedidos ${plataforma}:`, error.message);
       throw error;
     }
   }
