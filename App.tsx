@@ -29,6 +29,7 @@ import BiDashboardPage from './pages/BiDashboardPage';
 import PowerBiTemplatesPage from './pages/PowerBiTemplatesPage';
 import ConfirmActionModal from './components/ConfirmActionModal';
 import { BulkLinkSKUsModal } from './components/BulkLinkSKUsModal';
+import EditProductModal from './components/EditProductModal';
 
 import { 
     ProcessedData, StockItem, StockMovement, ProdutoCombinado, 
@@ -136,6 +137,10 @@ const App: React.FC = () => {
   // 🔗 States para Seleção Múltipla de SKUs na Importação
   const [isBulkLinkSKUsModalOpen, setIsBulkLinkSKUsModalOpen] = useState(false);
   const [importedSkusForBulkLink, setImportedSkusForBulkLink] = useState<Array<{ sku: string; name: string; price?: number }>>([]);
+
+  // ✏️ State para edição de Produto
+  const [isEditProductModalOpen, setIsEditProductModalOpen] = useState(false);
+  const [productToEdit, setProductToEdit] = useState<StockItem | null>(null);
 
   const [productionPlans, setProductionPlans] = useState<ProductionPlan[]>([]);
   const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
@@ -532,7 +537,7 @@ const App: React.FC = () => {
 
             const queries = [
                 // dbClient.from('orders').select('*').order('created_at', { ascending: false }).limit(100000), // Replaced by fetchAll
-                dbClient.from('returns').select('*').order('created_at', { ascending: false }).limit(5000),
+                dbClient.from('returns').select('*').limit(5000),
                 dbClient.from('sku_links').select('*'),
                 // dbClient.from('scan_logs').select('*').order('created_at', { ascending: false }).limit(50000), // Replaced by fetchAll
                 dbClient.from('users').select('*'),
@@ -578,7 +583,7 @@ const App: React.FC = () => {
             });
             
             // Set data from fetchAll
-            setAllOrders(ordersData.map((o: any) => ({ id: o.id, orderId: o.order_id, tracking: o.tracking, sku: o.sku, qty_original: Number(o.qty_original || 0), multiplicador: Number(o.multiplicador || 0), qty_final: Number(o.qty_final || 0), color: o.color, canal: o.canal, data: o.data, created_at: o.created_at, status: o.status, error_reason: o.error_reason, customer_name: o.customer_name, customer_cpf_cnpj: o.customer_cpf_cnpj, resolution_details: o.resolution_details, price_gross: o.price_gross, platform_fees: o.platform_fees, shipping_fee: o.shipping_fee, price_net: o.price_net, data_prevista_envio: o.data_prevista_envio })));
+            setAllOrders(ordersData.map((o: any) => ({ id: o.id, orderId: o.order_id, blingNumero: o.bling_numero || '', tracking: o.tracking, sku: o.sku, qty_original: Number(o.qty_original || 0), multiplicador: Number(o.multiplicador || 0), qty_final: Number(o.qty_final || 0), color: o.color, canal: o.canal, data: o.data, created_at: o.created_at, status: o.status, error_reason: o.error_reason, customer_name: o.customer_name, customer_cpf_cnpj: o.customer_cpf_cnpj, resolution_details: o.resolution_details, price_gross: o.price_gross, platform_fees: o.platform_fees, shipping_fee: o.shipping_fee, price_net: o.price_net, data_prevista_envio: o.data_prevista_envio })));
             setScanHistory(scanLogsData.map((s: any) => ({ id: s.id, time: safeNewDate(s.scanned_at), userId: s.user_id, user: s.user_name, device: s.device, displayKey: s.display_key, status: s.status, synced: s.synced, canal: s.canal })));
 
             if (dataMap.returns) setReturns(dataMap.returns.map((r: any) => ({ id: r.id, tracking: r.tracking, customer_name: r.customer_name, loggedById: r.logged_by_id, loggedBy: r.logged_by_name, loggedAt: safeNewDate(r.logged_at), order_id: r.order_id })));
@@ -604,6 +609,7 @@ const App: React.FC = () => {
                             category: i.category || '',
                             min_qty: Number(i.min_qty) || 0,
                             expedition_items: [],
+                            is_volatile_infinite: Boolean(i.is_volatile_infinite) || false,
                         };
                     } catch (err) {
                         console.error('❌ Erro ao mapear product_bom:', i, err);
@@ -700,7 +706,11 @@ const App: React.FC = () => {
                             packagingRules: Array.isArray(general.expeditionRules?.packagingRules) ? general.expeditionRules.packagingRules : [],
                             miudosPackagingRules: Array.isArray(general.expeditionRules?.miudosPackagingRules) ? general.expeditionRules.miudosPackagingRules : []
                         },
-                        importer: { ...prev.importer, ...(general.importer || {}) },
+                        importer: {
+                            ml: { ...prev.importer.ml, ...(general.importer?.ml || {}) },
+                            shopee: { ...prev.importer.shopee, ...(general.importer?.shopee || {}) },
+                            site: { ...prev.importer.site, ...(general.importer?.site || {}) },
+                        },
                         pedidos: { ...prev.pedidos, ...(general.pedidos || {}) },
                         productCategoryList: Array.isArray(general.productCategoryList) ? general.productCategoryList : prev.productCategoryList,
                         insumoCategoryList: Array.isArray(general.insumoCategoryList) ? general.insumoCategoryList : prev.insumoCategoryList,
@@ -934,10 +944,8 @@ const App: React.FC = () => {
                 return null;
             }
             
-            // Gerar ID único
-            const now = new Date().toISOString();
-            let itemWithId: any = {
-                id: generateId(),
+            // Preparar o item para salvar - deixar ID ser gerado pelo banco
+            let itemToSave: any = {
                 name: item.name.trim(),
                 code: item.code.trim(),
                 kind: item.kind,
@@ -945,26 +953,34 @@ const App: React.FC = () => {
                 category: item.category || '',
                 current_qty: item.current_qty || 0,
                 reserved_qty: item.reserved_qty || 0,
+                ready_qty: item.ready_qty || 0,
+                status: 'ATIVO'
             };
 
             // Filtrar campos específicos por tipo
             if (item.kind === 'INSUMO') {
-                itemWithId.min_qty = item.min_qty || 0;
-                if (item.barcode) itemWithId.barcode = item.barcode;
-                console.log(`📥 [handleAddNewItem] Preparando INSUMO:`, itemWithId);
+                itemToSave.min_qty = item.min_qty || 0;
+                if (item.barcode) itemToSave.barcode = item.barcode;
+                if (item.color) itemToSave.color = item.color;
+                console.log(`📥 [handleAddNewItem] Preparando INSUMO:`, itemToSave);
+            } else if (item.kind === 'PROCESSADO') {
+                itemToSave.min_qty = item.min_qty || 0;
+                console.log(`📥 [handleAddNewItem] Preparando PROCESSADO:`, itemToSave);
             } else {
-                itemWithId.ready_qty = item.ready_qty || 0;
-                itemWithId.min_qty = item.min_qty || 0;
-                console.log(`📥 [handleAddNewItem] Preparando ${item.kind}:`, itemWithId);
+                // PRODUTO
+                itemToSave.min_qty = item.min_qty || 0;
+                itemToSave.ready_qty = item.ready_qty || 0;
+                if (item.color) itemToSave.color = item.color;
+                console.log(`📥 [handleAddNewItem] Preparando PRODUTO:`, itemToSave);
             }
             
             // Determinar tabela de destino based on kind
-            const targetTable = item.kind === 'INSUMO' ? 'stock_items' : 'product_boms';
+            const targetTable = (item.kind === 'INSUMO' || item.kind === 'PROCESSADO') ? 'stock_items' : 'product_boms';
             console.log(`📥 [handleAddNewItem] Salvando novo item (${item.kind}) em ${targetTable}`);
             
             const { data, error } = await dbClient
                 .from(targetTable)
-                .insert(itemWithId as any)
+                .insert(itemToSave as any)
                 .select()
                 .single();
             
@@ -1216,6 +1232,28 @@ const App: React.FC = () => {
         if(!error) { loadData(); addToast('Produção registrada.', 'success'); }
     }, [currentUser, addToast, loadData]);
 
+  const handleRegisterReadyStock = useCallback(async (itemCode: string, quantity: number, ref: string) => {
+        if (!currentUser) return;
+        const { data, error } = await dbClient.rpc('register_ready_stock', {
+            p_item_code: itemCode,
+            p_quantity: quantity,
+            p_ref: ref,
+            p_user_name: currentUser.name
+        });
+        if (!error) {
+            await loadData();
+            if (data?.activated_volatile) {
+                addToast('⚡ Insumos insuficientes! Modo Volátil ativado automaticamente — Estoque Pronto registrado sem consumo de insumos.', 'warning');
+            } else if (data?.was_volatile) {
+                addToast('✅ Estoque Pronto registrado (Modo Volátil ativo — insumos não consumidos).', 'success');
+            } else {
+                addToast('✅ Estoque Pronto registrado com sucesso. Insumos descontados.', 'success');
+            }
+        } else {
+            addToast(`Erro ao registrar Estoque Pronto: ${error.message}`, 'error');
+        }
+    }, [currentUser, addToast, loadData]);
+
     const handleEditItem = useCallback(async (itemId: string, updates: any): Promise<boolean> => {
         try {
             console.log('📝 [handleEditItem] Atualizando item com dados:', updates);
@@ -1235,7 +1273,7 @@ const App: React.FC = () => {
             // Filtrar apenas os campos que existem na tabela alvo
             const validFields = targetTable === 'stock_items'
                 ? ['code', 'name', 'description', 'kind', 'current_qty', 'reserved_qty', 'cost_price', 'sell_price', 'unit', 'category', 'status', 'min_qty', 'barcode', 'substitute_product_code', 'product_type']
-                : ['code', 'name', 'description', 'kind', 'current_qty', 'reserved_qty', 'ready_qty', 'is_ready', 'ready_location', 'ready_date', 'ready_batch_id', 'cost_price', 'sell_price', 'bling_id', 'bling_sku', 'unit', 'category', 'status', 'bom_composition', 'min_qty'];
+                : ['code', 'name', 'description', 'kind', 'current_qty', 'reserved_qty', 'ready_qty', 'is_ready', 'ready_location', 'ready_date', 'ready_batch_id', 'cost_price', 'sell_price', 'bling_id', 'bling_sku', 'unit', 'category', 'status', 'bom_composition', 'min_qty', 'is_volatile_infinite'];
             
             const filteredUpdates: any = {};
             validFields.forEach(field => {
@@ -1365,7 +1403,6 @@ const App: React.FC = () => {
         if (!currentUser) return;
         const now = new Date().toISOString();
         const newItemsToInsert = payload.itemsToCreate.map((item:any) => ({
-            id: item.id || generateId(),
             code: item.code,
             name: item.name,
             kind: item.kind || 'PRODUTO',
@@ -1418,26 +1455,25 @@ const App: React.FC = () => {
       console.log(`🔗 [BulkLink-New] Criando novo produto "${newProductData.name}" e vinculando ${selectedSkus.length} SKUs`);
       
       // 1. Criar novo produto
-            const newProduct = {
-                id: generateId(),
+      const newProduct = {
         code: newProductData.code,
         name: newProductData.name,
         kind: 'PRODUTO' as const,
-        unit: 'unidades',
+        unit: 'un',
         current_qty: 0,
         reserved_qty: 0,
         ready_qty: 0,
-                min_qty: 0,
-                sell_price: 0,
-                cost_price: 0,
+        min_qty: 0,
+        sell_price: 0,
+        cost_price: 0,
         category: 'Importado',
-                status: 'ATIVO',
+        status: 'ATIVO',
       };
 
       const { data: insertedProduct, error: insertError } = await dbClient
         .from('product_boms')
         .insert([newProduct])
-        .select('id')
+        .select('*')
         .single();
 
       if (insertError) {
@@ -1478,10 +1514,10 @@ const App: React.FC = () => {
             const orderId = String(o.orderId || '').trim().toUpperCase();
             const sku = String(o.sku || '').trim().toUpperCase();
             const deterministicId = `${orderId}|${sku}`;
-            uniqueOrdersMap.set(`${orderId}|${sku}`, {
+            const rowData: any = {
             id: deterministicId,
             order_id: o.orderId, 
-            tracking: o.tracking, 
+            bling_numero: o.blingNumero || null,
             sku: o.sku, 
             qty_original: o.qty_original, 
             multiplicador: o.multiplicador, 
@@ -1497,7 +1533,10 @@ const App: React.FC = () => {
             shipping_fee: o.shipping_fee, 
             price_net: o.price_net,
             data_prevista_envio: o.data_prevista_envio
-        });
+            };
+            // Só inclui tracking se não estiver vazio (evita sobrescrever rastreio existente)
+            if (o.tracking) rowData.tracking = o.tracking;
+            uniqueOrdersMap.set(`${orderId}|${sku}`, rowData);
         });
         
         // Batching for robustness
@@ -1506,44 +1545,48 @@ const App: React.FC = () => {
         let successCount = 0;
         let errorCount = 0;
 
-        for (let i = 0; i < uniqueOrders.length; i += BATCH_SIZE) {
-            const batch = uniqueOrders.slice(i, i + BATCH_SIZE);
+        const doUpsert = async (batch: any[]) => {
             let { error } = await dbClient.from('orders').upsert(batch, { onConflict: 'order_id,sku' });
-            // Fallback: se a constraint ainda não existe (migration pendente), usa insert ignorando duplicatas
             if (error && (error.code === '42P10' || error.message?.includes('no unique or exclusion constraint'))) {
                 const fallback = await dbClient.from('orders').upsert(batch, { ignoreDuplicates: true });
                 error = fallback.error;
             }
-            // Fallback 2: bancos legados sem algumas colunas opcionais (ex: data_prevista_envio)
             if (error && (error.code === '42703' || error.message?.includes('column'))) {
                 const reducedBatch = batch.map((o: any) => ({
-                    id: o.id,
-                    order_id: o.order_id,
-                    tracking: o.tracking,
-                    sku: o.sku,
-                    qty_original: o.qty_original,
-                    multiplicador: o.multiplicador,
-                    qty_final: o.qty_final,
-                    color: o.color,
-                    canal: o.canal,
-                    data: o.data,
-                    status: o.status,
-                    customer_name: o.customer_name,
-                    customer_cpf_cnpj: o.customer_cpf_cnpj,
-                    price_gross: o.price_gross,
-                    platform_fees: o.platform_fees,
-                    shipping_fee: o.shipping_fee,
-                    price_net: o.price_net,
+                    id: o.id, order_id: o.order_id, ...(o.tracking ? { tracking: o.tracking } : {}),
+                    sku: o.sku, qty_original: o.qty_original, multiplicador: o.multiplicador,
+                    qty_final: o.qty_final, color: o.color, canal: o.canal, data: o.data,
+                    status: o.status, customer_name: o.customer_name, customer_cpf_cnpj: o.customer_cpf_cnpj,
+                    price_gross: o.price_gross, platform_fees: o.platform_fees,
+                    shipping_fee: o.shipping_fee, price_net: o.price_net,
                 }));
                 const fallbackReduced = await dbClient.from('orders').upsert(reducedBatch, { onConflict: 'order_id,sku' });
                 error = fallbackReduced.error;
             }
-            if (error) {
-                const detail = [error.message, error.details, error.hint].filter(Boolean).join(' | ');
-                console.error('Batch upload error:', detail || error);
-                errorCount += batch.length;
-            } else {
-                successCount += batch.length;
+            return error;
+        };
+
+        for (let i = 0; i < uniqueOrders.length; i += BATCH_SIZE) {
+            const batch = uniqueOrders.slice(i, i + BATCH_SIZE);
+            // Separa pedidos com e sem tracking para não sobrescrever rastreio existente no banco
+            const withTracking = batch.filter((o: any) => o.tracking);
+            const withoutTracking = batch.filter((o: any) => !o.tracking)
+                .map(({ tracking, ...rest }: any) => rest);
+
+            let batchError = null;
+            if (withoutTracking.length > 0) {
+                batchError = await doUpsert(withoutTracking);
+                if (!batchError) successCount += withoutTracking.length;
+                else errorCount += withoutTracking.length;
+            }
+            if (withTracking.length > 0) {
+                const tErr = await doUpsert(withTracking);
+                if (!tErr) successCount += withTracking.length;
+                else { errorCount += withTracking.length; batchError = tErr; }
+            }
+            if (batchError) {
+                const detail = [batchError.message, batchError.details, batchError.hint].filter(Boolean).join(' | ');
+                console.error('Batch upload error:', detail || batchError);
             }
         }
         
@@ -1664,6 +1707,27 @@ const App: React.FC = () => {
             return false;
         }
     }, [addToast, loadData]);
+
+  // ✏️ Abrir modal de edição de produto
+  const handleEditProduct = useCallback((product: StockItem) => {
+    setProductToEdit(product);
+    setIsEditProductModalOpen(true);
+  }, []);
+
+  // ✏️ Salvar alterações do produto
+  const handleSaveProductEdit = useCallback(async (updates: Partial<StockItem>) => {
+    if (!productToEdit) return;
+    try {
+      const success = await handleEditItem(productToEdit.id!, updates);
+      if (success) {
+        setIsEditProductModalOpen(false);
+        setProductToEdit(null);
+      }
+    } catch (err) {
+      console.error('Erro ao salvar produto:', err);
+      addToast('Erro ao salvar produto', 'error');
+    }
+  }, [productToEdit, handleEditItem, addToast]);
 
   const handleAddImportToHistory = useCallback(async (item: any, processedData: any) => {
         try {
@@ -1839,12 +1903,12 @@ const App: React.FC = () => {
         case 'compras': return <ComprasPage shoppingList={shoppingList} onClearList={handleClearShoppingList} onUpdateItem={handleUpdateShoppingItem} stockItems={stockItems} />
         case 'pesagem': return <PesagemPage stockItems={stockItems} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} currentUser={currentUser!} onDeleteBatch={handleDeleteWeighingBatch} users={users} />
         case 'moagem': return <MoagemPage stockItems={stockItems} grindingBatches={grindingBatches} onAddNewGrinding={handleAddNewGrinding} currentUser={currentUser!} onDeleteBatch={handleDeleteGrindingBatch} users={users} generalSettings={generalSettings} />
-        case 'estoque': return <EstoquePage stockItems={stockItems} stockMovements={stockMovements} onStockAdjustment={handleStockAdjustment} produtosCombinados={produtosCombinados} onSaveProdutoCombinado={handleSaveProdutoCombinado} onAddNewItem={handleAddNewItem} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} onProductionRun={handleProductionRun} currentUser={currentUser!} onEditItem={handleEditItem} onDeleteItem={handleDeleteItem} onBulkDeleteItems={handleBulkDeleteItems} onDeleteMovement={async()=>false} onDeleteWeighingBatch={handleDeleteWeighingBatch} generalSettings={generalSettings} setGeneralSettings={setGeneralSettings as any} onConfirmImportFromXml={handleConfirmImportFromXml} onSaveExpeditionItems={handleSaveExpeditionItems} users={users} onUpdateInsumoCategory={async()=>{}} onBulkInventoryUpdate={handleBulkSetInitialStock} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} />
+        case 'estoque': return <EstoquePage stockItems={stockItems} stockMovements={stockMovements} onStockAdjustment={handleStockAdjustment} produtosCombinados={produtosCombinados} onSaveProdutoCombinado={handleSaveProdutoCombinado} onAddNewItem={handleAddNewItem} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} onProductionRun={handleProductionRun} onRegisterReadyStock={handleRegisterReadyStock} currentUser={currentUser!} onEditItem={handleEditItem} onDeleteItem={handleDeleteItem} onBulkDeleteItems={handleBulkDeleteItems} onDeleteMovement={async()=>false} onDeleteWeighingBatch={handleDeleteWeighingBatch} generalSettings={generalSettings} setGeneralSettings={setGeneralSettings as any} onConfirmImportFromXml={handleConfirmImportFromXml} onSaveExpeditionItems={handleSaveExpeditionItems} users={users} onUpdateInsumoCategory={async()=>{}} onBulkInventoryUpdate={handleBulkSetInitialStock} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} />
         case 'funcionarios': return <FuncionariosPage users={users} onSetAttendance={handleSetAttendance} onAddNewUser={handleAddNewUser} onUpdateAttendanceDetails={handleUpdateAttendanceDetails} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} currentUser={currentUser!} onDeleteUser={handleDeleteUser} />
         case 'relatorios': return <RelatoriosPage stockItems={stockItems} stockMovements={stockMovements} orders={allOrders} weighingBatches={weighingBatches} scanHistory={scanHistory} produtosCombinados={produtosCombinados} users={users} returns={returns} generalSettings={generalSettings} grindingBatches={grindingBatches} />
         case 'financeiro': return <FinancePage allOrders={allOrders} stockItems={stockItems} skuLinks={skuLinks} produtosCombinados={produtosCombinados} generalSettings={generalSettings} onDeleteOrders={handleDeleteOrders} onLaunchOrders={handleLaunchSuccess} onNavigateToSettings={() => { _setCurrentPage('configuracoes-gerais'); localStorage.setItem('erp_current_page', 'configuracoes-gerais'); }} />
         case 'etiquetas': return <EtiquetasPage settings={etiquetasSettings} onSettingsSave={handleSaveEtiquetasSettings} generalSettings={generalSettings} uiSettings={uiSettings} onSetUiSettings={setUiSettings as any} stockItems={stockItems} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} onAddNewItem={handleAddNewItem} etiquetasState={etiquetasState} setEtiquetasState={setEtiquetasState} currentUser={currentUser!} allOrders={allOrders} etiquetasHistory={etiquetasHistory} onSaveHistory={handleSaveEtiquetaHistory} onGetHistoryDetails={handleGetEtiquetaHistoryDetails} onProcessZpl={handleProcessZpl} isProcessing={isProcessingLabels} progressMessage={labelProgressMessage} />
-        case 'bling': return <BlingPage generalSettings={generalSettings} onLaunchSuccess={handleLaunchSuccess} addToast={addToast} setCurrentPage={setCurrentPage} onLoadZpl={handleLoadZplFromBling} onSaveSettings={handleSaveGeneralSettings} stockItems={stockItems} skuLinks={skuLinks} allOrders={allOrders} />;
+        case 'bling': return <BlingPage generalSettings={generalSettings} onLaunchSuccess={handleLaunchSuccess} addToast={addToast} setCurrentPage={setCurrentPage} onLoadZpl={handleLoadZplFromBling} onSaveSettings={handleSaveGeneralSettings} stockItems={stockItems} skuLinks={skuLinks} allOrders={allOrders} onLinkSku={handleLinkSku} />;
         case 'integracoes': return <IntegracoesPage generalSettings={generalSettings} onSaveSettings={handleSaveGeneralSettings} onLaunchSuccess={handleLaunchSuccess} addToast={addToast} setCurrentPage={setCurrentPage} />;
         case 'passo-a-passo': return <PassoAPassoPage />
         case 'ajuda': return <AjudaPage />
@@ -1889,6 +1953,17 @@ const App: React.FC = () => {
         </div>
         <ToastContainer toasts={toasts} removeToast={removeToast} />
         {isDeleteHistoryModalOpen && <ConfirmActionModal isOpen={isDeleteHistoryModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDeleteHistoryItem} title="Confirmar Exclusão de Importação" message={<p>Tem certeza que deseja excluir esta importação? <strong>Isso também apagará todos os pedidos vinculados a ela que ainda estão no banco de dados.</strong></p>} confirmButtonText="Sim, Excluir Tudo" isConfirming={isDeletingHistory} />}
+        <EditProductModal
+          isOpen={isEditProductModalOpen}
+          onClose={() => {
+            setIsEditProductModalOpen(false);
+            setProductToEdit(null);
+          }}
+          product={productToEdit}
+          linkedSkus={skuLinks}
+          onSaves={handleSaveProductEdit}
+          onUnlinkSku={handleUnlinkSku}
+        />
         <BulkLinkSKUsModal
           isOpen={isBulkLinkSKUsModalOpen}
           onClose={() => setIsBulkLinkSKUsModalOpen(false)}

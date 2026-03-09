@@ -229,6 +229,7 @@ interface EstoquePageProps {
     weighingBatches: WeighingBatch[];
     onAddNewWeighing: (insumoCode: string, quantity: number, type: WeighingType, userId: string) => void;
     onProductionRun: (itemCode: string, quantity: number, ref: string) => void;
+    onRegisterReadyStock: (itemCode: string, quantity: number, ref: string) => void;
     currentUser: User;
     onEditItem: (itemId: string, updates: Partial<Pick<StockItem, 'name' | 'min_qty' | 'category' | 'color' | 'product_type' | 'substitute_product_code'>>) => Promise<boolean>;
     onDeleteItem: (itemId: string) => Promise<boolean>;
@@ -278,7 +279,7 @@ const TabButton: React.FC<{ tab: Tab, activeTab: Tab, label: string, icon: React
 
 const EstoquePage: React.FC<EstoquePageProps> = (props) => {
     const { onBulkDeleteItems, onDeleteItem, generalSettings, setGeneralSettings, onSaveExpeditionItems, users, onConfirmImportFromXml, onEditItem, onUpdateInsumoCategory, onBulkInventoryUpdate, skuLinks, onLinkSku, onUnlinkSku } = props;
-    const { stockItems, stockMovements, produtosCombinados, onSaveProdutoCombinado, onAddNewItem, weighingBatches, onAddNewWeighing, onProductionRun, currentUser, onDeleteMovement, onStockAdjustment, onDeleteWeighingBatch } = props;
+    const { stockItems, stockMovements, produtosCombinados, onSaveProdutoCombinado, onAddNewItem, weighingBatches, onAddNewWeighing, onProductionRun, onRegisterReadyStock, currentUser, onDeleteMovement, onStockAdjustment, onDeleteWeighingBatch } = props;
     
     const [activeTab, setActiveTab] = useState<Tab>('insumos');
     const [searchTerm, setSearchTerm] = useState('');
@@ -425,7 +426,13 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
         if (!item) return;
         const isBomProduction = (item.kind === 'PRODUTO' || item.kind === 'PROCESSADO') && movementType === 'saida';
         if (isBomProduction && ref.toLowerCase().includes('produção')) {
-            onProductionRun(itemCode, quantity, ref);
+            if (item.kind === 'PRODUTO') {
+                // Produtos vão para Estoque Pronto (ready_qty) com verificação automática de insumos
+                onRegisterReadyStock(itemCode, quantity, ref);
+            } else {
+                // Processados continuam usando produção via BOM normal
+                onProductionRun(itemCode, quantity, ref);
+            }
         } else {
             onStockAdjustment(itemCode, movementType === 'entrada' ? quantity : -quantity, ref);
         }
@@ -886,7 +893,7 @@ const StockRow: React.FC<{ item: StockItem, hasAdjustPermission: boolean } & any
                     {(item.kind === 'INSUMO' || item.kind === 'PRODUTO' || item.kind === 'PROCESSADO') && <button onClick={() => onUpdateStock(item)} title="Entrada Rápida" className="p-1 hover:bg-green-100 text-green-600 rounded"><PlusCircle size={16} /></button>}
                     <button onClick={() => onEdit(item)} title="Editar" className="p-1 hover:bg-blue-100 text-blue-600 rounded"><Edit3 size={16} /></button>
                     {hasAdjustPermission && <button onClick={() => onAdjustStock(item)} title="Ajustar Saldo" className="p-1 hover:bg-orange-100 text-orange-600 rounded"><SlidersHorizontal size={16} /></button>}
-                    {onProduce && <button onClick={() => onProduce(item)} title="Registrar Produção via BOM" className="p-1 hover:bg-purple-100 text-purple-600 rounded"><Factory size={16} /></button>}
+                    {onProduce && <button onClick={() => onProduce(item)} title={item.kind === 'PRODUTO' ? 'Registrar Estoque Pronto (BOM + Modo Volátil auto)' : 'Registrar Produção via BOM'} className="p-1 hover:bg-purple-100 text-purple-600 rounded"><Factory size={16} /></button>}
                     {onConfigureBom && <button onClick={() => onConfigureBom(item)} title="Configurar Receita (BOM)" className="p-1 hover:bg-slate-200 text-slate-600 rounded"><Cog size={16} /></button>}
                     {onConfigureExpeditionItems && <button onClick={() => onConfigureExpeditionItems(item)} title="Configurar Itens de Expedição" className="p-1 hover:bg-slate-200 text-slate-600 rounded"><Box size={16} /></button>}
                     {currentUser.role === 'SUPER_ADMIN' && <button onClick={() => onDelete(item)} title="Excluir" className="p-1 hover:bg-red-100 text-red-600 rounded"><Trash2 size={16} /></button>}
@@ -896,7 +903,10 @@ const StockRow: React.FC<{ item: StockItem, hasAdjustPermission: boolean } & any
                 {props.showColorColumn && <td className="py-4 px-3 text-xs">{item.color || 'N/A'}</td>}
                 <td className={`py-4 px-3 text-center font-black ${isBelowMin ? 'text-red-600' : 'text-slate-900'}`}>{item.current_qty.toFixed(2)}</td>
                 {isProdutos && <td className="py-4 px-3 text-center text-orange-600 font-bold">{(item.reserved_qty || 0).toFixed(2)}</td>}
-                {isProdutos && <td className="py-4 px-3 text-center text-emerald-600 font-black">{(item.ready_qty || 0).toFixed(2)}</td>}
+                {isProdutos && <td className="py-4 px-3 text-center text-emerald-600 font-black">
+                    {(item.ready_qty || 0).toFixed(2)}
+                    {item.is_volatile_infinite && <span className="ml-1.5 text-[8px] bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wide align-middle">⚡ Volátil</span>}
+                </td>}
                 <td className="py-4 px-3 text-center opacity-60">{item.min_qty.toFixed(2)}</td>
                 <td className="py-4 px-3 text-center uppercase text-[10px] font-black text-gray-400">{item.unit}</td>
                 {isProdutos && <td className="py-4 px-3 text-center">{linkedSkusForThisProduct.length > 0 ? <span className="bg-blue-100 text-blue-700 text-[9px] font-black px-2 py-0.5 rounded-full">{linkedSkusForThisProduct.length}</span> : <span className="text-gray-300 text-[9px]">—</span>}</td>}
@@ -929,11 +939,12 @@ const StockCard: React.FC<{ item: StockItem, hasAdjustPermission: boolean } & an
     const linkedSkusForThisProduct = isProdutos && skuLinks ? skuLinks.filter((link: SkuLink) => link.masterProductSku === item.code) : [];
 
     return (
-        <div className={`p-4 rounded-3xl border shadow-lg transition-all ${isBelowMin ? 'bg-red-50 border-red-200 shadow-red-50' : 'bg-white border-gray-100 hover:border-blue-200'}`}>
+        <div className={`p-4 rounded-3xl border shadow-lg transition-all ${isBelowMin ? 'bg-red-50 border-red-200 shadow-red-50' : item.is_volatile_infinite ? 'bg-orange-50 border-orange-200' : 'bg-white border-gray-100 hover:border-blue-200'}`}>
             <div className="flex justify-between items-start">
                 <div>
                     <p className="font-black text-slate-800 uppercase leading-tight">{item.name}</p>
                     <p className="text-[10px] font-mono font-bold text-gray-400 uppercase mt-1">{item.code}</p>
+                    {item.is_volatile_infinite && <span className="inline-block mt-1 text-[8px] bg-orange-200 text-orange-700 px-1.5 py-0.5 rounded-full font-black uppercase tracking-wide">⚡ Modo Volátil</span>}
                 </div>
                 {isProdutos && <button onClick={() => onToggleExpand(item.id)} className="p-2 text-slate-300">{isExpanded ? <ChevronUp size={24}/> : <ChevronDown size={24}/>}</button>}
             </div>
@@ -941,12 +952,17 @@ const StockCard: React.FC<{ item: StockItem, hasAdjustPermission: boolean } & an
                 <div>
                     <p className="text-[10px] font-black text-gray-400 uppercase mb-1">Saldo Atual</p>
                     <p className={`text-2xl font-black ${isBelowMin ? 'text-red-600' : 'text-slate-900'}`}>{item.current_qty.toFixed(1)} <span className="text-xs">{item.unit}</span></p>
+                    {isProdutos && (
+                        <p className="text-[10px] text-emerald-600 font-black mt-1">
+                            Pronto: {(item.ready_qty || 0).toFixed(1)} {item.unit}
+                        </p>
+                    )}
                 </div>
                 <div className="flex items-center gap-1">
                     {(item.kind === 'INSUMO' || item.kind === 'PRODUTO' || item.kind === 'PROCESSADO') && <button onClick={() => onUpdateStock(item)} className="p-2 bg-green-50 text-green-600 rounded-xl"><PlusCircle size={20} /></button>}
                     <button onClick={() => onEdit(item)} className="p-2 bg-blue-50 text-blue-600 rounded-xl"><Edit3 size={20} /></button>
                     {hasAdjustPermission && <button onClick={() => onAdjustStock(item)} className="p-2 bg-orange-50 text-orange-600 rounded-xl"><SlidersHorizontal size={20} /></button>}
-                    {onProduce && <button onClick={() => onProduce(item)} className="p-2 bg-purple-50 text-purple-600 rounded-xl"><Factory size={20} /></button>}
+                    {onProduce && <button onClick={() => onProduce(item)} title={item.kind === 'PRODUTO' ? 'Registrar para Estoque Pronto (BOM)' : 'Produção via BOM'} className="p-2 bg-purple-50 text-purple-600 rounded-xl"><Factory size={20} /></button>}
                 </div>
             </div>
             {isExpanded && (

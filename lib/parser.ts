@@ -334,10 +334,53 @@ export const parseExcelFile = (
 
     const jaSalvos = orders.filter(o => existingKeys.has(`${safeUpper(o.orderId)}|${safeUpper(o.sku)}`)).length;
 
+    // Agregação por SKU (ignora cor): deduplicação por SKU principal apenas
+    const skuAggregation = new Map<string, OrderItem[]>();
+    orders.forEach(order => {
+        const skuKey = safeUpper(order.sku);
+        if (!skuAggregation.has(skuKey)) {
+            skuAggregation.set(skuKey, []);
+        }
+        skuAggregation.get(skuKey)!.push(order);
+    });
+
+    // Gerar lista resumida (consolidado por SKU, somando quantidades)
+    const resumida: OrderItem[] = Array.from(skuAggregation.entries()).map(([sku, ordersList]) => {
+        const totalQty = ordersList.reduce((sum, o) => sum + o.qty_final, 0);
+        const firstOrder = ordersList[0];
+        
+        return {
+            ...firstOrder,
+            sku: sku,
+            qty_original: totalQty,
+            qty_final: totalQty,
+            // Manter informação de quantos pedidos foram consolidados
+            id: `${firstOrder.id}_consolidated_${ordersList.length}`
+        };
+    });
+
+    // Totais por cor (do resumo)
+    const totaisPorCor: OrderItem[] = [];
+    const corMap = new Map<string, OrderItem>();
+    resumida.forEach(order => {
+        const cor = order.color || 'SEM_COR';
+        if (!corMap.has(cor)) {
+            corMap.set(cor, { ...order });
+        } else {
+            const existing = corMap.get(cor)!;
+            existing.qty_final += order.qty_final;
+            existing.qty_original += order.qty_original;
+            existing.price_total += order.price_total;
+            existing.price_gross += order.price_gross;
+            existing.price_net += order.price_net;
+        }
+    });
+    Array.from(corMap.values()).forEach(item => totaisPorCor.push(item));
+
     return {
         importId: `imp_${Date.now()}`,
         canal: canalDetectado!,
-        lists: { completa: orders, resumida: [], totaisPorCor: [] },
+        lists: { completa: orders, resumida, totaisPorCor },
         skusNaoVinculados: Array.from(new Set(orders.map(o => o.sku))).map(sku => ({ sku, colorSugerida: classificarCor(sku) })),
         idempotencia: { lancaveis: orders.length, jaSalvos },
         summary: {

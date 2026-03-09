@@ -292,6 +292,32 @@ export async function fetchBlingInvoices(
     });
 }
 
+/**
+ * Busca a etiqueta ZPL REAL de uma NF-e no Bling.
+ * Chama GET /Api/v3/nfe/{id}/etiqueta via proxy do servidor.
+ * Retorna o ZPL completo (DANFE simplificado + etiqueta de envio) ou null se falhar.
+ */
+export async function fetchNfeEtiquetaZpl(apiKey: string, nfeId: number | string): Promise<string | null> {
+    const authToken = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+    const safeId = String(nfeId || '').replace(/[^0-9]/g, '');
+    if (!safeId) return null;
+
+    try {
+        const resp = await fetchWithRetry(`/api/bling/nfe/${safeId}/etiqueta`, {
+            headers: { Authorization: authToken },
+        });
+        if (!resp.ok) {
+            console.warn(`[fetchNfeEtiquetaZpl] Status ${resp.status} para nfe/${safeId}`);
+            return null;
+        }
+        const data = await resp.json();
+        return data?.zpl || data?.data?.zpl || data?.data?.etiqueta || null;
+    } catch (e) {
+        console.warn('[fetchNfeEtiquetaZpl] Erro:', e);
+        return null;
+    }
+}
+
 export async function fetchEtiquetaZplForPedido(apiKey: string, idPedidoVenda: string): Promise<string> {
     const safePedido = String(idPedidoVenda || '').replace(/[^a-zA-Z0-9-]/g, '');
     if (!safePedido) {
@@ -387,6 +413,9 @@ export interface NfeSaida {
     linkXml?: string;
     xml?: string;
     numeroVenda?: string; // número do pedido de venda vinculado
+    loja?: string;         // loja/canal de origem (ex: "Mercado Livre", "Shopee")
+    tipo?: string;         // tipo da NF-e (ex: "saida", "entrada")
+    naturezaOperacao?: string; // natureza da operação (ex: "Venda")
 }
 
 // Mapeamento de situação ID → descrição legível (exportado para uso externo)
@@ -440,6 +469,9 @@ export async function fetchNfeSaida(
             linkDanfe: n.linkDanfe || n.link || n.linkDANFE || undefined,
             linkXml: n.linkXml || n.xml || undefined,
             numeroVenda: n.numeroPedidoCompra || n.numeroLoja || undefined,
+            loja: n.loja?.descricao || n.vendedor?.descricao || n.canal || undefined,
+            tipo: n.tipo ? String(n.tipo) : undefined,
+            naturezaOperacao: n.naturezaOperacao || n.natureza || undefined,
         })));
 
         if (notas.length < 100) break; // última página

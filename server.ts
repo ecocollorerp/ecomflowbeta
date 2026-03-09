@@ -2041,19 +2041,138 @@ async function startServer() {
   // BUSCAR ETIQUETAS DE ENVIO DO BLING (logística/remessas)
   // ────────────────────────────────────────────────────────────────────────────
   // Helper: fetch Bling c/ auto-retry em 429
-  async function blingFetchRetry(url: string, init: RequestInit, retries = 3, baseDelay = 1200): Promise<Response> {
-    for (let i = 0; i <= retries; i++) {
-      const resp = await fetch(url, init);
-      if (resp.status === 429 && i < retries) {
-        const delay = baseDelay * (i + 1);
-        console.warn(`⏳ [Bling 429] retry ${i + 1}/${retries} em ${delay}ms — ${url}`);
-        await new Promise(r => setTimeout(r, delay));
-        continue;
-      }
-      return resp;
+  // ═══════════════════════════════════════════════════════════════════════
+  // 🔧 RATE LIMITER ROBUSTO PARA BLING API (2-3 req/s)
+  // ═══════════════════════════════════════════════════════════════════════
+  class BlingRateLimiter {
+    private queue: Array<() => Promise<any>> = [];
+    private processing = false;
+    private lastRequest = 0;
+    private minDelay = 500; // 500ms = ~2 req/s (seguro para Bling)
+
+    async enqueue<T>(fn: () => Promise<T>): Promise<T> {
+      return new Promise((resolve, reject) => {
+        this.queue.push(async () => {
+          try {
+            const result = await fn();
+            resolve(result);
+          } catch (error) {
+            reject(error);
+          }
+        });
+        this.process();
+      });
     }
-    return fetch(url, init); // fallback
+
+    private async process() {
+      if (this.processing || this.queue.length === 0) return;
+      this.processing = true;
+
+      while (this.queue.length > 0) {
+        const now = Date.now();
+        const timeSinceLastRequest = now - this.lastRequest;
+        
+        if (timeSinceLastRequest < this.minDelay) {
+          await new Promise(r => setTimeout(r, this.minDelay - timeSinceLastRequest));
+        }
+
+        const fn = this.queue.shift();
+        if (fn) {
+          this.lastRequest = Date.now();
+          await fn();
+        }
+      }
+
+      this.processing = false;
+    }
   }
+
+  const blingLimiter = new BlingRateLimiter();
+
+  async function blingFetchRetry(url: string, init: RequestInit, retries = 2, baseDelay = 2000): Promise<Response> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const resp = await fetch(url, init);
+
+        // ✅ Sucesso - retornar resposta
+        if (resp.ok || resp.status < 500) {
+          return resp;
+        }
+
+        // 429 = Rate limit - aguardar e retry
+        if (resp.status === 429 && attempt < retries) {
+          const delayMs = baseDelay * Math.pow(2, attempt); // Exponencial: 2s, 4s, 8s
+          console.warn(`⏳ [Bling 429] tentativa ${attempt + 1}/${retries + 1} - aguardando ${delayMs}ms`);
+          await new Promise(r => setTimeout(r, delayMs));
+          continue;
+        }
+
+        // Outro erro
+        return resp;
+      } catch (e: any) {
+        lastError = e;
+        if (attempt < retries) {
+          const delayMs = baseDelay * Math.pow(2, attempt);
+          console.warn(`⏳ [Bling erro] tentativa ${attempt + 1}/${retries + 1} - aguardando ${delayMs}ms`);
+          await new Promise(r => setTimeout(r, delayMs));
+        }
+      }
+    }
+
+    // Se chegou aqui, todas as tentativas falharam
+    throw lastError || new Error(`Falha ao conectar com Bling após ${retries + 1} tentativas`);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // GET /api/bling/nfe/:id/etiqueta — busca etiqueta ZPL REAL da NF-e no Bling
+  // Retorna { success: true, zpl: "^XA...^XZ" } com o DANFE simplificado real
+  // ─────────────────────────────────────────────────────────────────────────
+  app.get('/api/bling/nfe/:id/etiqueta', async (req, res) => {
+    try {
+      const rawAuth = req.headers.authorization || '';
+      const token = rawAuth.startsWith('Bearer ') ? rawAuth : `Bearer ${rawAuth}`;
+      if (!rawAuth) return res.status(401).json({ error: 'Token obrigatório' });
+
+      const nfeId = req.params.id;
+      console.log(`🏷️  [NFe Etiqueta] GET nfe/${nfeId}/etiqueta`);
+
+      const resp = await blingFetchRetry(
+        `https://www.bling.com.br/Api/v3/nfe/${nfeId}/etiqueta`,
+        { headers: { Authorization: token, Accept: 'application/json' } }
+      );
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        console.warn(`⚠️  [NFe Etiqueta] Bling ${resp.status} para nfe/${nfeId}`);
+        return res.status(resp.status).json({ success: false, error: `Bling retornou ${resp.status}`, detail: err });
+      }
+
+      const data = await resp.json().catch(() => ({}));
+
+      // Bling pode retornar o ZPL em diferentes campos da resposta
+      const zpl =
+        data?.data?.zpl ||
+        data?.data?.etiqueta ||
+        data?.data?.conteudo ||
+        data?.data?.content ||
+        (typeof data?.data === 'string' ? data.data : null) ||
+        data?.zpl ||
+        null;
+
+      if (!zpl) {
+        console.warn(`⚠️  [NFe Etiqueta] ZPL não encontrado para nfe/${nfeId}. Resposta:`, JSON.stringify(data).slice(0, 300));
+        return res.status(404).json({ success: false, error: 'ZPL não encontrado na resposta do Bling', raw: data });
+      }
+
+      console.log(`✅ [NFe Etiqueta] ZPL real obtido para nfe/${nfeId} (${zpl.length} chars)`);
+      res.json({ success: true, zpl });
+    } catch (error: any) {
+      console.error('❌ [NFe Etiqueta]:', error.message);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
 
   app.post('/api/bling/etiquetas/buscar', async (req, res) => {
     try {
@@ -2068,36 +2187,54 @@ async function startServer() {
 
       const readH = { Authorization: authToken, Accept: 'application/json' };
       const results: any[] = [];
+      const totalPedidos = pedidoVendaIds.length;
 
-      for (const pvId of pedidoVendaIds) {
-        try {
-          // Delay entre chamadas para não estourar rate limit do Bling (~3 req/s)
-          if (pedidoVendaIds.indexOf(pvId) > 0) {
-            await new Promise(r => setTimeout(r, 400));
-          }
-          // Busca detalhes do pedido para obter info de transporte
-          const pvResp = await blingFetchRetry(
-            `https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(pvId)}`,
-            { headers: readH },
-          );
-          if (!pvResp.ok) {
-            results.push({ pedidoVendaId: pvId, success: false, error: `Pedido ${pvId} não encontrado (${pvResp.status})` });
-            continue;
-          }
-          const pvData = (await pvResp.json().catch(() => ({})))?.data;
-          const transporte = pvData?.transporte || {};
-          const rastreamento = transporte.codigoRastreamento || '';
-          const volumes = Number(transporte.volumes || transporte.quantidadeVolumes || 1);
-          const nomeCliente = pvData?.contato?.nome || '';
-          const numero = pvData?.numero || pvData?.numeroLoja || pvId;
-          const itens = (pvData?.itens || []).map((i: any) => `${i.quantidade}x ${i.descricao}`).join(', ');
-          const endereco = pvData?.transporte?.enderecoEntrega || {};
-          const endStr = [endereco.endereco, endereco.numero, endereco.bairro, endereco.municipio?.nome || endereco.municipio, endereco.municipio?.uf || endereco.uf, (endereco.cep || '').replace(/\D/g, '')]
-            .filter(Boolean).join(', ');
+      console.log(`\n📥 Iniciando geração de ${totalPedidos} etiqueta(s)...`);
 
-          // Gera ZPL com dados reais do pedido
-          const dataNow = new Date().toLocaleString('pt-BR');
-          const zpl = `^XA
+      // Processar sequencialmente com rate limiting
+      for (let idx = 0; idx < pedidoVendaIds.length; idx++) {
+        const pvId = pedidoVendaIds[idx];
+
+        const result = await blingLimiter.enqueue(async () => {
+          try {
+            const progressBar = `[${idx + 1}/${totalPedidos}]`;
+            
+            // Busca detalhes do pedido para obter info de transporte
+            const pvResp = await blingFetchRetry(
+              `https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(pvId)}`,
+              { headers: readH },
+            );
+
+            if (!pvResp.ok) {
+              console.warn(`${progressBar} ❌ Pedido ${pvId}: ${pvResp.status}`);
+              results.push({
+                pedidoVendaId: pvId,
+                success: false,
+                error: `Pedido não encontrado (${pvResp.status})`
+              });
+              return;
+            }
+
+            const pvData = (await pvResp.json().catch(() => ({})))?.data;
+            const transporte = pvData?.transporte || {};
+            const rastreamento = transporte.codigoRastreamento || '';
+            const volumes = Number(transporte.volumes || transporte.quantidadeVolumes || 1);
+            const nomeCliente = pvData?.contato?.nome || '';
+            const numero = pvData?.numero || pvData?.numeroLoja || pvId;
+            const itens = (pvData?.itens || []).map((i: any) => `${i.quantidade}x ${i.descricao}`).join(', ');
+            const endereco = pvData?.transporte?.enderecoEntrega || {};
+            const endStr = [
+              endereco.endereco,
+              endereco.numero,
+              endereco.bairro,
+              endereco.municipio?.nome || endereco.municipio,
+              endereco.municipio?.uf || endereco.uf,
+              (endereco.cep || '').replace(/\D/g, '')
+            ].filter(Boolean).join(', ');
+
+            // Gera ZPL com dados reais do pedido
+            const dataNow = new Date().toLocaleString('pt-BR');
+            const zpl = `^XA
 ^PW800
 ^LL1200
 ^CF0,36
@@ -2123,26 +2260,44 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
 ^FO40,650^FDOrigem: Bling / ERP^FS
 ^XZ`;
 
-          results.push({
-            pedidoVendaId: pvId,
-            numero,
-            nomeCliente,
-            rastreamento,
-            success: true,
-            zpl,
-          });
-        } catch (e: any) {
-          results.push({ pedidoVendaId: pvId, success: false, error: e.message });
-        }
+            console.log(`${progressBar} ✅ Etiqueta gerada: ${numero}`);
+            results.push({
+              pedidoVendaId: pvId,
+              numero,
+              nomeCliente,
+              rastreamento,
+              success: true,
+              zpl,
+            });
+          } catch (e: any) {
+            console.error(`[${idx + 1}/${totalPedidos}] ❌ Erro ao processar pedido ${pvId}:`, e.message);
+            results.push({
+              pedidoVendaId: pvId,
+              success: false,
+              error: e.message
+            });
+          }
+        });
       }
 
       const ok = results.filter(r => r.success).length;
       const fail = results.filter(r => !r.success).length;
-      console.log(`🏷️ [Etiquetas] ${ok} gerada(s), ${fail} falha(s) de ${pedidoVendaIds.length} pedido(s)`);
-      res.json({ success: true, total: pedidoVendaIds.length, ok, fail, results });
+      console.log(`\n✅ CONCLUSÃO: ${ok}/${totalPedidos} etiqueta(s) gerada(s), ${fail} falha(s)\n`);
+
+      res.json({
+        success: fail === 0,
+        total: totalPedidos,
+        ok,
+        fail,
+        results
+      });
     } catch (error: any) {
-      console.error('❌ [Etiquetas buscar]:', error);
-      res.status(500).json({ success: false, error: error.message });
+      console.error('❌ [Etiquetas buscar] Erro geral:', error.message);
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        details: 'Erro ao processar requisição de etiquetas'
+      });
     }
   });
 
@@ -2239,7 +2394,9 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
 
       // ── 2. Enriquece com detalhes completos (itens, endereço, pagamentos) ────
       // Bling v3 lista retorna dados resumidos; GET /pedidos/vendas/{id} retorna completo
-      const CONCURRENCY = 5;
+      // Concorrência reduzida para 2 e delay entre lotes para evitar 429
+      const CONCURRENCY = 2;
+      const DELAY_ENTRE_LOTES = 400; // ms entre lotes para respeitar rate limit do Bling
       const enrichedRaw: any[] = new Array(allRawOrders.length);
       for (let i = 0; i < allRawOrders.length; i += CONCURRENCY) {
         const batch = allRawOrders.slice(i, i + CONCURRENCY);
@@ -2248,6 +2405,10 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
             const detResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${o.id}`, {
               headers: { Authorization: token, Accept: 'application/json' },
             });
+            if (detResp.status === 429) {
+              console.warn(`⏳ [VENDAS BUSCAR] Rate limit 429 no pedido ${o.id}, usando dados da lista`);
+              return o; // retorna dados resumidos em vez de falhar
+            }
             if (detResp.ok) {
               const detData = await detResp.json();
               return detData?.data || o;
@@ -2256,6 +2417,10 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
           return o;
         }));
         results.forEach((r, bi) => { enrichedRaw[i + bi] = r; });
+        // Aguarda entre lotes para não exceder rate limit do Bling
+        if (i + CONCURRENCY < allRawOrders.length) {
+          await new Promise(resolve => setTimeout(resolve, DELAY_ENTRE_LOTES));
+        }
       }
 
       console.log(`🛒 [VENDAS BUSCAR] ${enrichedRaw.length} pedido(s) enriquecidos com detalhes`);
@@ -2413,10 +2578,10 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
         }
 
         const repo = await resp.json();
-        const results: any[] = pageData.results || [];
+        const results: any[] = repo.results || [];
         allOrders.push(...results);
 
-        const total = pageData.paging?.total || 0;
+        const total = repo.paging?.total || 0;
         offset += results.length;
         if (results.length < limit || offset >= total) hasMore = false;
         page++;

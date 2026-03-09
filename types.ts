@@ -175,6 +175,7 @@ export interface StockItem {
     substitute_product_code?: string;
     expedition_items?: { stockItemCode: string; qty_per_pack: number }[];
     barcode?: string;
+    is_volatile_infinite?: boolean;
 }
 
 export type StockMovementOrigin = 'AJUSTE_MANUAL' | 'PRODUCAO_MANUAL' | 'BIP' | 'PESAGEM' | 'MOAGEM' | 'IMPORT_XML' | 'PRODUCAO_INTERNA';
@@ -264,6 +265,7 @@ export interface OrderItem {
     id: string;
     orderId: string;
     blingId?: string; // ID interno do Bling para vínculos
+    blingNumero?: string; // Número do pedido no Bling (ex: "153782")
     tracking: string;
     sku: string;
     qty_original: number;
@@ -342,6 +344,20 @@ export interface SkuLink {
 }
 
 // Bling Integration
+export interface BlingExportacaoConfig {
+    statusPadrao?: number[]; // Códigos de situação do Bling: 6=Em Aberto, 9=Atendido, 15=Em Andamento
+    diasPadrao?: number;     // Quantos dias atrás buscar (padrão: 7)
+    canalPadrao?: 'ML' | 'SHOPEE' | 'SITE' | 'TODOS'; // Canal padrão para sincronização
+    autoImportarRastreio?: boolean; // Importar código de rastreio automaticamente ao sincronizar
+    limitePedidos?: number;         // Limite máximo de pedidos por sincronização
+}
+
+export interface BlingEtiquetasConfig {
+    modoPadrao?: 'danfe_etiqueta' | 'apenas_etiqueta'; // Modo padrão de impressão
+    fonteZpl?: 'bling_api' | 'local';                  // Preferir ZPL real do Bling ou gerar localmente
+    delayEntrePrintMs?: number;                        // Delay entre impressões em ms
+}
+
 export interface BlingSettings {
     apiKey: string; // Access Token
     clientId?: string;
@@ -352,6 +368,8 @@ export interface BlingSettings {
     autoSync: boolean;
     autoSyncFromDate?: string; // Data mínima para sincronização automática (YYYY-MM-DD)
     scope: BlingScopeSettings;
+    exportacao?: BlingExportacaoConfig; // Configurações de exportação de pedidos
+    etiquetasConfig?: BlingEtiquetasConfig; // Configurações de etiquetas
 }
 
 // Mercado Livre Integration

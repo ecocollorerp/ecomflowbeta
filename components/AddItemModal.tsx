@@ -26,6 +26,7 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
 
     const [newItem, setNewItem] = useState(initialState);
     const [configureBom, setConfigureBom] = useState(false);
+    const [isVolatileInfinite, setIsVolatileInfinite] = useState(false);
     const isProduct = itemType === 'PRODUTO';
     const isProcessado = itemType === 'PROCESSADO';
 
@@ -53,15 +54,21 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
 
     const handleConfirm = () => {
         if (newItem.code.trim() && newItem.name.trim()) {
-            onConfirm(
-                {
-                    ...newItem,
-                    kind: itemType,
-                    color: isProduct ? newItem.color : undefined,
-                    barcode: newItem.barcode || undefined
-                },
-                configureBom
-            );
+            // Garantir que category é incluído para insumos
+            const itemToConfirm: any = {
+                ...newItem,
+                kind: itemType,
+                color: isProduct ? newItem.color : undefined,
+                barcode: newItem.barcode || undefined,
+                is_volatile_infinite: itemType === 'INSUMO' ? isVolatileInfinite : false
+            };
+            
+            // Garantir que category é salvo para insumo
+            if (itemType === 'INSUMO') {
+                itemToConfirm.category = newItem.category || '';
+            }
+            
+            onConfirm(itemToConfirm, configureBom);
         }
     };
 
@@ -227,6 +234,20 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                             />
                         </div>
                     </div>
+
+                    {itemType === 'INSUMO' && (
+                        <div>
+                            <label className="flex items-center select-none cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={isVolatileInfinite}
+                                    onChange={(e) => setIsVolatileInfinite(e.target.checked)}
+                                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="ml-2 text-sm text-[var(--modal-text-secondary)]">Estoque Volátil Infinito (quantidade não diminui)</span>
+                            </label>
+                        </div>
+                    )}
 
                      {(isProduct || isProcessado) && (
                         <div>

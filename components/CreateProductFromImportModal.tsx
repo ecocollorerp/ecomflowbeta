@@ -19,8 +19,8 @@ const CreateProductFromImportModal: React.FC<CreateProductFromImportModalProps> 
     const primarySku = unlinkedSkuData?.skus[0] || '';
 
     useEffect(() => {
-        if (isOpen && unlinkedSkuData) {
-            // Suggest a cleaned-up name based on the SKU
+        if (isOpen && unlinkedSkuData && primarySku) {
+            // Suggest a cleaned-up name based on the SKU - only on initial open
             const suggestedName = primarySku
                 .replace(/_/g, ' ')
                 .replace(/-/g, ' ')
@@ -30,7 +30,7 @@ const CreateProductFromImportModal: React.FC<CreateProductFromImportModalProps> 
             setNewItemColor(unlinkedSkuData.colorSugerida);
             setProductType('papel_de_parede'); // Default to wallpaper
         }
-    }, [isOpen, unlinkedSkuData, primarySku]);
+    }, [isOpen]); // Only depend on isOpen to prevent unwanted resets
 
     if (!isOpen || !unlinkedSkuData) return null;
 

@@ -699,7 +699,9 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                             <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">Canal</th>
                                             <SortableHeader label="Cliente" sortKey="customer_name"/>
                                             {isConsultarTab && generalSettings.pedidos.displayCustomerIdentifier && <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">CPF/CNPJ</th>}
-                                            <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">Pedido/Rastreio</th>
+                                            <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">Pedido Loja Virtual</th>
+                                            <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">N° Bling</th>
+                                            <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">Rastreio</th>
                                             <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">SKU / Produto Vinculado</th>
                                             <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">Qtd</th>
                                             <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">Cor</th>
@@ -728,7 +730,9 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                                     <td className="py-2 px-3">{item.canal}</td>
                                                     <td className="py-2 px-3">{item.customer_name || '-'}</td>
                                                     {isConsultarTab && generalSettings.pedidos.displayCustomerIdentifier && <td className="py-2 px-3 font-mono text-xs">{item.customer_cpf_cnpj || '-'}</td>}
-                                                    <td className="py-2 px-3 font-mono text-xs"><div>{item.orderId}</div><div>{item.tracking}</div></td>
+                                                    <td className="py-2 px-3 font-mono text-xs">{item.orderId || '—'}</td>
+                                                    <td className="py-2 px-3 font-mono text-xs text-slate-400">{(item as any).blingNumero || '—'}</td>
+                                                    <td className="py-2 px-3 font-mono text-xs">{item.tracking || '—'}</td>
                                                     <td className="py-2 px-3">
                                                         {isGroup ? `Múltiplos (${item.items.length})` : (
                                                             <div>

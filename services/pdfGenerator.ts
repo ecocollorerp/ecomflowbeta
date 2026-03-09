@@ -232,6 +232,15 @@ export const buildPdf = async (
     pdf.deletePage(1);
 
     const skuLinkMap = new Map(skuLinks.map(link => [link.importedSku, link.masterProductSku]));
+    // Create reverse map: masterProductSku => array of importedSkus
+    const masterToLinkedSkusMap = new Map<string, string[]>();
+    for (const link of skuLinks) {
+        if (!masterToLinkedSkusMap.has(link.masterProductSku)) {
+            masterToLinkedSkusMap.set(link.masterProductSku, []);
+        }
+        masterToLinkedSkusMap.get(link.masterProductSku)!.push(link.importedSku);
+    }
+    
     const stockItemMap = new Map(stockItems.map(item => [item.code, item]));
 
     for (let i = 0; i < previews.length; i += 2) {
@@ -267,17 +276,46 @@ export const buildPdf = async (
                 
                 // Draw footer for label-only pages
                 if (pairData && pairData.skus.length > 0) {
-                    const lines = pairData.skus.map(item => {
+                    const lines: string[] = [];
+                    const processedMasters = new Set<string>();
+                    
+                    for (const item of pairData.skus) {
                         const masterSku = skuLinkMap.get(item.sku);
-                        const product = masterSku ? stockItemMap.get(masterSku) : stockItemMap.get(item.sku);
-                        const finalSku = product ? product.code : item.sku;
-                        const finalName = product ? product.name : item.sku;
-
-                        return platformSettings.footer.template
-                            .replace('{sku}', finalSku)
-                            .replace('{name}', finalName)
-                            .replace('{qty}', String(item.qty));
-                    });
+                        const finalMasterSku = masterSku || item.sku;
+                        
+                        // If this is a linked SKU and we haven't processed this master yet
+                        if (masterSku && !processedMasters.has(finalMasterSku)) {
+                            processedMasters.add(finalMasterSku);
+                            const product = stockItemMap.get(finalMasterSku);
+                            
+                            // Add master SKU info
+                            const masterLine = platformSettings.footer.template
+                                .replace('{sku}', product?.code || finalMasterSku)
+                                .replace('{name}', product?.name || finalMasterSku)
+                                .replace('{qty}', String(item.qty));
+                            lines.push(masterLine);
+                            
+                            // Add all linked SKUs for this master
+                            const linkedSkus = masterToLinkedSkusMap.get(finalMasterSku) || [];
+                            for (const linkedSku of linkedSkus) {
+                                if (linkedSku !== item.sku) { // Don't duplicate the item we just processed
+                                    const linkedLine = platformSettings.footer.template
+                                        .replace('{sku}', linkedSku)
+                                        .replace('{name}', linkedSku)
+                                        .replace('{qty}', String(item.qty));
+                                    lines.push(linkedLine);
+                                }
+                            }
+                        } else if (!masterSku) {
+                            // Regular SKU without links
+                            const product = stockItemMap.get(item.sku);
+                            const line = platformSettings.footer.template
+                                .replace('{sku}', product?.code || item.sku)
+                                .replace('{name}', product?.name || item.sku)
+                                .replace('{qty}', String(item.qty));
+                            lines.push(line);
+                        }
+                    }
 
                     const { footer } = platformSettings;
                     let footerStartX, footerStartY;
@@ -331,17 +369,46 @@ export const buildPdf = async (
                 pdf.addImage(labelPage, 'PNG', x, 0, finalWidth, finalHeight, undefined, 'FAST');
                 
                 if (pairData && pairData.skus.length > 0) {
-                    const lines = pairData.skus.map(item => {
+                    const lines: string[] = [];
+                    const processedMasters = new Set<string>();
+                    
+                    for (const item of pairData.skus) {
                         const masterSku = skuLinkMap.get(item.sku);
-                        const product = masterSku ? stockItemMap.get(masterSku) : stockItemMap.get(item.sku);
-                        const finalSku = product ? product.code : item.sku;
-                        const finalName = product ? product.name : item.sku;
-
-                        return platformSettings.footer.template
-                            .replace('{sku}', finalSku)
-                            .replace('{name}', finalName)
-                            .replace('{qty}', String(item.qty));
-                    });
+                        const finalMasterSku = masterSku || item.sku;
+                        
+                        // If this is a linked SKU and we haven't processed this master yet
+                        if (masterSku && !processedMasters.has(finalMasterSku)) {
+                            processedMasters.add(finalMasterSku);
+                            const product = stockItemMap.get(finalMasterSku);
+                            
+                            // Add master SKU info
+                            const masterLine = platformSettings.footer.template
+                                .replace('{sku}', product?.code || finalMasterSku)
+                                .replace('{name}', product?.name || finalMasterSku)
+                                .replace('{qty}', String(item.qty));
+                            lines.push(masterLine);
+                            
+                            // Add all linked SKUs for this master
+                            const linkedSkus = masterToLinkedSkusMap.get(finalMasterSku) || [];
+                            for (const linkedSku of linkedSkus) {
+                                if (linkedSku !== item.sku) { // Don't duplicate the item we just processed
+                                    const linkedLine = platformSettings.footer.template
+                                        .replace('{sku}', linkedSku)
+                                        .replace('{name}', linkedSku)
+                                        .replace('{qty}', String(item.qty));
+                                    lines.push(linkedLine);
+                                }
+                            }
+                        } else if (!masterSku) {
+                            // Regular SKU without links
+                            const product = stockItemMap.get(item.sku);
+                            const line = platformSettings.footer.template
+                                .replace('{sku}', product?.code || item.sku)
+                                .replace('{name}', product?.name || item.sku)
+                                .replace('{qty}', String(item.qty));
+                            lines.push(line);
+                        }
+                    }
                     
                     const { footer } = platformSettings;
                     let footerStartX, footerStartY;

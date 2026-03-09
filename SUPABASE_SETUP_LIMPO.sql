@@ -117,6 +117,7 @@ CREATE TABLE stock_items (
     cost_price              REAL         DEFAULT 0,
     description             TEXT,
     status                  TEXT         DEFAULT 'ATIVO',
+    is_volatile_infinite    BOOLEAN      DEFAULT FALSE,
     created_at              TIMESTAMPTZ  DEFAULT NOW(),
     updated_at              TIMESTAMPTZ  DEFAULT NOW()
 );
