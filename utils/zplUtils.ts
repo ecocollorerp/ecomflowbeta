@@ -191,11 +191,32 @@ export const filterAndPairZplPages = async (
             }
             
             if (labelPage) {
-                const fromLabel = await extractFields(labelPage, regex);
-                orderIdFromLabel = fromLabel.orderId;
+                // Tenta extrair ID do pedido do Shopee de forma mais agressiva
+                const upperLabel = labelPage.toUpperCase();
+                
+                // Padrão comum no Shopee: ID do Pedido ou Order ID
+                const shopeeOrderMatch = labelPage.match(/(?:ID DO PEDIDO|ORDER ID|PEDIDO):?\s*([A-Z0-9]{10,})/i);
+                if (shopeeOrderMatch?.[1]) {
+                    orderIdFromLabel = shopeeOrderMatch[1].trim();
+                }
+
+                // Se não encontrou, tenta rastreio (que às vezes coincide com orderId no nosso banco)
+                if (!orderIdFromLabel) {
+                    const shopeeTrackingMatch = labelPage.match(/(?:TRACKING NUMBER|N[ÚU]MERO DE RASTREAMENTO|RASTREIO):?\s*([A-Z0-9]{10,})/i);
+                    if (shopeeTrackingMatch?.[1]) {
+                        orderIdFromLabel = shopeeTrackingMatch[1].trim();
+                    }
+                }
+
+                // Se ainda não encontrou, tenta um lookup genérico por campos longos (>= 12 caracteres)
+                if (!orderIdFromLabel) {
+                    const fromLabel = await extractFields(labelPage, regex);
+                    orderIdFromLabel = fromLabel.orderId;
+                }
             }
 
             const finalOrderId = orderIdFromLabel || dataFromZpl.orderId;
+
             finalData.orderId = finalOrderId;
 
             if (finalOrderId) {

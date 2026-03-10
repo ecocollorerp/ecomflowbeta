@@ -1,4 +1,4 @@
-﻿
+
 import React, { useRef, useCallback, useState, useMemo, useEffect } from 'react';
 import { Settings, Printer, Trash2, X, FileText, Loader2, Image as ImageIcon, Zap, Link as LinkIcon, PlusCircle, AlertTriangle, Package, File, Eye, History, Clock, CheckCircle2, ExternalLink, ChevronDown, ChevronRight, Search, Copy, LayoutList, CalendarDays } from 'lucide-react';
 import { ZplSettings, ExtractedZplData, GeneralSettings, UiSettings, StockItem, SkuLink, User, OrderItem, ZplPlatformSettings, EtiquetaHistoryItem, EtiquetasState } from '../types';
@@ -748,7 +748,67 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
 
                             <div className="flex-1 flex flex-col bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 overflow-hidden">
                                 <div className="flex-shrink-0 flex justify-between items-center mb-4"><h2 className="text-lg font-semibold">Pré-visualização ({previews.filter(p => p && p !== 'SKIPPED').length}/{zplPages.length})</h2><div className="flex items-center gap-4"><label className="flex items-center text-sm"><input type="checkbox" checked={includeDanfe} onChange={(e) => setEtiquetasState(p => ({ ...p, includeDanfe: e.target.checked }))} className="h-4 w-4 rounded"/> <span className="ml-2">Incluir DANFE</span></label><button onClick={handlePdfAction} disabled={previews.length === 0 || previews.every(p => !p) || isProcessing} className="flex items-center gap-2 text-sm px-4 py-2 rounded-md bg-blue-600 dark:bg-blue-500 text-white font-semibold disabled:opacity-50"><Printer size={16} /> Gerar PDF</button></div></div>
-                                <div className="flex-1 overflow-y-auto pr-2"><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">{previews.map((src, index) => { if (!includeDanfe && index % 2 === 0) return null; const isEvenPage = index % 2 !== 0; const pairData = extractedData.get(Math.floor(index / 2) * 2); const platformSettings = pairData?.isMercadoLivre ? settings.mercadoLivre : settings.shopee; return (<div key={index} className="space-y-2 relative">{printedIndices.has(index) && (<div className="absolute inset-0 bg-green-900 bg-opacity-75 flex items-center justify-center z-10 rounded-lg pointer-events-none"><span className="text-white font-bold text-lg rotate-[-15deg] border-2 border-white px-4 py-1 rounded">IMPRESSO</span></div>)}<div className="bg-gray-50 dark:bg-gray-700 p-2 rounded-lg shadow-md flex flex-col aspect-[100/150] justify-center items-center overflow-hidden">{src === 'SKIPPED' ? <div className="text-center p-4 text-gray-500"><Eye size={24} className="mx-auto mb-2"/> <p className="font-semibold">DANFE Omitida</p><p className="text-xs">(Modo Rápido)</p></div> : src === 'ERROR' ? <div className="text-red-500 text-center p-4">Erro ao renderizar</div> : src ? <img src={src} alt={`Preview ${index + 1}`} className="max-w-full max-h-full object-contain" /> : <Loader2 className="animate-spin text-gray-400" />}</div>{isEvenPage && pairData && (<>{pairData.isMercadoLivre ? (<div className="text-xs p-2 bg-gray-100 border rounded text-gray-700 dark:bg-gray-700 dark:text-gray-200 dark:border-gray-600"><p className="font-bold border-b pb-1 mb-1">Info (Visual):</p>{pairData.orderId && <p className="font-mono truncate" title={`Pedido: ${pairData.orderId}`}>Pedido: {pairData.orderId}</p>}{pairData.skus.length > 0 ? (groupSkusByMasterProduct(pairData.skus).map(({ product, totalQty }) => { const displayName = product ? product.name : 'Produto não encontrado'; return (<p key={product?.code || 'unknown'} className="font-mono truncate" title={`${displayName} (x${totalQty})`}>{displayName} (x${totalQty})</p>);})) : (<p className="text-red-600 font-semibold">SKUs não encontrados.</p>)}</div>) : pairData.skus.length > 0 && (<div className="text-center font-semibold text-lg text-gray-800 dark:text-gray-100 p-2 border-t mt-1">{groupSkusByMasterProduct(pairData.skus).map(({ product, totalQty }) => { const finalSku = product ? product.code : 'SKU-UNKNOWN'; const finalName = product ? product.name : 'Produto não encontrado'; return platformSettings.footer.template.replace('{sku}', finalSku).replace('{name}', finalName).replace('{qty}', String(totalQty)); }).join(' / ')}</div>)}</>)}<p className="text-xs text-center text-gray-500 dark:text-gray-400">Página {index + 1}</p></div>)})}</div></div>
+                                <div className="flex-1 overflow-y-auto pr-2"><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">{previews.map((src, index) => {
+                                            if (!includeDanfe && index % 2 === 0) return null;
+                                            const isEvenPage = index % 2 !== 0;
+                                            const pairData = extractedData.get(Math.floor(index / 2) * 2);
+                                            const platformSettings = pairData?.isMercadoLivre ? settings.mercadoLivre : settings.shopee;
+                                            
+                                            // Prepara as linhas de pré-visualização para o rodapé usando agrupamento por mestre
+                                            const previewLines: string[] = [];
+                                            if (pairData && pairData.skus.length > 0) {
+                                                const grouped = groupSkusByMasterProduct(pairData.skus);
+                                                grouped.forEach(({ product, totalQty }) => {
+                                                    const finalSku = product ? product.code : 'SKU-UNKNOWN';
+                                                    const finalName = product ? product.name : 'Produto não encontrado';
+                                                    const line = platformSettings.footer.template
+                                                        .replace('{sku}', finalSku)
+                                                        .replace('{name}', finalName)
+                                                        .replace('{qty}', String(totalQty));
+                                                    previewLines.push(line);
+                                                });
+                                            }
+
+
+                                            return (
+                                                <div key={index} className="space-y-2 relative">
+                                                    {printedIndices.has(index) && (
+                                                        <div className="absolute inset-0 bg-green-900 bg-opacity-75 flex items-center justify-center z-10 rounded-lg pointer-events-none">
+                                                            <span className="text-white font-bold text-lg rotate-[-15deg] border-2 border-white px-4 py-1 rounded">IMPRESSO</span>
+                                                        </div>
+                                                    )}
+                                                    <div className="bg-gray-50 dark:bg-gray-700 p-2 rounded-lg shadow-md flex flex-col aspect-[100/150] justify-center items-center overflow-hidden">
+                                                        {src === 'SKIPPED' ? (
+                                                            <div className="text-center p-4 text-gray-500">
+                                                                <Eye size={24} className="mx-auto mb-2"/>
+                                                                <p className="font-semibold">DANFE Omitida</p>
+                                                                <p className="text-xs">(Modo Rápido)</p>
+                                                            </div>
+                                                        ) : src === 'ERROR' ? (
+                                                            <div className="text-red-500 text-center p-4">Erro ao renderizar</div>
+                                                        ) : src ? (
+                                                            <img src={src} alt={`Preview ${index + 1}`} className="max-w-full max-h-full object-contain" />
+                                                        ) : (
+                                                            <Loader2 className="animate-spin text-gray-400" />
+                                                        )}
+                                                    </div>
+                                                    {isEvenPage && pairData && (
+                                                        <div className="text-center font-semibold text-xs text-gray-800 dark:text-gray-100 p-2 border-t mt-1 bg-gray-50 dark:bg-gray-800/50 rounded-b">
+                                                            {previewLines.length > 0 ? (
+                                                                previewLines.map((line, lIdx) => (
+                                                                    <div key={lIdx} className="truncate" title={line}>{line}</div>
+                                                                ))
+                                                            ) : (
+                                                                <p className="text-red-600 font-bold">Sem dados de SKU</p>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    <p className="text-xs text-center text-gray-500 dark:text-gray-400">Página {index + 1}</p>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     )}

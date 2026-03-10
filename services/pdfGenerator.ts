@@ -231,17 +231,9 @@ export const buildPdf = async (
     const pdf = new jsPDF(orientation, 'mm', [width_mm, height_mm]);
     pdf.deletePage(1);
 
-    const skuLinkMap = new Map(skuLinks.map(link => [link.importedSku, link.masterProductSku]));
-    // Create reverse map: masterProductSku => array of importedSkus
-    const masterToLinkedSkusMap = new Map<string, string[]>();
-    for (const link of skuLinks) {
-        if (!masterToLinkedSkusMap.has(link.masterProductSku)) {
-            masterToLinkedSkusMap.set(link.masterProductSku, []);
-        }
-        masterToLinkedSkusMap.get(link.masterProductSku)!.push(link.importedSku);
-    }
-    
-    const stockItemMap = new Map(stockItems.map(item => [item.code, item]));
+    const skuLinkMap = new Map(skuLinks.map(link => [link.importedSku.toUpperCase(), link.masterProductSku.toUpperCase()]));
+    const stockItemMap = new Map(stockItems.map(item => [item.code.toUpperCase(), item]));
+
 
     for (let i = 0; i < previews.length; i += 2) {
         const danfePage = previews[i];
@@ -277,45 +269,32 @@ export const buildPdf = async (
                 // Draw footer for label-only pages
                 if (pairData && pairData.skus.length > 0) {
                     const lines: string[] = [];
-                    const processedMasters = new Set<string>();
+                    const grouped = new Map<string, { product: StockItem | null, totalQty: number }>();
                     
-                    for (const item of pairData.skus) {
-                        const masterSku = skuLinkMap.get(item.sku);
-                        const finalMasterSku = masterSku || item.sku;
+                    pairData.skus.forEach(s => {
+                        const normalizedSku = s.sku.toUpperCase();
+                        const masterSku = skuLinkMap.get(normalizedSku);
+                        const productKey = masterSku || normalizedSku;
                         
-                        // If this is a linked SKU and we haven't processed this master yet
-                        if (masterSku && !processedMasters.has(finalMasterSku)) {
-                            processedMasters.add(finalMasterSku);
-                            const product = stockItemMap.get(finalMasterSku);
-                            
-                            // Add master SKU info
-                            const masterLine = platformSettings.footer.template
-                                .replace('{sku}', product?.code || finalMasterSku)
-                                .replace('{name}', product?.name || finalMasterSku)
-                                .replace('{qty}', String(item.qty));
-                            lines.push(masterLine);
-                            
-                            // Add all linked SKUs for this master
-                            const linkedSkus = masterToLinkedSkusMap.get(finalMasterSku) || [];
-                            for (const linkedSku of linkedSkus) {
-                                if (linkedSku !== item.sku) { // Don't duplicate the item we just processed
-                                    const linkedLine = platformSettings.footer.template
-                                        .replace('{sku}', linkedSku)
-                                        .replace('{name}', linkedSku)
-                                        .replace('{qty}', String(item.qty));
-                                    lines.push(linkedLine);
-                                }
-                            }
-                        } else if (!masterSku) {
-                            // Regular SKU without links
-                            const product = stockItemMap.get(item.sku);
-                            const line = platformSettings.footer.template
-                                .replace('{sku}', product?.code || item.sku)
-                                .replace('{name}', product?.name || item.sku)
-                                .replace('{qty}', String(item.qty));
-                            lines.push(line);
+                        if (grouped.has(productKey)) {
+                            grouped.get(productKey)!.totalQty += s.qty;
+                        } else {
+                            grouped.set(productKey, {
+                                product: stockItemMap.get(productKey) || null,
+                                totalQty: s.qty
+                            });
                         }
-                    }
+                    });
+
+                    grouped.forEach(({ product, totalQty }, key) => {
+                        const line = platformSettings.footer.template
+                            .replace('{sku}', product?.code || key)
+                            .replace('{name}', product?.name || key)
+                            .replace('{qty}', String(totalQty));
+                        lines.push(line);
+                    });
+
+
 
                     const { footer } = platformSettings;
                     let footerStartX, footerStartY;
@@ -370,45 +349,32 @@ export const buildPdf = async (
                 
                 if (pairData && pairData.skus.length > 0) {
                     const lines: string[] = [];
-                    const processedMasters = new Set<string>();
+                    const grouped = new Map<string, { product: StockItem | null, totalQty: number }>();
                     
-                    for (const item of pairData.skus) {
-                        const masterSku = skuLinkMap.get(item.sku);
-                        const finalMasterSku = masterSku || item.sku;
+                    pairData.skus.forEach(s => {
+                        const normalizedSku = s.sku.toUpperCase();
+                        const masterSku = skuLinkMap.get(normalizedSku);
+                        const productKey = masterSku || normalizedSku;
                         
-                        // If this is a linked SKU and we haven't processed this master yet
-                        if (masterSku && !processedMasters.has(finalMasterSku)) {
-                            processedMasters.add(finalMasterSku);
-                            const product = stockItemMap.get(finalMasterSku);
-                            
-                            // Add master SKU info
-                            const masterLine = platformSettings.footer.template
-                                .replace('{sku}', product?.code || finalMasterSku)
-                                .replace('{name}', product?.name || finalMasterSku)
-                                .replace('{qty}', String(item.qty));
-                            lines.push(masterLine);
-                            
-                            // Add all linked SKUs for this master
-                            const linkedSkus = masterToLinkedSkusMap.get(finalMasterSku) || [];
-                            for (const linkedSku of linkedSkus) {
-                                if (linkedSku !== item.sku) { // Don't duplicate the item we just processed
-                                    const linkedLine = platformSettings.footer.template
-                                        .replace('{sku}', linkedSku)
-                                        .replace('{name}', linkedSku)
-                                        .replace('{qty}', String(item.qty));
-                                    lines.push(linkedLine);
-                                }
-                            }
-                        } else if (!masterSku) {
-                            // Regular SKU without links
-                            const product = stockItemMap.get(item.sku);
-                            const line = platformSettings.footer.template
-                                .replace('{sku}', product?.code || item.sku)
-                                .replace('{name}', product?.name || item.sku)
-                                .replace('{qty}', String(item.qty));
-                            lines.push(line);
+                        if (grouped.has(productKey)) {
+                            grouped.get(productKey)!.totalQty += s.qty;
+                        } else {
+                            grouped.set(productKey, {
+                                product: stockItemMap.get(productKey) || null,
+                                totalQty: s.qty
+                            });
                         }
-                    }
+                    });
+
+                    grouped.forEach(({ product, totalQty }, key) => {
+                        const line = platformSettings.footer.template
+                            .replace('{sku}', product?.code || key)
+                            .replace('{name}', product?.name || key)
+                            .replace('{qty}', String(totalQty));
+                        lines.push(line);
+                    });
+
+
                     
                     const { footer } = platformSettings;
                     let footerStartX, footerStartY;

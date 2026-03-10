@@ -9,6 +9,7 @@ import { OrderItem } from '../types';
 export interface BlingPedido {
   id: number | string;
   numero: string;
+  numeroLoja?: string;
   sequencia?: number;
   data: string;
   dataPrevisaoEntrega?: string;
@@ -194,11 +195,29 @@ export const blingBulkLoaderService = {
    * Converte BlingPedido para formato OrderItem do ERP
    */
   converterParaOrderItem(blingPedido: BlingPedido): OrderItem {
+    // 🔍 Tentar extrair número da loja se não estiver no campo padrão
+    let numeroLojaOriginal = blingPedido.numeroLoja || '';
+    if (!numeroLojaOriginal) {
+      const camposTexto = [
+        (blingPedido as any).observacoes,
+        (blingPedido as any).observacoesInternas,
+        JSON.stringify((blingPedido as any).informacoesAdicionais || {}),
+      ].filter(Boolean);
+
+      for (const campo of camposTexto) {
+        const match = campo.match(/(?:Número\s+(?:loja\s+virtual|da\s+loja)|Order\s+ID|Pedido\s+original)\s*[:\-]?\s*([A-Za-z0-9\-_]+)/i);
+        if (match && match[1]) {
+          numeroLojaOriginal = match[1].trim();
+          break;
+        }
+      }
+    }
+
     return {
       id: `bling_${blingPedido.id}`,
       orderId: blingPedido.numero,
       blingId: blingPedido.id.toString(),
-      tracking: '',
+      tracking: (blingPedido as any).transporte?.codigoRastreamento || '',
       sku: blingPedido.itens[0]?.codigo || 'SEM_SKU',
       qty_original: blingPedido.itens[0]?.quantidade || 1,
       multiplicador: 1,
@@ -206,15 +225,17 @@ export const blingBulkLoaderService = {
       color: '',
       canal: 'SITE' as any,
       data: blingPedido.data.split('T')[0], // Pega apenas YYYY-MM-DD
-      status: blingPedido.status === 'aberto' ? 'NORMAL' : 'ERRO',
+      status: (blingPedido.status === 'aberto' || (blingPedido as any).situacao?.valor === 6) ? 'NORMAL' : 'ERRO',
       customer_name: blingPedido.cliente.nome,
       customer_cpf_cnpj: blingPedido.cliente.numeroDocumento,
       price_gross: blingPedido.itens[0]?.valor || 0,
       price_total: blingPedido.total,
       platform_fees: 0,
-      shipping_fee: 0,
+      shipping_fee: (blingPedido as any).transporte?.valorFrete || 0,
       shipping_paid_by_customer: 0,
-      price_net: blingPedido.total
+      price_net: blingPedido.total,
+      venda_origem: (blingPedido as any).loja?.nome || (blingPedido as any).nomeLojaVirtual || (blingPedido as any).origem || 'SITE',
+      id_pedido_loja: numeroLojaOriginal,
     };
   },
 

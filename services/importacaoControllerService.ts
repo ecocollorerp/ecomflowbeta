@@ -25,6 +25,8 @@ export interface PedidoblingNaoVinculado {
   }>;
   total: number;
   status: string;
+  venda_origem?: string;
+  id_pedido_loja?: string;
   jaImportado?: boolean;
   dataImportacao?: string;
 }
@@ -180,6 +182,8 @@ export class ImportacaoControllerService {
             })),
             total: pedido.total || 0,
             status: pedido.status || 'aberto',
+            venda_origem: nomeLojaStr || canalStr,
+            id_pedido_loja: numeroLojaVirtualExtraido || pedido.numeroLoja,
             jaImportado: false,
             dataImportacao: undefined,
           };
@@ -355,6 +359,49 @@ export class ImportacaoControllerService {
 
       // Retornar a quantidade desejada
       const pedidosSelecionados = todosOsPedidos.slice(0, quantidadeDesejada);
+      const pedidosSelecionadosFormatados = pedidosSelecionados.map((pedido: any) => {
+          let origem: 'SHOPEE' | 'MERCADO_LIVRE' | 'SITE' | 'OUTRO' = 'OUTRO';
+          const canalStr = (pedido?.canal || pedido?.canaldados || '').toUpperCase();
+          const nomeLojaStr = (pedido?.loja?.nome || pedido?.nomeLojaVirtual || '').toUpperCase();
+          if (canalStr.includes('MERCADO') || nomeLojaStr.includes('MERCADO') || canalStr.includes('ML')) origem = 'MERCADO_LIVRE';
+          else if (canalStr.includes('SHOPEE') || nomeLojaStr.includes('SHOPEE')) origem = 'SHOPEE';
+          else if (canalStr.includes('SITE') || nomeLojaStr.includes('SITE')) origem = 'SITE';
+
+          return {
+            id: `bling_${pedido.id}`,
+            numero: pedido.numero,
+            numeroLoja: pedido.numeroLoja,
+            dataCompra: pedido.data || new Date().toISOString(),
+            cliente: {
+              nome: pedido?.contato?.nome || 'Sem nome',
+              cpfCnpj: pedido?.contato?.numeroDocumento || '-',
+              email: pedido?.contato?.email,
+            },
+            origem,
+            itens: (pedido?.itens || []).map((item: any) => ({
+              descricao: item.descricao,
+              sku: item.codigo,
+              quantidade: item.quantidade,
+              valor: item.valor,
+            })),
+            total: pedido.total || 0,
+            status: pedido.status || 'aberto',
+            venda_origem: nomeLojaStr || canalStr,
+            id_pedido_loja: pedido.numeroLoja,
+            jaImportado: false,
+          };
+      });
+
+      return {
+        pedidosDisponiveis: pedidosSelecionadosFormatados,
+        total: todosOsPedidos.length,
+        quantidadeDesejada,
+      };
+    } catch (error: any) {
+      console.error('❌ Erro ao buscar pedidos NFe customizados:', error.message);
+      throw error;
+    }
+  }
 
   /**
    * 📋 Buscar TODOS os pedidos em aberto filtrados por plataforma (Mercado Livre ou Shopee)
@@ -362,7 +409,7 @@ export class ImportacaoControllerService {
    */
   static async buscarPedidosEmAbertoPorPlataforma(
     token: string,
-    plataforma: 'MERCADO_LIVRE' | 'SHOPEE',
+    plataforma: 'MERCADO_LIVRE' | 'SHOPEE' | 'TODOS',
     opcoes: {
       quantidadeDesejada?: number;
       dataInicio?: string;
@@ -378,7 +425,7 @@ export class ImportacaoControllerService {
     try {
       console.log(`📋 Buscando pedidos em aberto da ${plataforma}...`);
 
-      const { quantidadeDesejada = 100, dataInicio, dataFim, apenasComEtiqueta = false } = opcoes;
+      const { quantidadeDesejada = 9999, dataInicio, dataFim, apenasComEtiqueta = false } = opcoes;
 
       // Carregar TODOS os pedidos em aberto (paginação infinita)
       let todosOsPedidos: any[] = [];
@@ -428,14 +475,16 @@ export class ImportacaoControllerService {
             const canal = (pedido?.canal || pedido?.canaldados || '').toUpperCase();
             const nomeLoja = (pedido?.loja?.nome || pedido?.nomeLojaVirtual || '').toUpperCase();
 
-            if (plataforma === 'MERCADO_LIVRE') {
+            if (plataforma === 'TODOS') {
+              return true;
+            } else if (plataforma === 'MERCADO_LIVRE') {
               const ehMercadoLivre = canal.includes('MERCADO') || nomeLoja.includes('MERCADO') || canal.includes('ML');
               
               // Se apenasComEtiqueta for true, filtrar apenas pedidos com etiqueta disponível
               if (apenasComEtiqueta && ehMercadoLivre) {
                 // Procurar por campo "etiqueta" ou "tag" ou "numero" que indique disponibilidade
                 const temEtiqueta = pedido?.etiqueta || pedido?.tag || pedido?.numeroEtiqueta;
-                const estaDisponivel = pedido?.situacao === 'DISPONÍVEL' || pedido?.etiquetaDisponivel === true;
+                const estaDisponivel = pedido?.situacao === 'DISPONÍVEL' || pedido?.etiquetaDisponivel === true || pedido?.transporte?.codigoRastreamento;
                 return temEtiqueta || estaDisponivel;
               }
               
@@ -468,8 +517,7 @@ export class ImportacaoControllerService {
       // Retornar a quantidade desejada ou todos se houver menos
       const pedidosSelecionados = todosOsPedidos.slice(0, quantidadeDesejada);
 
-      return {
-        pedidosDisponiveis: pedidosSelecionados.map((pedido: any) => {
+      const pedidosSelecionadosFormatados = pedidosSelecionados.map((pedido: any) => {
           // 🔍 Extrair número da loja virtual das informações adicionais
           let numeroLojaVirtualExtraido = pedido.numeroLoja;
           
@@ -492,6 +540,13 @@ export class ImportacaoControllerService {
             }
           }
 
+            let origem: 'SHOPEE' | 'MERCADO_LIVRE' | 'SITE' | 'OUTRO' = 'OUTRO';
+            const canalStr = (pedido?.canal || pedido?.canaldados || '').toUpperCase();
+            const nomeLojaStr = (pedido?.loja?.nome || pedido?.nomeLojaVirtual || '').toUpperCase();
+            if (canalStr.includes('MERCADO') || nomeLojaStr.includes('MERCADO') || canalStr.includes('ML')) origem = 'MERCADO_LIVRE';
+            else if (canalStr.includes('SHOPEE') || nomeLojaStr.includes('SHOPEE')) origem = 'SHOPEE';
+            else if (canalStr.includes('SITE') || nomeLojaStr.includes('SITE')) origem = 'SITE';
+
           return {
             id: `bling_${pedido.id}`,
             numero: pedido.numero,
@@ -502,7 +557,7 @@ export class ImportacaoControllerService {
               cpfCnpj: pedido?.contato?.numeroDocumento || '-',
               email: pedido?.contato?.email,
             },
-            origem: plataforma,
+            origem: origem,
             itens: (pedido?.itens || []).map((item: any) => ({
               descricao: item.descricao,
               sku: item.codigo,
@@ -511,8 +566,17 @@ export class ImportacaoControllerService {
             })),
             total: pedido.total || 0,
             status: pedido.situacao?.descricao || 'Em aberto',
+            venda_origem: nomeLojaStr || canalStr || 'SITE',
+            id_pedido_loja: numeroLojaVirtualExtraido || pedido.numeroLoja || '',
             jaImportado: false,
-        })),
+          };
+      });
+
+      // Sort oldest to newest (ascending order by dataCompra)
+      pedidosSelecionadosFormatados.sort((a, b) => new Date(a.dataCompra).getTime() - new Date(b.dataCompra).getTime());
+
+      return {
+        pedidosDisponiveis: pedidosSelecionadosFormatados,
         total: todosOsPedidos.length,
         quantidadeDesejada,
         plataforma,

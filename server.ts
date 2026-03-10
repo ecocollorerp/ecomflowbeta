@@ -1850,8 +1850,11 @@ async function startServer() {
       const pedidoData = await pedidoResp.json();
       const pedido = pedidoData?.data;
       
-      // 🔍 Extrair número da loja virtual das informações adicionais
+      // 🔍 Extrair número da loja virtual e canal
       let numeroLojaVirtual = pedido?.numeroLoja;
+      const canalRaw = pedido?.loja?.nome || pedido?.loja?.descricao || pedido?.origem?.nome || pedido?.origem || '';
+      const canalDetectado = parseCanal(canalRaw);
+
       const camposTexto = [
         pedido?.observacoes,
         pedido?.observacoesInternas,
@@ -1861,36 +1864,37 @@ async function startServer() {
         JSON.stringify(pedido?.dadosAdicionais || {})
       ].filter(Boolean);
       
-      for (const campo of camposTexto) {
-        if (typeof campo === 'string') {
-          const match = campo.match(/(?:Número\s+(?:loja\s+virtual|da\s+loja)|Order\s+ID|Pedido\s+original)\s*[:\-]?\s*([A-Za-z0-9\-_]+)/i);
-          if (match && match[1]) {
-            numeroLojaVirtual = match[1].trim();
-            break;
+      if (!numeroLojaVirtual) {
+        for (const campo of camposTexto) {
+          if (typeof campo === 'string') {
+            const match = campo.match(/(?:Número\s+(?:loja\s+virtual|da\s+loja)|Order\s+ID|Pedido\s+original)\s*[:\-]?\s*([A-Za-z0-9\-_]+)/i);
+            if (match && match[1]) {
+              numeroLojaVirtual = match[1].trim();
+              break;
+            }
           }
         }
       }
       
-      // Atualizar observações do pedido com o número da loja virtual se encontrado
-      if (numeroLojaVirtual && numeroLojaVirtual !== pedido?.numeroLoja) {
-        const observacoesAtuais = pedido?.observacoes || '';
+      // Atualizar observações do pedido com o número da loja virtual e plataforma
+      const infoAdicional = `Pedido: ${numeroLojaVirtual || 'N/A'} | Plataforma: ${canalDetectado}`;
+      const observacoesAtuais = pedido?.observacoes || '';
+      
+      // Verifica se a info já está lá para evitar duplicação em caso de re-tentativa
+      if (!observacoesAtuais.includes(infoAdicional)) {
         const novasObservacoes = observacoesAtuais 
-          ? `${observacoesAtuais}\nNúmero Loja Virtual: ${numeroLojaVirtual}`
-          : `Número Loja Virtual: ${numeroLojaVirtual}`;
+          ? `${observacoesAtuais}\n${infoAdicional}`
+          : infoAdicional;
           
-        console.log(`📝 [NFe] Atualizando observações do pedido com número da loja virtual: ${numeroLojaVirtual}`);
+        console.log(`📝 [NFe] Atualizando observações do pedido: ${infoAdicional}`);
         
-        const updateResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(blingOrderId)}`, {
+        await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(blingOrderId)}`, {
           method: 'PUT',
           headers,
           body: JSON.stringify({
             observacoes: novasObservacoes
           })
         });
-        
-        if (!updateResp.ok) {
-          console.warn(`⚠️ [NFe] Não foi possível atualizar observações do pedido: ${updateResp.status}`);
-        }
       }
 
       // ─── Passo 1: Gerar NF-e via rota nativa do Bling ─────────────────────
@@ -1947,6 +1951,95 @@ async function startServer() {
       return res.json({ success: true, emitida: true, nfe: { ...nfesCriadas[0], ...emitData?.data }, nfes: nfesCriadas });
     } catch (error: any) {
       console.error('❌ [NFe criar-emitir]:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  app.post('/api/bling/nfe/batch-criar-emitir', async (req, res) => {
+    try {
+      const { blingOrderIds, emitir = false } = req.body as { blingOrderIds: (string | number)[]; emitir?: boolean };
+      const rawAuth = req.headers.authorization || '';
+      
+      if (!rawAuth) return res.status(401).json({ error: 'Token do Bling obrigatório' });
+      if (!blingOrderIds || !Array.isArray(blingOrderIds)) return res.status(400).json({ error: 'blingOrderIds deve ser um array' });
+
+      console.log(`🚀 [NFe BATCH] Iniciando para ${blingOrderIds.length} pedidos...`);
+      
+      const results: any[] = [];
+      const CONCURRENCY = 1; // Processar um por um para ser seguro com rate limits
+      const DELAY = 1000;   // 1s entre cada pedido no lote
+
+      for (const id of blingOrderIds) {
+        try {
+          // Reutilizamos a lógica interna chamando o endpoint local ou simulando o request
+          // Para simplificar e garantir consistência, vamos extrair a lógica principal se necessário,
+          // mas como estamos no mesmo arquivo, podemos simplesmente realizar o fetch interno ou refatorar.
+          // Aqui, vamos fazer um fetch local para /api/bling/nfe/criar-emitir (através do app ou fetch direto)
+          // Mas como o server pode estar em portas variadas, o ideal é refatorar a lógica acima into a function.
+          // No entanto, por brevidade nesta edição direta, vamos replicar a lógica básica ou usar fetch no localhost se soubermos a porta.
+          // Melhor: Refatorar agora para uma função reutilizável.
+          
+          // Nota: Como não quero bagunçar muito o server.ts com uma refatoração massiva agora, 
+          // vou simular o comportamento chamando a lógica via fetch interno ou replicando.
+          // Replicar é mais seguro dado o contexto de "scripts isolados".
+          
+          console.log(`📦 [NFe BATCH] Processando pedido ${id}...`);
+          
+          // (Lógica replicada ou simplificada para o batch)
+          // Na prática, vamos usar o fetch do próprio node contra o localhost se possível, 
+          // ou simplesmente replicar os passos: Buscar Pedido -> Atualizar Obs -> Gerar NFe -> Emitir.
+          
+          // Para manter o código limpo e evitar duplicação massiva, vamos assumir que o sistema
+          // pode chamar a si mesmo se soubermos o HOST. Se não, vamos extrair a lógica.
+          
+          // EXTRAÇÃO DE LÓGICA (Simplificada):
+          const headers = { Authorization: rawAuth, 'Content-Type': 'application/json', Accept: 'application/json' };
+          
+          // 1. Detalhes
+          const pedidoResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(id)}`, { headers });
+          if (!pedidoResp.ok) throw new Error(`Erro ao buscar pedido ${id}`);
+          const pedidoData = await pedidoResp.json();
+          const pedido = pedidoData?.data;
+          
+          // 2. Obs
+          let numeroLojaVirtual = pedido?.numeroLoja;
+          const canalRaw = pedido?.loja?.nome || pedido?.loja?.descricao || pedido?.origem?.nome || pedido?.origem || '';
+          const canalDetectado = parseCanal(canalRaw);
+          const infoAdicional = `Pedido: ${numeroLojaVirtual || 'N/A'} | Plataforma: ${canalDetectado}`;
+          if (!(pedido?.observacoes || '').includes(infoAdicional)) {
+            await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(id)}`, {
+              method: 'PUT',
+              headers,
+              body: JSON.stringify({ observacoes: `${pedido?.observacoes || ''}\n${infoAdicional}`.trim() })
+            });
+          }
+
+          // 3. Gerar
+          const gerarResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(id)}/gerar-nfe`, { method: 'POST', headers });
+          const gerarData = await gerarResp.json();
+          if (!gerarResp.ok) throw new Error(gerarData?.error?.description || gerarData?.message || `Erro ao gerar NFe do pedido ${id}`);
+          
+          const nfId = Array.isArray(gerarData?.data) ? gerarData.data[0]?.id : gerarData?.data?.id;
+          
+          // 4. Emitir
+          if (emitir && nfId) {
+            const emitResp = await fetch(`https://www.bling.com.br/Api/v3/nfe/${nfId}/enviar`, { method: 'POST', headers });
+            const emitData = await emitResp.json();
+            if (!emitResp.ok) throw new Error(emitData?.error?.description || emitData?.message || `Erro ao emitir NFe ${nfId}`);
+          }
+
+          results.push({ blingOrderId: id, success: true });
+        } catch (err: any) {
+          console.error(`❌ [NFe BATCH] Erro no pedido ${id}:`, err.message);
+          results.push({ blingOrderId: id, success: false, error: err.message });
+        }
+        
+        await new Promise(r => setTimeout(r, DELAY));
+      }
+
+      res.json({ success: true, results });
+    } catch (error: any) {
+      console.error('❌ [NFe batch-criar-emitir]:', error);
       res.status(500).json({ success: false, error: error.message });
     }
   });
@@ -2034,6 +2127,9 @@ async function startServer() {
                 
                 if (!updateResp.ok) {
                   console.warn(`${progressBar} ⚠️ Não foi possível atualizar observações do pedido: ${updateResp.status}`);
+                } else {
+                  console.log(`${progressBar} ⏳ Aguardando 1.5s para sincronização interna do Bling...`);
+                  await new Promise(resolve => setTimeout(resolve, 1500));
                 }
               }
             }
@@ -2660,7 +2756,9 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
 
         if (pageOrders.length < 100) continuar = false;
         else pagina++;
-        if (pagina > 20) continuar = false;
+        
+        // Segurança: máximo 50 páginas (5000 pedidos) para cobrir grandes volumes de "Em Aberto"
+        if (pagina > 50) continuar = false;
       }
 
       console.log(`🛒 [VENDAS BUSCAR] ${allRawOrders.length} pedido(s) em ${pagina} página(s) — buscando detalhes...`);

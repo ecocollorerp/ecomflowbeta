@@ -196,62 +196,75 @@ export async function fetchBlingOrders(
             ''
         ).toUpperCase();
 
-        if (sourceText.includes('MERCADO') || sourceText.includes('ML')) return 'ML';
+        if (sourceText.includes('MERCADO LIVRE') || sourceText.includes('MERCADOLIVRE') || sourceText.includes('ML')) return 'ML';
         if (sourceText.includes('SHOPEE')) return 'SHOPEE';
         return 'SITE';
     };
 
     const idSituacao = BLING_V3_STATUS_MAP[filters.status];
-    
-    const params: any = {
-        dataInicial: filters.startDate,
-        dataFinal: filters.endDate,
-        limit: '100',
-    };
-
-    if (idSituacao > 0) {
-        params.idsSituacoes = [idSituacao];
-    }
-
-    const data = await fetchV3('/pedidos/vendas', apiKey, params);
-
-    if (!data.data) return [];
-
     const allOrders: OrderItem[] = [];
+    let pagina = 1;
+    const MAX_PAGES = 20; // Segurança para não entrar em loop infinito
     
-    for (const blingOrder of data.data) {
-        const externalId = blingOrder.numeroLoja ? String(blingOrder.numeroLoja).trim() : '';
-        const internalId = String(blingOrder.numero);
-        const orderId = externalId || internalId;
+    for (let p = 0; p < MAX_PAGES; p++) {
+        const params: any = {
+            dataInicial: filters.startDate,
+            dataFinal: filters.endDate,
+            limit: '100',
+            pagina: String(pagina)
+        };
 
-        if (!blingOrder.itens || blingOrder.itens.length === 0) continue;
-
-        for (const item of blingOrder.itens) {
-            const sku = String(item.codigo || '');
-            const canal = detectCanal(blingOrder);
-            allOrders.push({
-                id: `${blingOrder.id}_${sku}`,
-                orderId: orderId,
-                blingId: String(blingOrder.id),
-                tracking: blingOrder.transporte?.codigoRastreamento || '',
-                sku,
-                qty_original: cleanMoney(item.quantidade),
-                multiplicador: getMultiplicadorFromSku(sku),
-                qty_final: Math.round(cleanMoney(item.quantidade) * getMultiplicadorFromSku(sku)),
-                color: classificarCor(item.descricao || ''),
-                canal,
-                data: formatDateFromBling(blingOrder.data),
-                status: 'NORMAL',
-                customer_name: blingOrder.contato?.nome || 'Não informado',
-                customer_cpf_cnpj: blingOrder.contato?.numeroDocumento || '',
-                price_gross: cleanMoney(item.valor),
-                price_total: cleanMoney(blingOrder.total),
-                platform_fees: 0,
-                shipping_fee: cleanMoney(blingOrder.transporte?.frete || 0),
-                shipping_paid_by_customer: cleanMoney(blingOrder.transporte?.frete || 0),
-                price_net: cleanMoney(item.valor),
-            });
+        if (idSituacao > 0) {
+            params.idsSituacoes = [idSituacao];
         }
+
+        const data = await fetchV3('/pedidos/vendas', apiKey, params);
+
+        if (!data.data || data.data.length === 0) break;
+
+        for (const blingOrder of data.data) {
+            const externalId = blingOrder.numeroLoja ? String(blingOrder.numeroLoja).trim() : '';
+            const internalId = String(blingOrder.numero);
+            const orderId = externalId || internalId;
+
+            if (!blingOrder.itens || blingOrder.itens.length === 0) continue;
+
+            const venda_origem = blingOrder?.loja?.nome || blingOrder?.origem || '';
+
+            for (const item of blingOrder.itens) {
+                const sku = String(item.codigo || '');
+                const canal = detectCanal(blingOrder);
+                allOrders.push({
+                    id: `${blingOrder.id}_${sku}`,
+                    orderId: orderId,
+                    blingId: String(blingOrder.id),
+                    blingNumero: String(blingOrder.numero),
+                    tracking: blingOrder.transporte?.codigoRastreamento || '',
+                    sku,
+                    qty_original: cleanMoney(item.quantidade),
+                    multiplicador: getMultiplicadorFromSku(sku),
+                    qty_final: Math.round(cleanMoney(item.quantidade) * getMultiplicadorFromSku(sku)),
+                    color: classificarCor(item.descricao || ''),
+                    canal,
+                    data: formatDateFromBling(blingOrder.data),
+                    status: 'NORMAL',
+                    customer_name: blingOrder.contato?.nome || 'Não informado',
+                    customer_cpf_cnpj: blingOrder.contato?.numeroDocumento || '',
+                    price_gross: cleanMoney(item.valor),
+                    price_total: cleanMoney(blingOrder.total),
+                    platform_fees: 0,
+                    shipping_fee: cleanMoney(blingOrder.transporte?.frete || 0),
+                    shipping_paid_by_customer: cleanMoney(blingOrder.transporte?.frete || 0),
+                    price_net: cleanMoney(item.valor),
+                    venda_origem,
+                    id_pedido_loja: blingOrder.numeroLoja || '',
+                });
+            }
+        }
+
+        if (data.data.length < 100) break; // Última página
+        pagina++;
+        await new Promise(r => setTimeout(r, 400)); // Pequeno delay para evitar rate limit
     }
     return allOrders;
 }
@@ -413,6 +426,7 @@ export interface NfeSaida {
     linkXml?: string;
     xml?: string;
     numeroVenda?: string; // número do pedido de venda vinculado
+    numeroLoja?: string;  // número do pedido na loja virtual (extraído do intermediador ou numeroLoja)
     loja?: string;         // loja/canal de origem (ex: "Mercado Livre", "Shopee")
     tipo?: string;         // tipo da NF-e (ex: "saida", "entrada")
     naturezaOperacao?: string; // natureza da operação (ex: "Venda")
@@ -469,6 +483,7 @@ export async function fetchNfeSaida(
             linkDanfe: n.linkDanfe || n.link || n.linkDANFE || undefined,
             linkXml: n.linkXml || n.xml || undefined,
             numeroVenda: n.numeroPedidoCompra || n.numeroLoja || undefined,
+            numeroLoja: n.numeroLoja || n.intermediador?.numeroPedido || n.numeroPedidoLoja || undefined,
             loja: n.loja?.descricao || n.vendedor?.descricao || n.canal || undefined,
             tipo: n.tipo ? String(n.tipo) : undefined,
             naturezaOperacao: n.naturezaOperacao || n.natureza || undefined,

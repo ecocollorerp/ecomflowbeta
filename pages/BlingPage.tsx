@@ -1433,6 +1433,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         addToast(`✅ NF-e criada no Bling para o pedido ${orderId}!`, 'success');
                     }
                     await handleFetchOrdersAndInvoices();
+                    await handleFetchVendasEmAberto(true);
                 } else {
                     const errMsg = typeof result.error === 'string'
                         ? result.error
@@ -1695,8 +1696,12 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         // Detecta canal de uma NF-e com base no campo loja
         const getNfeCanal = (nfe: NfeSaida): 'ML' | 'SHOPEE' | 'SITE' => {
             const l = (nfe.loja || '').toUpperCase();
-            if (l.includes('MERCADO') || l.includes('LIVRE') || l.includes('MLB') || l.startsWith('ML')) return 'ML';
-            if (l.includes('SHOPEE')) return 'SHOPEE';
+            const nv = (nfe.numeroVenda || '').toUpperCase();
+            
+            if (l.includes('MERCADO') || l.includes('LIVRE') || l.includes('MLB') || l.startsWith('ML') || nv.startsWith('MLB')) return 'ML';
+            if (l.includes('SHOPEE') || nv.includes('SHP') || nv.startsWith('21') || nv.startsWith('22')) return 'SHOPEE';
+            if (l.includes('MAGALU') || l.includes('MAGAZINE') || l.includes('MGL')) return 'SITE';
+            if (l.includes('SHEIN')) return 'SITE';
             return 'SITE';
         };
 
@@ -2160,11 +2165,51 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         setBatchZplNotasProgress(null);
     };
     
+    const handleBatchGerarNFe = async (emitir = false) => {
+        if (selectedVendasIds.size === 0) return;
+        setIsBatchEmitindo(true);
+        try {
+            const token = await getValidToken();
+            if (!token) throw new Error('Token do Bling expirado.');
+            
+            const ids = Array.from(selectedVendasIds);
+            const response = await fetch('/api/bling/nfe/batch-criar-emitir', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: token },
+                body: JSON.stringify({ blingOrderIds: ids, emitir }),
+            });
+            const result = await response.json();
+            
+            if (result.success) {
+                const results = result.results || [];
+                const ok = results.filter((r: any) => r.success).length;
+                const fail = results.filter((r: any) => !r.success).length;
+                
+                if (ok > 0) {
+                    addToast(`✅ ${ok} NF-e(s) processada(s) com sucesso!`, 'success');
+                    // Refresh para atualizar status e remover do "Em Aberto" se necessário
+                    await handleFetchVendasEmAberto(true);
+                    await handleFetchOrdersAndInvoices();
+                    setSelectedVendasIds(new Set());
+                }
+                if (fail > 0) {
+                    addToast(`⚠️ ${fail} pedido(s) falharam no lote.`, 'warning');
+                }
+            } else {
+                addToast(`Erro ao processar lote: ${result.error}`, 'error');
+            }
+        } catch (err: any) {
+            addToast(`Erro: ${err.message}`, 'error');
+        } finally {
+            setIsBatchEmitindo(false);
+        }
+    };
+
     /**
      * Busca pedidos de vendas diretamente do Bling com “Situação: Em Aberto”.
      * Usa o endpoint dedicado que envia idsSituacoes[0]=6 ao Bling.
      */
-    const handleFetchVendasEmAberto = async () => {
+    const handleFetchVendasEmAberto = async (replace = false) => {
         const token = await getValidToken();
         if (!token) return addToast('Token do Bling expirado. Reconecte a integração.', 'error');
         setIsLoadingVendas(true);
@@ -2181,6 +2226,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             const data = await resp.json();
             if (!resp.ok || !data.success) throw new Error(data.error || `Erro ${resp.status}`);
             setVendasDirectOrders(prev => {
+                if (replace) return data.orders || [];
                 const existingIds = new Set(prev.map((o: any) => o.blingId || o.orderId));
                 const newOrders = (data.orders || []).filter((o: any) => !existingIds.has(o.blingId || o.orderId));
                 return [...prev, ...newOrders];
@@ -2613,23 +2659,11 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 {selectedVendasIds.size > 0 && (
                                     <>
                                         <button
-                                            onClick={async () => {
-                                                const ids = Array.from(selectedVendasIds);
-                                                const orders = filteredVendasOrders.filter(o => ids.includes(o.blingId || o.orderId));
-                                                let ok = 0, fail = 0;
-                                                for (const ord of orders) {
-                                                    if (vendasInvoiceMap.has(ord.blingId || ord.orderId)) { ok++; continue; }
-                                                    try {
-                                                        await handleGerarNFeDoPedido(ord.orderId || ord.blingNumero, ord, false);
-                                                        ok++;
-                                                    } catch { fail++; }
-                                                }
-                                                addToast(`NF-e em lote: ${ok} gerada(s)${fail > 0 ? `, ${fail} falha(s)` : ''}`, fail > 0 ? 'info' : 'success');
-                                            }}
-                                            disabled={!!gerandoNFeId}
+                                            onClick={() => handleBatchGerarNFe(false)}
+                                            disabled={isBatchEmitindo}
                                             className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-lg shadow-emerald-100 hover:bg-emerald-700 disabled:opacity-50 transition-all active:scale-95"
                                         >
-                                            {gerandoNFeId ? <Loader2 size={14} className="animate-spin"/> : <FileText size={14}/>} NF-e ({selectedVendasIds.size})
+                                            {isBatchEmitindo ? <Loader2 size={14} className="animate-spin"/> : <FileText size={14}/>} NF-e ({selectedVendasIds.size})
                                         </button>
                                         <button onClick={handleBatchZpl} disabled={isGeneratingBatchZpl} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-lg shadow-blue-100 hover:bg-blue-700 disabled:opacity-50 transition-all active:scale-95">
                                             {isGeneratingBatchZpl ? <Loader2 size={14} className="animate-spin"/> : <Printer size={14}/>} ZPL ({selectedVendasIds.size})
@@ -3187,7 +3221,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                             : <Square size={14} className="text-white/50"/>}
                                                     </button>
                                                 </th>
-                                                {['Número', 'Nome', 'CNPJ/CPF', 'Data Emissão', 'Nº Venda', 'Loja', 'Situação', 'Valor (R$)', 'Ações'].map(h =>
+                                                {['Número', 'Nome', 'CNPJ/CPF', 'Data Emissão', 'Pedido (Loja)', 'Pedido Bling', 'Loja', 'Situação', 'Valor (R$)', 'Ações'].map(h =>
                                                     <th key={h} className="p-3 text-left text-[9px] font-black uppercase tracking-widest">{h}</th>
                                                 )}
                                             </tr>
@@ -3235,8 +3269,13 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                             <td className="p-3 font-black text-slate-700">{nfe.numero || nfe.id}</td>
                                                             <td className="p-3 font-bold text-slate-600 max-w-[160px] truncate" title={nfe.contato?.nome}>{nfe.contato?.nome || '-'}</td>
                                                             <td className="p-3 font-mono text-[10px] text-slate-400">{formatDoc(nfe.contato?.numeroDocumento)}</td>
-                                                            <td className="p-3 text-slate-500 text-xs">{formatDate(nfe.dataEmissao)}</td>
-                                                            <td className="p-3 font-mono text-xs text-slate-400">{nfe.numeroVenda || '-'}</td>
+                                                            <td className="p-3 font-mono text-xs text-slate-400">{formatDate(nfe.dataEmissao)}</td>
+                                                            <td className="p-3 font-mono text-xs text-slate-600 font-bold">
+                                                                {nfe.numeroLoja || '-'}
+                                                            </td>
+                                                            <td className="p-3 font-mono text-xs text-blue-600 font-black">
+                                                                {nfe.numeroVenda || '-'}
+                                                            </td>
                                                             <td className="p-3">
                                                                 {(() => {
                                                                     const c = getNfeCanal(nfe);

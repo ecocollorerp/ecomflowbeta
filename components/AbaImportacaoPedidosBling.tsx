@@ -15,7 +15,7 @@ import {
   Filter,
   Search,
 } from 'lucide-react';
-import { importacaoControllerService } from '../services/importacaoControllerService';
+import { importacaoControllerService, ImportacaoControllerService } from '../services/importacaoControllerService';
 import { getPlatformLabel } from '../utils/platformLabels';
 
 interface AbaImportacaoPedidosBlingProps {
@@ -23,7 +23,7 @@ interface AbaImportacaoPedidosBlingProps {
   addToast?: (msg: string, tipo: 'success' | 'error' | 'info') => void;
 }
 
-type PlataformaSelecionada = 'MERCADO_LIVRE' | 'SHOPEE' | null;
+type PlataformaSelecionada = 'MERCADO_LIVRE' | 'SHOPEE' | 'TODOS' | null;
 
 interface PedidoEmAberto {
   id: string;
@@ -58,6 +58,20 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
   const [isGerandoNfe, setIsGerandoNfe] = useState(false);
   const [filtroTexto, setFiltroTexto] = useState('');
   const [apenasComEtiqueta, setApenasComEtiqueta] = useState(false);
+  // Canal de exibição separada dentro do resultado
+  const [canalFiltro, setCanalFiltro] = useState<'TODOS' | 'ML' | 'SHOPEE' | 'SITE'>('TODOS');
+
+  // Quando a plataforma muda, limpa lista e busca automaticamente
+  React.useEffect(() => {
+    if (token && plataformaSelecionada) {
+      setPedidosEmAberto([]);
+      setPedidosSelecionados(new Set());
+      setFiltroTexto('');
+      setCanalFiltro('TODOS');
+      buscarPedidosEmAberto();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plataformaSelecionada, apenasComEtiqueta]);
 
   // Buscar pedidos em aberto por plataforma
   const buscarPedidosEmAberto = async () => {
@@ -68,18 +82,18 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
 
     setIsCarregandoPedidos(true);
     try {
-      const resultado = await importacaoControllerService.buscarPedidosEmAbertoPorPlataforma(
+      const resultado = await ImportacaoControllerService.buscarPedidosEmAbertoPorPlataforma(
         token,
         plataformaSelecionada,
         { 
-          quantidadeDesejada: 100,
+          quantidadeDesejada: 9999,
           apenasComEtiqueta: plataformaSelecionada === 'MERCADO_LIVRE' && apenasComEtiqueta
         }
       );
 
       setPedidosEmAberto(resultado.pedidosDisponiveis);
       addToast?.(
-        `✅ Encontrados ${resultado.pedidosDisponiveis.length} pedidos em aberto`,
+        `✅ Encontrados ${resultado.pedidosDisponiveis.length} pedidos`,
         'success'
       );
     } catch (error: any) {
@@ -87,6 +101,14 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
     } finally {
       setIsCarregandoPedidos(false);
     }
+  };
+
+  // Helper para detectar canal de um pedido
+  const detectarCanal = (pedido: PedidoEmAberto): 'ML' | 'SHOPEE' | 'SITE' => {
+    const origem = (pedido.origem || '').toUpperCase();
+    if (origem.includes('MERCADO') || origem.includes('LIVRE') || origem.includes('ML') || origem === 'MERCADOLIVRE') return 'ML';
+    if (origem.includes('SHOPEE')) return 'SHOPEE';
+    return 'SITE';
   };
 
   // Gerar NF-e para pedidos selecionados
@@ -144,13 +166,23 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
     }
   };
 
-  // Filtrar pedidos baseado no texto
-  const pedidosFiltrados = pedidosEmAberto.filter(pedido =>
-    filtroTexto === '' ||
-    pedido.numero.toLowerCase().includes(filtroTexto.toLowerCase()) ||
-    pedido.cliente.nome.toLowerCase().includes(filtroTexto.toLowerCase()) ||
-    pedido.numeroLoja.toLowerCase().includes(filtroTexto.toLowerCase())
-  );
+  // Filtrar pedidos reativamente por canal + texto (sem precisar clicar em buscar)
+  const pedidosFiltrados = pedidosEmAberto.filter(pedido => {
+    const textMatch = filtroTexto === '' ||
+      pedido.numero.toLowerCase().includes(filtroTexto.toLowerCase()) ||
+      pedido.cliente.nome.toLowerCase().includes(filtroTexto.toLowerCase()) ||
+      pedido.numeroLoja.toLowerCase().includes(filtroTexto.toLowerCase());
+    const canalMatch = canalFiltro === 'TODOS' || detectarCanal(pedido) === canalFiltro;
+    return textMatch && canalMatch;
+  });
+
+  // Contagens por canal para os badges
+  const contagemPorCanal = {
+    ML: pedidosEmAberto.filter(p => detectarCanal(p) === 'ML').length,
+    SHOPEE: pedidosEmAberto.filter(p => detectarCanal(p) === 'SHOPEE').length,
+    SITE: pedidosEmAberto.filter(p => detectarCanal(p) === 'SITE').length,
+    TODOS: pedidosEmAberto.length,
+  };
 
   return (
     <div className="space-y-6 p-4">
@@ -187,7 +219,7 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
           {/* Seleção de Plataforma */}
           <div className="bg-white border border-gray-200 rounded-lg p-6">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Selecionar Plataforma</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <button
                 onClick={() => setPlataformaSelecionada('MERCADO_LIVRE')}
                 className={`p-4 rounded-lg border-2 transition ${
@@ -221,6 +253,23 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                   </div>
                 </div>
               </button>
+
+              <button
+                onClick={() => setPlataformaSelecionada('TODOS')}
+                className={`p-4 rounded-lg border-2 transition ${
+                  plataformaSelecionada === 'TODOS'
+                    ? 'border-blue-500 bg-blue-50'
+                    : 'border-gray-200 hover:border-blue-300'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <Package size={24} className="text-blue-600" />
+                  <div>
+                    <p className="font-bold text-gray-900">Todas as Plataformas</p>
+                    <p className="text-sm text-gray-600">Todos os pedidos em aberto</p>
+                  </div>
+                </div>
+              </button>
             </div>
           </div>
 
@@ -230,7 +279,7 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
               <div className="flex items-center justify-between mb-4 gap-4">
                 <div className="flex-grow">
                   <h3 className="text-lg font-bold text-gray-900">
-                    Pedidos de {plataformaSelecionada === 'MERCADO_LIVRE' ? getPlatformLabel('ML').displayName : getPlatformLabel('SHOPEE').displayName}
+                    Pedidos de {plataformaSelecionada === 'MERCADO_LIVRE' ? getPlatformLabel('ML').displayName : (plataformaSelecionada === 'SHOPEE' ? getPlatformLabel('SHOPEE').displayName : 'Todas as Plataformas')}
                   </h3>
                   
                   {/* Checkbox para filtrar por etiqueta disponível no MercadoLivre */}
@@ -260,14 +309,28 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                 </button>
               </div>
 
-              {/* Barra de Filtro */}
+              {/* Barra de Filtro + Abas por Canal */}
               {pedidosEmAberto.length > 0 && (
-                <div className="mb-4">
+                <div className="mb-4 space-y-3">
+                  {/* Abas de canal */}
+                  <div className="flex gap-1 p-1 bg-gray-100 rounded-xl">
+                    {(['TODOS', 'ML', 'SHOPEE', 'SITE'] as const).map(canal => (
+                      <button
+                        key={canal}
+                        onClick={() => setCanalFiltro(canal)}
+                        className={`flex-1 py-1.5 text-xs font-black uppercase rounded-lg transition-all ${canalFiltro === canal ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                      >
+                        {canal === 'TODOS' ? 'Todos' : canal === 'ML' ? '🛒 ML' : canal === 'SHOPEE' ? '🟠 Shopee' : '🌐 Site'}
+                        <span className="ml-1 text-[10px] opacity-70">({contagemPorCanal[canal]})</span>
+                      </button>
+                    ))}
+                  </div>
+                  {/* Busca por texto */}
                   <div className="relative">
                     <Search size={16} className="absolute left-3 top-3 text-gray-400" />
                     <input
                       type="text"
-                      placeholder="Filtrar por número do pedido, cliente..."
+                      placeholder="Filtrar por número do pedido, cliente, loja..."
                       value={filtroTexto}
                       onChange={(e) => setFiltroTexto(e.target.value)}
                       className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"

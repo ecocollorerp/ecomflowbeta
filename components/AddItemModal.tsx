@@ -27,6 +27,7 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
     const [newItem, setNewItem] = useState(initialState);
     const [configureBom, setConfigureBom] = useState(false);
     const [isVolatileInfinite, setIsVolatileInfinite] = useState(false);
+    const [tipoEstoque, setTipoEstoque] = useState<'PRODUTO_PRINCIPAL' | 'VOLATIL'>('PRODUTO_PRINCIPAL');
     const isProduct = itemType === 'PRODUTO';
     const isProcessado = itemType === 'PROCESSADO';
 
@@ -41,6 +42,9 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
             }
             if (itemType === 'PROCESSADO') {
                 stateToSet = { ...stateToSet, unit: 'kg' };
+            }
+            if (itemType === 'PRODUTO') {
+                setTipoEstoque('PRODUTO_PRINCIPAL'); // reset ao abrir
             }
             if (itemType === 'INSUMO' && generalSettings.insumoCategoryList.length > 0) {
                 stateToSet.category = generalSettings.insumoCategoryList[0];
@@ -60,7 +64,8 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                 kind: itemType,
                 color: isProduct ? newItem.color : undefined,
                 barcode: newItem.barcode || undefined,
-                is_volatile_infinite: itemType === 'INSUMO' ? isVolatileInfinite : false
+                is_volatile_infinite: itemType === 'INSUMO' ? isVolatileInfinite : false,
+                stockType: isProduct ? tipoEstoque : undefined,
             };
             
             // Garantir que category é salvo para insumo
@@ -148,6 +153,39 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                             />
                         </div>
                     )}
+                    {/* Tipo de Estoque para Produtos */}
+                    {isProduct && (
+                        <div>
+                            <label className="text-sm font-medium text-[var(--modal-text-secondary)] mb-2 block">Tipo de Estoque</label>
+                            <div className="grid grid-cols-2 gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setTipoEstoque('PRODUTO_PRINCIPAL')}
+                                    className={`p-3 rounded-xl border-2 text-left transition-all ${
+                                        tipoEstoque === 'PRODUTO_PRINCIPAL'
+                                            ? 'border-blue-500 bg-blue-50'
+                                            : 'border-gray-200 bg-white hover:border-blue-300'
+                                    }`}
+                                >
+                                    <p className="text-xs font-black text-slate-800 uppercase">📦 Produto Principal</p>
+                                    <p className="text-[10px] text-slate-500 mt-0.5">Controlado por produção (BOM/receita)</p>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setTipoEstoque('VOLATIL')}
+                                    className={`p-3 rounded-xl border-2 text-left transition-all ${
+                                        tipoEstoque === 'VOLATIL'
+                                            ? 'border-orange-500 bg-orange-50'
+                                            : 'border-gray-200 bg-white hover:border-orange-300'
+                                    }`}
+                                >
+                                    <p className="text-xs font-black text-slate-800 uppercase">⚡ Estoque Volátil</p>
+                                    <p className="text-[10px] text-slate-500 mt-0.5">Ajustado manualmente, independente</p>
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     {itemType === 'INSUMO' && (
                         <div>
                              <label htmlFor="category" className="text-sm font-medium text-[var(--modal-text-secondary)]">Categoria</label>

@@ -1,7 +1,7 @@
-﻿
+
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { StockItem, StockMovement, ProdutoCombinado, WeighingBatch, WeighingType, StockMovementOrigin, StockItemKind, User, GeneralSettings, ParsedNfeItem, SkuLink, StockPackGroup } from '../types';
-import { Package, Factory, History, Search, PlusCircle, Weight, Cog, SlidersHorizontal, Edit3, Trash2, ChevronDown, ChevronRight, FileUp, ArrowLeft, Settings, Box, Plus, Save, X, Link, ArrowRight, Loader2, ChevronUp, AlertTriangle, ArrowDownCircle, Layers, TrendingUp, TrendingDown, BarChart2, Filter, Calendar } from 'lucide-react';
+import { Package, Factory, History, Search, PlusCircle, Weight, Cog, SlidersHorizontal, Edit3, Trash2, ChevronDown, ChevronRight, FileUp, ArrowLeft, Settings, Box, Plus, Save, X, Link, ArrowRight, Loader2, ChevronUp, AlertTriangle, ArrowDownCircle, Layers, TrendingUp, TrendingDown, BarChart2, Filter, Calendar, RefreshCw } from 'lucide-react';
 import { PesagemPage } from './PesagemPage';
 import { dbClient } from '../lib/supabaseClient';
 
@@ -490,6 +490,19 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
         await onUnlinkSku(transferState.sku);
         await onLinkSku(transferState.sku, newMasterCode);
     };
+
+    const handleResetVolatile = async (item: StockItem) => {
+        try {
+            const { data, error } = await dbClient.rpc('reset_volatile_status', { p_item_code: item.code });
+            if (error) throw error;
+            if (data?.success) {
+                props.addToast?.(data.message || 'Modo volátil desativado.', 'success');
+                // O Supabase Realtime deve atualizar a lista, mas podemos forçar se necessário
+            }
+        } catch (e: any) {
+            props.addToast?.('Erro ao resetar modo volátil: ' + e.message, 'error');
+        }
+    };
     
     const itemTypeForNewItem = useMemo((): StockItemKind => (activeTab === 'insumos' ? 'INSUMO' : activeTab === 'processados' ? 'PROCESSADO' : 'PRODUTO'), [activeTab]);
 
@@ -584,6 +597,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
             onDelete: (item: StockItem) => setItemToDelete({ item, type: 'item' }),
             onAdjustStock: (item: StockItem) => setModalState(prev => ({ ...prev, manualMovement: item })),
             onUpdateStock: (item: StockItem) => setModalState(prev => ({ ...prev, updateStock: item })),
+            onResetVolatile: handleResetVolatile,
         };
         const commonCardProps = {
             ...commonTableProps
@@ -878,7 +892,7 @@ const ResponsiveStockList: React.FC<any> = (props) => {
 };
 
 const StockRow: React.FC<{ item: StockItem, hasAdjustPermission: boolean } & any> = ({ item, hasAdjustPermission, ...props }) => {
-    const { onAdjustStock, onUpdateStock, onConfigureBom, onConfigureExpeditionItems, onProduce, onEdit, onDelete, selectedIds, onSelect, isProdutos, expandedRows, onToggleExpand, skuLinks, onTransferSku, currentUser } = props;
+    const { onAdjustStock, onUpdateStock, onConfigureBom, onConfigureExpeditionItems, onProduce, onEdit, onDelete, selectedIds, onSelect, isProdutos, expandedRows, onToggleExpand, skuLinks, onTransferSku, currentUser, onResetVolatile } = props;
     const isBelowMin = item.current_qty < item.min_qty;
     const isSelected = selectedIds && selectedIds.has(item.id);
     const isExpanded = isProdutos && expandedRows && expandedRows.has(item.id);
@@ -894,6 +908,7 @@ const StockRow: React.FC<{ item: StockItem, hasAdjustPermission: boolean } & any
                     <button onClick={() => onEdit(item)} title="Editar" className="p-1 hover:bg-blue-100 text-blue-600 rounded"><Edit3 size={16} /></button>
                     {hasAdjustPermission && <button onClick={() => onAdjustStock(item)} title="Ajustar Saldo" className="p-1 hover:bg-orange-100 text-orange-600 rounded"><SlidersHorizontal size={16} /></button>}
                     {onProduce && <button onClick={() => onProduce(item)} title={item.kind === 'PRODUTO' ? 'Registrar Estoque Pronto (BOM + Modo Volátil auto)' : 'Registrar Produção via BOM'} className="p-1 hover:bg-purple-100 text-purple-600 rounded"><Factory size={16} /></button>}
+                    {item.is_volatile_infinite && onResetVolatile && <button onClick={() => onResetVolatile(item)} title="Desativar Modo Volátil Manualmente" className="p-1 hover:bg-orange-100 text-orange-600 rounded"><RefreshCw size={16} /></button>}
                     {onConfigureBom && <button onClick={() => onConfigureBom(item)} title="Configurar Receita (BOM)" className="p-1 hover:bg-slate-200 text-slate-600 rounded"><Cog size={16} /></button>}
                     {onConfigureExpeditionItems && <button onClick={() => onConfigureExpeditionItems(item)} title="Configurar Itens de Expedição" className="p-1 hover:bg-slate-200 text-slate-600 rounded"><Box size={16} /></button>}
                     {currentUser.role === 'SUPER_ADMIN' && <button onClick={() => onDelete(item)} title="Excluir" className="p-1 hover:bg-red-100 text-red-600 rounded"><Trash2 size={16} /></button>}
@@ -933,7 +948,7 @@ const StockRow: React.FC<{ item: StockItem, hasAdjustPermission: boolean } & any
 };
 
 const StockCard: React.FC<{ item: StockItem, hasAdjustPermission: boolean } & any> = ({ item, hasAdjustPermission, ...props }) => {
-    const { onAdjustStock, onUpdateStock, onConfigureBom, onConfigureExpeditionItems, onProduce, onEdit, onDelete, isProdutos, expandedRows, onToggleExpand, skuLinks, onTransferSku, currentUser } = props;
+    const { onAdjustStock, onUpdateStock, onConfigureBom, onConfigureExpeditionItems, onProduce, onEdit, onDelete, isProdutos, expandedRows, onToggleExpand, skuLinks, onTransferSku, currentUser, onResetVolatile } = props;
     const isBelowMin = item.current_qty < item.min_qty;
     const isExpanded = isProdutos && expandedRows && expandedRows.has(item.id);
     const linkedSkusForThisProduct = isProdutos && skuLinks ? skuLinks.filter((link: SkuLink) => link.masterProductSku === item.code) : [];
@@ -963,6 +978,7 @@ const StockCard: React.FC<{ item: StockItem, hasAdjustPermission: boolean } & an
                     <button onClick={() => onEdit(item)} className="p-2 bg-blue-50 text-blue-600 rounded-xl"><Edit3 size={20} /></button>
                     {hasAdjustPermission && <button onClick={() => onAdjustStock(item)} className="p-2 bg-orange-50 text-orange-600 rounded-xl"><SlidersHorizontal size={20} /></button>}
                     {onProduce && <button onClick={() => onProduce(item)} title={item.kind === 'PRODUTO' ? 'Registrar para Estoque Pronto (BOM)' : 'Produção via BOM'} className="p-2 bg-purple-50 text-purple-600 rounded-xl"><Factory size={20} /></button>}
+                    {item.is_volatile_infinite && onResetVolatile && <button onClick={() => onResetVolatile(item)} title="Reset Volátil" className="p-2 bg-orange-50 text-orange-600 rounded-xl"><RefreshCw size={20} /></button>}
                 </div>
             </div>
             {isExpanded && (

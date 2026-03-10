@@ -57,8 +57,13 @@ BEGIN
         IF bom_items IS NOT NULL AND jsonb_array_length(bom_items) > 0 THEN
             FOR bom_item IN SELECT * FROM jsonb_array_elements(bom_items)
             LOOP
-                insumo_code := bom_item->>'stockItemCode';
-                qty_needed  := (bom_item->>'qty_per_pack')::real * p_quantity;
+                -- Suporta ambos os formatos de chave: Bling (stockItemCode) e Interno (insumo_code)
+                insumo_code := COALESCE(bom_item->>'insumo_code', bom_item->>'stockItemCode');
+                qty_needed  := COALESCE((bom_item->>'quantity')::real, (bom_item->>'qty_per_pack')::real) * p_quantity;
+
+                IF insumo_code IS NULL OR qty_needed IS NULL THEN
+                    CONTINUE;
+                END IF;
 
                 SELECT current_qty INTO insumo_available
                   FROM stock_items
@@ -75,11 +80,16 @@ BEGIN
         END IF;
 
         -- 4. Se insumos insuficientes, ativar modo volátil no produto
+        -- Se insumos SUFICIENTES, desativar modo volátil (AUTO-RESET)
         IF NOT has_enough_stock THEN
             UPDATE product_boms
                SET is_volatile_infinite = TRUE
              WHERE code = p_item_code;
             activated_volatile := TRUE;
+        ELSE
+            UPDATE product_boms
+               SET is_volatile_infinite = FALSE
+             WHERE code = p_item_code;
         END IF;
     END IF;
 
@@ -89,14 +99,13 @@ BEGIN
      WHERE code = p_item_code;
 
     -- 6. Se não estiver em modo volátil (nem recém-ativado), descontar insumos
-    IF NOT is_already_volatile AND NOT activated_volatile THEN
-        -- Re-buscar BOM (pode ter mudado no check acima; reutiliza bom_items que está em memória)
+    IF NOT is_already_volatile AND NOT activated_volatile AND bom_items IS NOT NULL THEN
         FOR bom_item IN SELECT * FROM jsonb_array_elements(bom_items)
         LOOP
-            insumo_code := bom_item->>'stockItemCode';
-            qty_needed  := (bom_item->>'qty_per_pack')::real * p_quantity;
+            insumo_code := COALESCE(bom_item->>'insumo_code', bom_item->>'stockItemCode');
+            qty_needed  := COALESCE((bom_item->>'quantity')::real, (bom_item->>'qty_per_pack')::real) * p_quantity;
 
-            IF EXISTS (SELECT 1 FROM stock_items WHERE code = insumo_code) THEN
+            IF insumo_code IS NOT NULL AND qty_needed IS NOT NULL AND EXISTS (SELECT 1 FROM stock_items WHERE code = insumo_code) THEN
                 PERFORM adjust_stock_quantity(
                     insumo_code,
                     -qty_needed,
@@ -112,7 +121,7 @@ BEGIN
         'success',            true,
         'activated_volatile', activated_volatile,
         'was_volatile',       is_already_volatile,
-        'deducted_insumos',   (NOT is_already_volatile AND NOT activated_volatile)
+        'deducted_insumos',   (NOT is_already_volatile AND NOT activated_volatile AND bom_items IS NOT NULL)
     );
 END;
 $$;

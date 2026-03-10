@@ -5,6 +5,7 @@
 // ============================================================================
 
 import { supabaseClient } from '../lib/supabase';
+import { importacaoControllerService, ImportacaoControllerService } from '../services/importacaoControllerService';
 
 export interface ItemPedidoComSKU {
   descricao: string;
@@ -226,12 +227,18 @@ class DanfeSimplificadoComEtiquetaService {
       totalItens: pedido.itens.length,
       valorTotal: pedido.valor,
       dataCompra: pedido.dataCompra,
-      itens: pedido.itens.map((item, idx) => {
-        // Incluir SKU vinculado principal se existe
-        const skuInfo = item.skuPrincipal ? ` [SKU: ${item.skuPrincipal}]` : '';
-        const codigoInfo = item.codigo ? ` [COD: ${item.codigo}]` : '';
-        return `${idx + 1}. ${item.descricao}${skuInfo}${codigoInfo} - Qtd: ${item.quantidade} x R$ ${item.valorUnitario.toFixed(2)}`;
-      }),
+      itens: (() => {
+        // Consolidar itens pelo SKU Principal ou SKU de Etiqueta
+        const itensConsolidados = new Map<string, number>();
+        pedido.itens.forEach(item => {
+          const sku = (item.skuPrincipal || item.skuEtiqueta || item.codigo || 'S/SKU').toUpperCase();
+          itensConsolidados.set(sku, (itensConsolidados.get(sku) || 0) + item.quantidade);
+        });
+        
+        return Array.from(itensConsolidados.entries()).map(([sku, totalQty]) => {
+          return `${totalQty} un - SKU: ${sku}`;
+        });
+      })(),
     };
   }
 
@@ -554,6 +561,7 @@ Todos os arquivos consolidados (DANFE + Etiqueta) estão prontos para download.
     }
 
     return plataformaDetectada;
+  }
 }
 
 export const danfeSimplificadoComEtiquetaService =

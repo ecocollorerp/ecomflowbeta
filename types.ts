@@ -287,6 +287,8 @@ export interface OrderItem {
     error_reason?: string;
     resolution_details?: OrderResolutionDetails;
     data_prevista_envio?: string;
+    venda_origem?: string;
+    id_pedido_loja?: string;
 }
 
 export interface ScanLogItem {
@@ -442,6 +444,7 @@ export interface BlingInvoice {
     chaveAcesso?: string;
     situacao: string;
     idPedidoVenda?: string;
+    numeroLoja?: string;
     linkDanfe?: string;
 }
 
@@ -781,7 +784,7 @@ export const defaultZplSettings: ZplSettings = {
             fontFamily: 'helvetica',
             textAlign: 'left',
             multiColumn: false,
-            template: 'SKU: {sku} | Qtd: {qty} - {name}',
+            template: '{qty} un - SKU: {sku}',
         },
     },
     mercadoLivre: {
@@ -796,7 +799,7 @@ export const defaultZplSettings: ZplSettings = {
             fontFamily: 'helvetica',
             textAlign: 'left',
             multiColumn: false,
-            template: 'SKU: {sku} | Qtd: {qty} - {name}',
+            template: '{qty} un - SKU: {sku}',
         },
     }
 };
