@@ -20,6 +20,7 @@ import PackGroupModal from '../components/PackGroupModal';
 import BulkStockUpdateModal from '../components/BulkStockUpdateModal';
 import BulkAssignCategoryModal from '../components/BulkAssignCategoryModal';
 import UpdatePacksFromSheetModal from '../components/UpdatePacksFromSheetModal';
+import VolatilMovementModal from '../components/VolatilMovementModal';
 
 // ... ExpeditionItemsConfigModal e TransferSkuModal permanecem iguais ...
 interface ExpeditionItemsConfigModalProps {
@@ -284,9 +285,8 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
     const [activeTab, setActiveTab] = useState<Tab>('insumos');
     const [searchTerm, setSearchTerm] = useState('');
     const [packGroups, setPackGroups] = useState<StockPackGroup[]>([]);
-    // Estado para estoque pronto
-    const [stockReadyConfig, setStockReadyConfig] = useState<{ id: string; nome: string; tipo: 'volatil' | 'dependente'; quantidade: number }>({ id: 'default', nome: 'Estoque Pronto', tipo: 'volatil', quantidade: 0 });
-    const [isSavingReadyConfig, setIsSavingReadyConfig] = useState(false);
+    // Estado para modal de movimentação volátil
+    const [volatilModal, setVolatilModal] = useState<{ isOpen: boolean; group: StockPackGroup | null; type: 'entrada' | 'saida' }>({ isOpen: false, group: null, type: 'entrada' });
     const [modalState, setModalState] = useState<ModalState>({
         addItem: false, editItem: null, bomConfig: null, manualMovement: null,
         updateStock: null, importXml: false, manageInsumoCategories: false, manageProductCategories: false,
@@ -734,25 +734,13 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                         {isVolatil && (
                                             <div className="flex gap-2 mt-4 pt-3 border-t border-slate-100">
                                                 <button
-                                                    onClick={() => {
-                                                        const qty = prompt('Quantidade de ENTRADA:');
-                                                        if (qty && Number(qty) > 0) {
-                                                            const ref = prompt('Referência (opcional):') || '';
-                                                            handleVolatilMovement(group.id, Number(qty), ref);
-                                                        }
-                                                    }}
+                                                    onClick={() => setVolatilModal({ isOpen: true, group, type: 'entrada' })}
                                                     className="flex-1 flex items-center justify-center gap-1 py-2 bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-emerald-200 transition-all"
                                                 >
                                                     <ArrowDownCircle size={14} /> Entrada
                                                 </button>
                                                 <button
-                                                    onClick={() => {
-                                                        const qty = prompt('Quantidade de SAÍDA:');
-                                                        if (qty && Number(qty) > 0) {
-                                                            const ref = prompt('Referência (opcional):') || '';
-                                                            handleVolatilMovement(group.id, -Number(qty), ref);
-                                                        }
-                                                    }}
+                                                    onClick={() => setVolatilModal({ isOpen: true, group, type: 'saida' })}
                                                     className="flex-1 flex items-center justify-center gap-1 py-2 bg-red-100 text-red-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-red-200 transition-all"
                                                 >
                                                     <ArrowUpCircle size={14} /> Saída
@@ -900,6 +888,18 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
             {modalState.updateFromSheet && <UpdateStockFromSheetModal isOpen={modalState.updateFromSheet} onClose={closeModal} stockItems={stockItems} onBulkInventoryUpdate={onBulkInventoryUpdate} />}
             {modalState.updateFromSheetShopee && <UpdateStockFromSheetModalShopee isOpen={modalState.updateFromSheetShopee} onClose={closeModal} stockItems={stockItems} onBulkInventoryUpdate={onBulkInventoryUpdate} />}
             {modalState.isPackModalOpen && <PackGroupModal isOpen={modalState.isPackModalOpen} onClose={closeModal} groupToEdit={modalState.packGroup} allProducts={produtos} onSave={handleSavePackGroup} />}
+            {volatilModal.isOpen && volatilModal.group && (
+                <VolatilMovementModal
+                    isOpen={volatilModal.isOpen}
+                    onClose={() => setVolatilModal({ isOpen: false, group: null, type: 'entrada' })}
+                    group={volatilModal.group}
+                    stockItems={stockItems}
+                    onConfirm={async (groupId, delta, ref) => {
+                        await handleVolatilMovement(groupId, delta, ref);
+                    }}
+                    movementType={volatilModal.type}
+                />
+            )}
             {modalState.bulkUpdate.isOpen && <BulkStockUpdateModal isOpen={modalState.bulkUpdate.isOpen} onClose={closeModal} stockItems={stockItems} onConfirm={handleBulkStockConfirm} preselectedCodes={modalState.bulkUpdate.preselectedCodes} title={modalState.bulkUpdate.title} activeTab={activeTab as any} categories={activeTab === 'produtos' ? generalSettings.productCategoryList : activeTab === 'insumos' ? generalSettings.insumoCategoryList : []} />}
             {modalState.bulkAssignCategory && <BulkAssignCategoryModal isOpen={modalState.bulkAssignCategory} onClose={closeModal} onConfirm={handleBulkAssignConfirm} categories={generalSettings.productCategoryList} selectedCount={selectedIds.size} />}
             {modalState.updatePacksFromSheet && <UpdatePacksFromSheetModal isOpen={modalState.updatePacksFromSheet} onClose={closeModal} packGroups={packGroups} onBulkInventoryUpdate={onBulkInventoryUpdate} />}
