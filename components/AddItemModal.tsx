@@ -67,12 +67,12 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                 is_volatile_infinite: itemType === 'INSUMO' ? isVolatileInfinite : false,
                 stockType: isProduct ? tipoEstoque : undefined,
             };
-            
+
             // Garantir que category é salvo para insumo
             if (itemType === 'INSUMO') {
                 itemToConfirm.category = newItem.category || '';
             }
-            
+
             onConfirm(itemToConfirm, configureBom);
         }
     };
@@ -88,10 +88,10 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
             [name]: isNumberField ? Number(value) : value,
         }));
     };
-    
+
     const isFormValid = newItem.code.trim() !== '' && newItem.name.trim() !== '' && !isNaN(newItem.min_qty) && newItem.min_qty >= 0;
     const getTitle = () => {
-        switch(itemType) {
+        switch (itemType) {
             case 'INSUMO': return 'Cadastrar Novo Insumo';
             case 'PROCESSADO': return 'Cadastrar Novo Material Processado';
             case 'PRODUTO': return `Cadastrar Novo ${generalSettings.productTypeNames.papel_de_parede}`;
@@ -111,10 +111,10 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                         <X size={24} />
                     </button>
                 </div>
-                
+
                 <div className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                         <div>
+                        <div>
                             <label htmlFor="code" className="text-sm font-medium text-[var(--modal-text-secondary)]">Código / SKU</label>
                             <input
                                 id="code"
@@ -139,7 +139,7 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                             />
                         </div>
                     </div>
-                     {isProduct && (
+                    {isProduct && (
                         <div>
                             <label htmlFor="color" className="text-sm font-medium text-[var(--modal-text-secondary)]">Cor Principal</label>
                             <input
@@ -161,23 +161,21 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                                 <button
                                     type="button"
                                     onClick={() => setTipoEstoque('PRODUTO_PRINCIPAL')}
-                                    className={`p-3 rounded-xl border-2 text-left transition-all ${
-                                        tipoEstoque === 'PRODUTO_PRINCIPAL'
+                                    className={`p-3 rounded-xl border-2 text-left transition-all ${tipoEstoque === 'PRODUTO_PRINCIPAL'
                                             ? 'border-blue-500 bg-blue-50'
                                             : 'border-gray-200 bg-white hover:border-blue-300'
-                                    }`}
+                                        }`}
                                 >
-                                    <p className="text-xs font-black text-slate-800 uppercase">📦 Produto Principal</p>
+                                    <p className="text-xs font-black text-slate-800 uppercase">📦 Estoque Tradicional</p>
                                     <p className="text-[10px] text-slate-500 mt-0.5">Controlado por produção (BOM/receita)</p>
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setTipoEstoque('VOLATIL')}
-                                    className={`p-3 rounded-xl border-2 text-left transition-all ${
-                                        tipoEstoque === 'VOLATIL'
+                                    className={`p-3 rounded-xl border-2 text-left transition-all ${tipoEstoque === 'VOLATIL'
                                             ? 'border-orange-500 bg-orange-50'
                                             : 'border-gray-200 bg-white hover:border-orange-300'
-                                    }`}
+                                        }`}
                                 >
                                     <p className="text-xs font-black text-slate-800 uppercase">⚡ Estoque Volátil</p>
                                     <p className="text-[10px] text-slate-500 mt-0.5">Ajustado manualmente, independente</p>
@@ -188,7 +186,7 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
 
                     {itemType === 'INSUMO' && (
                         <div>
-                             <label htmlFor="category" className="text-sm font-medium text-[var(--modal-text-secondary)]">Categoria</label>
+                            <label htmlFor="category" className="text-sm font-medium text-[var(--modal-text-secondary)]">Categoria</label>
                             <select
                                 id="category"
                                 name="category"
@@ -227,7 +225,7 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                             </select>
                         </div>
                         <div className="md:col-span-2 grid grid-cols-2 gap-4">
-                             <div>
+                            <div>
                                 <label htmlFor="current_qty" className="text-sm font-medium text-[var(--modal-text-secondary)]">Saldo Inicial (Opcional)</label>
                                 <input
                                     id="current_qty"
@@ -266,7 +264,7 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                                 name="barcode"
                                 type="text"
                                 value={newItem.barcode}
-                                onChange={(e) => setNewItem(prev => ({...prev, barcode: e.target.value.toUpperCase()}))}
+                                onChange={(e) => setNewItem(prev => ({ ...prev, barcode: e.target.value.toUpperCase() }))}
                                 className="block w-full pl-9 p-2 border border-[var(--modal-border)] bg-[var(--modal-surface-secondary)] rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
                                 placeholder="Escaneie ou digite..."
                             />
@@ -287,7 +285,7 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                         </div>
                     )}
 
-                     {(isProduct || isProcessado) && (
+                    {(isProduct || isProcessado) && (
                         <div>
                             <label className="flex items-center select-none cursor-pointer">
                                 <input
@@ -303,7 +301,7 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                 </div>
 
                 <div className="mt-6 flex justify-end space-x-3">
-                    <button 
+                    <button
                         type="button"
                         onClick={onClose}
                         className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors"

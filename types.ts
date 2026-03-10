@@ -209,6 +209,8 @@ export interface StockPackGroup {
     barcode?: string;
     item_codes: string[];
     min_pack_qty: number;
+    tipo?: 'volatil' | 'tradicional';
+    quantidade_volatil?: number;
     created_at?: string;
 }
 
@@ -289,6 +291,9 @@ export interface OrderItem {
     data_prevista_envio?: string;
     venda_origem?: string;
     id_pedido_loja?: string;
+    vinculado_bling?: boolean;
+    etiqueta_gerada?: boolean;
+    lote_id?: string;
 }
 
 export interface ScanLogItem {
@@ -559,7 +564,7 @@ export interface BatchOperation {
     status: 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'PARTIAL' | 'ERROR';
     successCount: number;
     errorCount: number;
-    errors?: Array<{itemId: string; message: string;}>;
+    errors?: Array<{ itemId: string; message: string; }>;
 }
 
 export interface LoteInfo {
@@ -987,15 +992,15 @@ export interface GeneralSettings {
     appIcon: string;
     dateSource: 'sale_date' | 'import_date';
     isRepeatedValue: boolean;
-    bipagem: { 
-        debounceTime_ms: number; 
-        scanSuffix: string; 
-        defaultOperatorId: string; 
+    bipagem: {
+        debounceTime_ms: number;
+        scanSuffix: string;
+        defaultOperatorId: string;
     };
-    etiquetas: { 
-        labelaryApiUrl: string; 
-        apiRequestDelay_ms: number; 
-        renderChunkSize: number; 
+    etiquetas: {
+        labelaryApiUrl: string;
+        apiRequestDelay_ms: number;
+        renderChunkSize: number;
     };
     estoque: PlanningParameters;
     dashboard: DashboardWidgetConfig;
@@ -1011,10 +1016,10 @@ export interface GeneralSettings {
         shopee: ColumnMapping;
         site: ColumnMapping;
     };
-    pedidos: { 
-        errorReasons: string[]; 
-        resolutionTypes: string[]; 
-        displayCustomerIdentifier: boolean; 
+    pedidos: {
+        errorReasons: string[];
+        resolutionTypes: string[];
+        displayCustomerIdentifier: boolean;
     };
     integrations?: {
         bling?: BlingSettings;
@@ -1031,8 +1036,8 @@ export const defaultGeneralSettings: GeneralSettings = {
     isRepeatedValue: false,
     bipagem: { debounceTime_ms: 50, scanSuffix: '', defaultOperatorId: '' },
     // Configurações de etiquetas ajustadas para estabilidade
-    etiquetas: { 
-        labelaryApiUrl: 'https://api.labelary.com/v1/printers/{dpmm}dpmm/labels/{width}x{height}/0/', 
+    etiquetas: {
+        labelaryApiUrl: 'https://api.labelary.com/v1/printers/{dpmm}dpmm/labels/{width}x{height}/0/',
         apiRequestDelay_ms: 1200, // Aumentado para 1200ms
         renderChunkSize: 3 // Reduzido para 3
     },
@@ -1045,38 +1050,38 @@ export const defaultGeneralSettings: GeneralSettings = {
     productCategoryList: [],
     expeditionRules: { packagingRules: [], miudosPackagingRules: [] },
     importer: {
-        ml: { 
-            orderId: 'N.º de venda', 
-            sku: 'SKU', 
-            qty: 'Quantidade', 
-            tracking: 'Código de rastreamento', 
+        ml: {
+            orderId: 'N.º de venda',
+            sku: 'SKU',
+            qty: 'Quantidade',
+            tracking: 'Código de rastreamento',
             date: 'Data de venda',
             dateShipping: '',
-            priceGross: 'Receita por produtos (BRL)', 
+            priceGross: 'Receita por produtos (BRL)',
             totalValue: '',
-            shippingFee: '', 
-            fees: ['Tarifa de venda e impostos (BRL)'], 
-            customerName: 'Comprador', 
+            shippingFee: '',
+            fees: ['Tarifa de venda e impostos (BRL)'],
+            customerName: 'Comprador',
             customerCpf: 'Documento do comprador',
             statusColumn: '',
-            acceptedStatusValues: [] 
+            acceptedStatusValues: []
         },
-        shopee: { 
-            orderId: 'N.º do pedido', 
-            sku: 'Referência SKU', 
-            qty: 'Quantidade', 
-            tracking: 'Código de rastreio', 
+        shopee: {
+            orderId: 'N.º do pedido',
+            sku: 'Referência SKU',
+            qty: 'Quantidade',
+            tracking: 'Código de rastreio',
             date: 'Data de criação do pedido',
             dateShipping: 'Data de envio prevista',
             priceGross: 'Preço acordado',
             totalValue: '',
-            shippingFee: 'Desconto de Frete Aproximado', 
+            shippingFee: 'Desconto de Frete Aproximado',
             shippingPaidByCustomer: 'Taxa de envio paga pelo comprador',
-            fees: ['Taxa de comissão', 'Taxa de serviço'], 
-            customerName: 'Nome do Comprador', 
+            fees: ['Taxa de comissão', 'Taxa de serviço'],
+            customerName: 'Nome do Comprador',
             customerCpf: '',
             statusColumn: '',
-            acceptedStatusValues: [] 
+            acceptedStatusValues: []
         },
         site: {
             orderId: '',

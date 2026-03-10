@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { useState, useCallback } from 'react';
-// import { supabase } from '@/lib/supabase'; // Descomente e ajuste conforme seu projeto
+import { dbClient } from './lib/supabaseClient';
 
 interface StockItem {
     id: string;
@@ -39,39 +39,52 @@ export const useEstoqueManager = () => {
     const [stockItems, setStockItems] = useState<StockItem[]>([]);
     const [isLoadingStock, setIsLoadingStock] = useState(false);
     const [isSavingAdjust, setIsSavingAdjust] = useState(false);
-    
+
     // Filtros e abas
     const [stockTab, setStockTab] = useState<'todos' | 'pronto' | 'movimentos' | 'comparacao'>('todos');
     const [stockSearch, setStockSearch] = useState('');
     const [stockFilter, setStockFilter] = useState<'todos' | 'zerado' | 'baixo' | 'ok' | 'divergente'>('todos');
     const [stockSort, setStockSort] = useState<'sku' | 'nome' | 'fisico_asc' | 'fisico_desc'>('sku');
-    
+
     // Modal
     const [adjustStockModal, setAdjustStockModal] = useState<AdjustStockModal | null>(null);
     const [adjustQty, setAdjustQty] = useState('');
     const [adjustOp, setAdjustOp] = useState<'B' | 'E' | 'S'>('B');
     const [adjustObs, setAdjustObs] = useState('');
-    
+
     // Mapa auxiliar para comparação
     const erpStockMap = new Map<string, number>();
 
-    // Buscar estoque do Bling
+    // Buscar estoque (Sincronizado via App.tsx, mas provendo hook local)
     const handleFetchStock = useCallback(async () => {
         try {
             setIsLoadingStock(true);
-            
-            // TODO: Integrar com API do Bling
-            // Este é um exemplo - ajuste com seus dados reais
-            const response = await fetch('/api/bling/estoque');
-            const data = await response.json();
-            
+
+            // ✅ Carrega diretamente do banco de dados local (stock_items)
+            const { data, error } = await dbClient
+                .from('stock_items')
+                .select('*')
+                .order('code', { ascending: true });
+
+            if (error) throw error;
+
             if (data && Array.isArray(data)) {
-                setStockItems(data);
+                const mapped = data.map((i: any) => ({
+                    id: i.id,
+                    codigo: i.code,
+                    descricao: i.name,
+                    saldoFisico: Number(i.current_qty || 0),
+                    saldoVirtual: Number(i.current_qty || 0),
+                    bling_sku: i.code,
+                    readyQty: Number(i.ready_qty || 0),
+                    reserved_qty: Number(i.reserved_qty || 0),
+                    ready_location: i.category || ''
+                }));
+                setStockItems(mapped);
             }
-            
+
         } catch (error) {
             console.error('Erro ao buscar estoque:', error);
-            alert('Erro ao sincronizar. Verifique o console.');
         } finally {
             setIsLoadingStock(false);
         }
@@ -83,40 +96,31 @@ export const useEstoqueManager = () => {
 
         try {
             setIsSavingAdjust(true);
-            
+
             const stockItem = adjustStockModal.item;
             const quantity = parseFloat(adjustQty);
-            
-            // TODO: Registrar movimento no banco Supabase
-            // const { data: movement, error: movError } = await supabase
-            //     .from('stock_movements')
-            //     .insert([
-            //         {
-            //             id: `mov_${Date.now()}_${Math.random()}`,
-            //             stock_item_id: stockItem.id,
-            //             quantity,
-            //             movement_type: adjustOp === 'B' ? 'BALANÇO' : adjustOp === 'E' ? 'ENTRADA' : 'SAÍDA',
-            //             origin: 'BLING_SINCRONIZADO',
-            //             description: `Ajuste ${adjustOp === 'B' ? 'Balanço' : adjustOp === 'E' ? 'Entrada' : 'Saída'} - ${stockItem.codigo}`,
-            //             observations: adjustObs,
-            //             created_at: Date.now()
-            //         }
-            //     ]);
 
-            // if (movError) throw movError;
+            // ✅ Registrar movimento no banco Supabase utilizando a RPC adjust_stock_quantity
+            const { error: movError } = await dbClient.rpc('adjust_stock_quantity', {
+                item_code: stockItem.codigo,
+                quantity_delta: adjustOp === 'S' ? -quantity : (adjustOp === 'B' ? (quantity - stockItem.saldoFisico) : quantity),
+                origin_text: 'AJUSTE_MANUAL',
+                ref_text: adjustObs || `Ajuste manual via Gerenciador`,
+                user_name: 'Usuário' // TODO: Pegar do Contexto no componente se possível
+            });
 
-            // TODO: Sincronizar com Bling API
-            
+            if (movError) throw movError;
+
             // Atualizar estoque local
-            setStockItems(prev => 
-                prev.map(item => 
-                    item.id === stockItem.id 
+            setStockItems(prev =>
+                prev.map(item =>
+                    item.id === stockItem.id
                         ? {
                             ...item,
-                            saldoFisico: adjustOp === 'B' ? quantity : 
-                                         adjustOp === 'E' ? (item.saldoFisico || 0) + quantity :
-                                         Math.max(0, (item.saldoFisico || 0) - quantity)
-                          }
+                            saldoFisico: adjustOp === 'B' ? quantity :
+                                adjustOp === 'E' ? (item.saldoFisico || 0) + quantity :
+                                    Math.max(0, (item.saldoFisico || 0) - quantity)
+                        }
                         : item
                 )
             );
@@ -125,9 +129,9 @@ export const useEstoqueManager = () => {
             setAdjustQty('');
             setAdjustOp('B');
             setAdjustObs('');
-            
+
             alert('✅ Ajuste realizado com sucesso!');
-            
+
         } catch (error) {
             console.error('Erro ao ajustar estoque:', error);
             alert('❌ Erro ao ajustar. Verifique o console.');
@@ -144,9 +148,9 @@ export const useEstoqueManager = () => {
             //     .from('estoque_pronto')
             //     .select('*')
             //     .eq('status', 'PRONTO');
-            
+
             // if (error) throw error;
-            
+
             // if (data) {
             //     setStockItems(prev => 
             //         prev.map(item => {
@@ -169,7 +173,7 @@ export const useEstoqueManager = () => {
         stockItems,
         isLoadingStock,
         isSavingAdjust,
-        
+
         // Filtros
         stockTab,
         setStockTab,
@@ -179,7 +183,7 @@ export const useEstoqueManager = () => {
         setStockFilter,
         stockSort,
         setStockSort,
-        
+
         // Modal
         adjustStockModal,
         setAdjustStockModal,
@@ -189,7 +193,7 @@ export const useEstoqueManager = () => {
         setAdjustOp,
         adjustObs,
         setAdjustObs,
-        
+
         // Funções
         handleFetchStock,
         handleAdjustStock,

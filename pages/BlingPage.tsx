@@ -44,6 +44,7 @@ interface BlingPageProps {
     skuLinks?: SkuLink[];
     allOrders?: OrderItem[];
     onLinkSku?: (importedSku: string, masterProductSku: string) => Promise<boolean>;
+    onUpdateOrdersBatch?: (orderIds: string[], loteId: string) => Promise<void>;
 }
 
 type EnrichedBlingOrder = OrderItem & { invoice?: BlingInvoice };
@@ -91,19 +92,19 @@ const BlingConfigModal: React.FC<{
     const processedPopupCodesRef = useRef<Set<string>>(new Set());
     const [authTab, setAuthTab] = useState<'token_manual' | 'oauth'>('oauth');
     const [configTab, setConfigTab] = useState<'conexao' | 'etiquetas' | 'exportacao'>('conexao');
-    
+
     // Auth Data
     const [apiKey, setApiKey] = useState('');
     const [clientId, setClientId] = useState('');
     const [clientSecret, setClientSecret] = useState('');
     const [refreshToken, setRefreshToken] = useState('');
-    
+
     // OAuth Flow
     const [authCode, setAuthCode] = useState('');
     const [isExchangingToken, setIsExchangingToken] = useState(false);
     const [showDebug, setShowDebug] = useState(false);
     const [debugLog, setDebugLog] = useState<string[]>([]);
-    
+
     const [showSecrets, setShowSecrets] = useState(false);
     const [autoSync, setAutoSync] = useState(false);
     const [autoSyncFromDate, setAutoSyncFromDate] = useState('');
@@ -172,37 +173,37 @@ const BlingConfigModal: React.FC<{
             return;
         }
         processedPopupCodesRef.current.add(normalizedCode);
-        
+
         const logs: string[] = [];
         logs.push(`[${new Date().toLocaleTimeString()}] Iniciando troca de código por token...`);
         logs.push(`Code: ${normalizedCode.substring(0, 30)}...`);
         logs.push(`Client ID: ${clientId.substring(0, 20)}...`);
         logs.push(`Redirect URI: ${currentOrigin}`);
-        
+
         setDebugLog(logs);
         setShowDebug(true);
-        
+
         setIsExchangingToken(true);
         try {
             // A redirect_uri deve ser EXATAMENTE igual à cadastrada
-            const redirectUri = currentOrigin; 
-            
+            const redirectUri = currentOrigin;
+
             logs.push(`Enviando requisição para /api/bling/token...`);
             setDebugLog([...logs]);
-            
+
             const data = await executeBlingTokenExchange(normalizedCode, clientId, clientSecret, redirectUri);
-            
+
             logs.push(`✅ Resposta recebida!`);
             setDebugLog([...logs]);
-            
+
             if (data.access_token) {
                 setApiKey(data.access_token);
                 setRefreshToken(data.refresh_token);
                 setAuthCode('');
-                
+
                 logs.push(`✅ Token gerado com sucesso!`);
                 setDebugLog([...logs]);
-                
+
                 // Salva tudo imediatamente
                 onSave({
                     apiKey: data.access_token,
@@ -215,8 +216,8 @@ const BlingConfigModal: React.FC<{
                     expiresIn: data.expires_in,
                     createdAt: Date.now()
                 });
-                
-                setAuthTab('token_manual'); 
+
+                setAuthTab('token_manual');
                 alert('Token gerado e salvo com sucesso!');
             } else {
                 logs.push(`❌ Erro: ${JSON.stringify(data)}`);
@@ -228,7 +229,7 @@ const BlingConfigModal: React.FC<{
             logs.push(`❌ Erro: ${errorMsg}`);
             setDebugLog([...logs]);
             processedPopupCodesRef.current.delete(normalizedCode);
-            
+
             if (errorMsg.includes('has already been used') || errorMsg.includes('authorization code') || errorMsg.includes('revoked')) {
                 alert('❌ ERRO: Código expirado ou revogado pela Bling.\n\n' +
                     '📋 POSSÍVEIS CAUSAS:\n\n' +
@@ -272,22 +273,22 @@ const BlingConfigModal: React.FC<{
 
         const state = Math.random().toString(36).substring(7);
         // Ensure no trailing slash for the redirect URI construction
-        const redirectUri = currentOrigin; 
-        
+        const redirectUri = currentOrigin;
+
         const url = `https://www.bling.com.br/Api/v3/oauth/authorize?response_type=code&client_id=${clientId}&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
-        
+
         // Open in Popup
         const width = 600;
         const height = 700;
         const left = window.screen.width / 2 - width / 2;
         const top = window.screen.height / 2 - height / 2;
-        
+
         window.open(
-            url, 
-            'BlingAuth', 
+            url,
+            'BlingAuth',
             `width=${width},height=${height},top=${top},left=${left},resizable=yes,scrollbars=yes,status=yes`
         );
-        
+
         // Add toast instruction
         // We can't easily access addToast here as it's passed to BlingPage, not BlingConfigModal directly.
         // But we can use alert or just let the user see the popup.
@@ -303,17 +304,17 @@ const BlingConfigModal: React.FC<{
 
             processedPopupCodesRef.current.add(normalizedCode);
             if (!clientId || !clientSecret) return;
-            
+
             setIsExchangingToken(true);
             try {
-                const redirectUri = currentOrigin; 
+                const redirectUri = currentOrigin;
                 const data = await executeBlingTokenExchange(normalizedCode, clientId, clientSecret, redirectUri);
-                
+
                 if (data.access_token) {
                     setApiKey(data.access_token);
                     setRefreshToken(data.refresh_token);
                     setAuthCode('');
-                    
+
                     onSave({
                         apiKey: data.access_token,
                         refreshToken: data.refresh_token,
@@ -325,8 +326,8 @@ const BlingConfigModal: React.FC<{
                         expiresIn: data.expires_in,
                         createdAt: Date.now()
                     });
-                    
-                    setAuthTab('token_manual'); 
+
+                    setAuthTab('token_manual');
                     alert('Token gerado e salvo com sucesso!');
                     onClose(); // Close modal on success
                 } else {
@@ -357,11 +358,11 @@ const BlingConfigModal: React.FC<{
 
     const handleSaveManual = () => {
         // Ao salvar manualmente, preservamos outros campos se não editados
-        onSave({ 
-            apiKey, 
-            clientId, 
-            clientSecret, 
-            refreshToken, 
+        onSave({
+            apiKey,
+            clientId,
+            clientSecret,
+            refreshToken,
             autoSync,
             autoSyncFromDate: autoSyncFromDate || undefined,
             scope,
@@ -395,19 +396,19 @@ const BlingConfigModal: React.FC<{
                 </div>
 
                 <div className="flex gap-1 mb-6 p-1 bg-slate-100 rounded-xl">
-                    <button 
+                    <button
                         onClick={() => setConfigTab('conexao')}
                         className={`flex-1 py-2 text-xs font-black uppercase rounded-lg transition-all ${configTab === 'conexao' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
                     >
                         Conexão
                     </button>
-                    <button 
+                    <button
                         onClick={() => setConfigTab('etiquetas')}
                         className={`flex-1 py-2 text-xs font-black uppercase rounded-lg transition-all ${configTab === 'etiquetas' ? 'bg-white shadow-sm text-orange-600' : 'text-slate-500 hover:text-slate-700'}`}
                     >
                         Etiquetas
                     </button>
-                    <button 
+                    <button
                         onClick={() => setConfigTab('exportacao')}
                         className={`flex-1 py-2 text-xs font-black uppercase rounded-lg transition-all ${configTab === 'exportacao' ? 'bg-white shadow-sm text-green-600' : 'text-slate-500 hover:text-slate-700'}`}
                     >
@@ -416,500 +417,500 @@ const BlingConfigModal: React.FC<{
                 </div>
 
                 <div className="space-y-6">
-                {/* ─── ABA CONEXÃO ─── */}
-                {configTab === 'conexao' && (<>
-                <div className="flex gap-2 mb-2 p-1 bg-slate-50 rounded-xl border border-slate-100">
-                    <button 
-                        onClick={() => setAuthTab('oauth')}
-                        className={`flex-1 py-2 text-xs font-black uppercase rounded-lg transition-all ${authTab === 'oauth' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                        Gerar Novo Token (OAuth)
-                    </button>
-                    <button 
-                        onClick={() => setAuthTab('token_manual')}
-                        className={`flex-1 py-2 text-xs font-black uppercase rounded-lg transition-all ${authTab === 'token_manual' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                        Visualizar Credenciais
-                    </button>
-                </div>
-                    {authTab === 'oauth' && (
-                         <div className="space-y-4 border border-red-300 bg-red-50 p-5 rounded-xl">
-                            <h3 className="font-black text-red-900 text-sm uppercase tracking-widest flex items-center gap-2">
-                                <AlertTriangle size={16}/> ⚠️ VERIFIQUE ISTO PRIMEIRO
-                            </h3>
-                            
-                            <div className="bg-white border border-red-200 rounded-lg p-3 space-y-2">
-                                <p className="text-[11px] font-bold text-red-700 uppercase">🔗 Seu Redirect URI:</p>
-                                <code className="block bg-red-50 p-2 rounded border border-red-200 text-red-700 break-all text-[10px] font-bold select-all">
-                                    {currentOrigin}
-                                </code>
-                                <p className="text-[10px] text-red-600 font-semibold">
-                                    ⚠️ Esta EXATA URL deve estar registrada no Bling OAuth App
-                                </p>
-                                <button 
-                                    onClick={() => {
-                                        navigator.clipboard.writeText(currentOrigin);
-                                        alert('✅ Redirect URI copiada!');
-                                    }}
-                                    className="text-[10px] font-bold text-white bg-red-600 px-2 py-1 rounded hover:bg-red-700 flex items-center gap-1 w-fit"
-                                >
-                                    <Copy size={12}/> Copiar URL
-                                </button>
+                    {/* ─── ABA CONEXÃO ─── */}
+                    {configTab === 'conexao' && (<>
+                        <div className="flex gap-2 mb-2 p-1 bg-slate-50 rounded-xl border border-slate-100">
+                            <button
+                                onClick={() => setAuthTab('oauth')}
+                                className={`flex-1 py-2 text-xs font-black uppercase rounded-lg transition-all ${authTab === 'oauth' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+                            >
+                                Gerar Novo Token (OAuth)
+                            </button>
+                            <button
+                                onClick={() => setAuthTab('token_manual')}
+                                className={`flex-1 py-2 text-xs font-black uppercase rounded-lg transition-all ${authTab === 'token_manual' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+                            >
+                                Visualizar Credenciais
+                            </button>
+                        </div>
+                        {authTab === 'oauth' && (
+                            <div className="space-y-4 border border-red-300 bg-red-50 p-5 rounded-xl">
+                                <h3 className="font-black text-red-900 text-sm uppercase tracking-widest flex items-center gap-2">
+                                    <AlertTriangle size={16} /> ⚠️ VERIFIQUE ISTO PRIMEIRO
+                                </h3>
+
+                                <div className="bg-white border border-red-200 rounded-lg p-3 space-y-2">
+                                    <p className="text-[11px] font-bold text-red-700 uppercase">🔗 Seu Redirect URI:</p>
+                                    <code className="block bg-red-50 p-2 rounded border border-red-200 text-red-700 break-all text-[10px] font-bold select-all">
+                                        {currentOrigin}
+                                    </code>
+                                    <p className="text-[10px] text-red-600 font-semibold">
+                                        ⚠️ Esta EXATA URL deve estar registrada no Bling OAuth App
+                                    </p>
+                                    <button
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(currentOrigin);
+                                            alert('✅ Redirect URI copiada!');
+                                        }}
+                                        className="text-[10px] font-bold text-white bg-red-600 px-2 py-1 rounded hover:bg-red-700 flex items-center gap-1 w-fit"
+                                    >
+                                        <Copy size={12} /> Copiar URL
+                                    </button>
+                                </div>
                             </div>
-                         </div>
-                    )}
-                    
-                    {authTab === 'oauth' && (
-                         <div className="space-y-4 border border-blue-100 bg-blue-50/50 p-5 rounded-xl">
-                            <h3 className="font-black text-blue-800 text-sm uppercase tracking-widest flex items-center gap-2">
-                                <RefreshCw size={16}/> Passo a Passo para Autenticação
-                            </h3>
-                            
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        )}
+
+                        {authTab === 'oauth' && (
+                            <div className="space-y-4 border border-blue-100 bg-blue-50/50 p-5 rounded-xl">
+                                <h3 className="font-black text-blue-800 text-sm uppercase tracking-widest flex items-center gap-2">
+                                    <RefreshCw size={16} /> Passo a Passo para Autenticação
+                                </h3>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Client ID</label>
+                                        <input
+                                            type="text"
+                                            value={clientId}
+                                            onChange={e => setClientId(e.target.value)}
+                                            className="w-full p-2 border border-slate-200 rounded-lg text-sm font-mono"
+                                            placeholder="Ex: a1b2c3d4..."
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Client Secret</label>
+                                        <div className="relative">
+                                            <input
+                                                type={showSecrets ? "text" : "password"}
+                                                value={clientSecret}
+                                                onChange={e => setClientSecret(e.target.value)}
+                                                className="w-full p-2 border border-slate-200 rounded-lg text-sm font-mono"
+                                                placeholder="Ex: secret_123..."
+                                            />
+                                            <button type="button" onClick={() => setShowSecrets(!showSecrets)} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400">
+                                                {showSecrets ? <EyeOff size={14} /> : <Eye size={14} />}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="bg-red-50 border border-red-300 rounded-xl p-4 mb-4">
+                                    <h4 className="text-[11px] font-black text-red-800 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                        <AlertTriangle size={14} /> Se viu "already been used" ou "revoked"
+                                    </h4>
+                                    <ol className="text-[10px] text-red-700 space-y-1.5 mb-3 list-decimal ml-4">
+                                        <li><strong>Acesse:</strong> https://www.bling.com.br</li>
+                                        <li><strong>Menu:</strong> Configurações → Integrações / Apps Autorizados</li>
+                                        <li><strong>Procure:</strong> pela aplicação desta ferramenta</li>
+                                        <li><strong>Clique em:</strong> "Revogar" ou "Desconectar"</li>
+                                        <li><strong>Confirme</strong> a revogação</li>
+                                        <li><strong>Volte aqui</strong> e clique no botão LARANJA abaixo</li>
+                                    </ol>
+                                    <button
+                                        onClick={handleRestartFlow}
+                                        className="w-full text-xs font-bold text-white bg-red-600 px-4 py-2 rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
+                                    >
+                                        <RefreshCw size={14} /> Recomeçar Autenticação
+                                    </button>
+                                </div>
+
+                                <div className="flex flex-col gap-2 bg-white p-4 rounded-xl border border-blue-100">
+                                    <div className="flex items-start gap-2">
+                                        <span className="w-5 h-5 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">1</span>
+                                        <div className="flex flex-col gap-2 w-full">
+                                            <p className="text-xs text-slate-600 leading-tight">
+                                                No painel do Bling, crie um novo <strong>OAuth Application</strong> e configure:
+                                            </p>
+
+                                            <div className="bg-red-50 border border-red-200 rounded-lg p-2">
+                                                <p className="text-[10px] font-bold text-red-600 mb-1">❌ ERRO COMUM:</p>
+                                                <p className="text-[10px] text-red-700">
+                                                    Se a <strong>Redirect URI</strong> no Bling não bate com a URL abaixo, o código será revogado automaticamente!
+                                                </p>
+                                            </div>
+
+                                            <div className="bg-blue-50 p-2 rounded border border-blue-100">
+                                                <p className="text-[10px] font-bold text-blue-600 uppercase mb-1">✅ Redirect URI (COPIE E COLE NO BLING):</p>
+                                                <code className="block bg-white p-2 rounded border border-blue-200 text-blue-700 break-all select-all text-[10px] font-mono">{currentOrigin}</code>
+                                            </div>
+
+                                            <div className="bg-slate-50 p-2 rounded border border-slate-100">
+                                                <p className="text-[10px] font-bold text-slate-500 uppercase mb-1">📋 Também cadastre no Bling:</p>
+                                                <ul className="text-[10px] text-slate-600 list-disc ml-4 space-y-1">
+                                                    <li><strong>Client ID:</strong> Copie e cole no campo acima</li>
+                                                    <li><strong>Client Secret:</strong> Copie e cole no campo acima</li>
+                                                    <li><strong>Redirect URI:</strong> Deve ser EXATAMENTE igual ao azul acima</li>
+                                                    <li><strong>Escopos:</strong> Marque as permissões necessárias</li>
+                                                </ul>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-start gap-2">
+                                        <span className="w-5 h-5 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">2</span>
+                                        <div className="flex flex-col items-start gap-2 w-full">
+                                            <button onClick={handleOpenAuthorizeUrl} className="text-xs font-bold text-white bg-blue-500 px-3 py-1.5 rounded hover:bg-blue-600 transition-colors shadow-sm">
+                                                Clique aqui para Autorizar o App
+                                            </button>
+                                            <p className="text-[10px] text-slate-500 mt-1">
+                                                Uma janela popup abrirá para você fazer login no Bling.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-start gap-2 mt-1">
+                                        <span className="w-5 h-5 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">3</span>
+                                        <p className="text-xs text-slate-600 leading-tight">Após autorizar na janela popup, ela fechará automaticamente e o token será gerado aqui.</p>
+                                    </div>
+                                </div>
+
+                                {/* Manual Code Input Backup */}
+                                <div className="pt-2 border-t border-blue-100">
+                                    <details>
+                                        <summary className="text-[10px] font-bold text-slate-400 cursor-pointer hover:text-blue-600">Inserir código manualmente (se o redirect automático falhar)</summary>
+                                        <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
+                                            <p className="text-[10px] text-red-800 font-semibold mb-2">
+                                                ⚠️ <strong>Se viu "has already been used":</strong>
+                                            </p>
+                                            <ol className="text-[10px] text-red-700 list-decimal ml-4 space-y-1">
+                                                <li>O código <strong>expirou</strong> (válido por 10 minutos)</li>
+                                                <li>Ou foi <strong>revogado</strong> após primeiro erro</li>
+                                                <li><strong>Solução:</strong> Revogar acesso no Bling e autorizar novamente</li>
+                                            </ol>
+                                        </div>
+                                        <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded-lg p-2 mb-2">
+                                            <p className="text-[10px] text-yellow-800 font-semibold">
+                                                ⚠️ <strong>Redirect URI deve ser EXATO:</strong> Verifique se a URL abaixo está registrada no Bling OAuth App
+                                            </p>
+                                        </div>
+                                        <div className="mt-2 flex gap-2">
+                                            <input
+                                                type="text"
+                                                value={authCode}
+                                                onChange={e => setAuthCode(e.target.value)}
+                                                className="flex-grow p-2 border border-slate-200 rounded-lg text-sm font-mono"
+                                                placeholder="Cole o código (code=abc123...) aqui"
+                                            />
+                                            <button
+                                                onClick={handleGenerateToken}
+                                                disabled={isExchangingToken || !authCode}
+                                                className="px-3 py-2 bg-slate-200 text-slate-700 font-bold text-xs uppercase rounded-lg hover:bg-slate-300 disabled:opacity-50 whitespace-nowrap"
+                                            >
+                                                {isExchangingToken ? 'Gerando...' : 'Gerar'}
+                                            </button>
+                                        </div>
+                                    </details>
+                                </div>
+
+                                {showDebug && (
+                                    <div className="bg-slate-900 text-slate-100 rounded-lg p-3 font-mono text-[10px] max-h-48 overflow-y-auto border border-slate-700">
+                                        <p className="font-bold text-blue-400 mb-2">📋 Debug Log:</p>
+                                        {debugLog.map((log, i) => (
+                                            <div key={i} className="text-slate-300 break-all">{log}</div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {authTab === 'token_manual' && (
+                            <div className="space-y-4">
                                 <div>
-                                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Client ID</label>
-                                    <input 
-                                        type="text" 
-                                        value={clientId} 
-                                        onChange={e => setClientId(e.target.value)} 
-                                        className="w-full p-2 border border-slate-200 rounded-lg text-sm font-mono"
-                                        placeholder="Ex: a1b2c3d4..."
+                                    <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">Access Token</label>
+                                    <input
+                                        type="password"
+                                        value={apiKey}
+                                        onChange={e => setApiKey(e.target.value)}
+                                        className="w-full p-3 bg-slate-50 border-2 border-slate-200 rounded-xl font-mono text-sm focus:border-blue-500 outline-none"
                                     />
                                 </div>
                                 <div>
-                                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Client Secret</label>
-                                    <div className="relative">
-                                        <input 
-                                            type={showSecrets ? "text" : "password"} 
-                                            value={clientSecret} 
-                                            onChange={e => setClientSecret(e.target.value)} 
-                                            className="w-full p-2 border border-slate-200 rounded-lg text-sm font-mono"
-                                            placeholder="Ex: secret_123..."
-                                        />
-                                        <button type="button" onClick={() => setShowSecrets(!showSecrets)} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400">
-                                            {showSecrets ? <EyeOff size={14}/> : <Eye size={14}/>}
-                                        </button>
-                                    </div>
+                                    <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">Refresh Token</label>
+                                    <input
+                                        type="password"
+                                        value={refreshToken}
+                                        onChange={e => setRefreshToken(e.target.value)}
+                                        className="w-full p-3 bg-slate-50 border-2 border-slate-200 rounded-xl font-mono text-sm focus:border-blue-500 outline-none"
+                                    />
+                                </div>
+                                <div className="text-[10px] text-slate-400 leading-relaxed bg-gray-50 p-3 rounded-lg border border-gray-100">
+                                    <p><strong>Nota:</strong> O sistema usará o Access Token fixo acima. Se ele expirar, você precisará gerar um novo na aba "Gerar Novo Token".</p>
                                 </div>
                             </div>
-
-                            <div className="bg-red-50 border border-red-300 rounded-xl p-4 mb-4">
-                                <h4 className="text-[11px] font-black text-red-800 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                    <AlertTriangle size={14}/> Se viu "already been used" ou "revoked"
-                                </h4>
-                                <ol className="text-[10px] text-red-700 space-y-1.5 mb-3 list-decimal ml-4">
-                                    <li><strong>Acesse:</strong> https://www.bling.com.br</li>
-                                    <li><strong>Menu:</strong> Configurações → Integrações / Apps Autorizados</li>
-                                    <li><strong>Procure:</strong> pela aplicação desta ferramenta</li>
-                                    <li><strong>Clique em:</strong> "Revogar" ou "Desconectar"</li>
-                                    <li><strong>Confirme</strong> a revogação</li>
-                                    <li><strong>Volte aqui</strong> e clique no botão LARANJA abaixo</li>
-                                </ol>
-                                <button 
-                                    onClick={handleRestartFlow}
-                                    className="w-full text-xs font-bold text-white bg-red-600 px-4 py-2 rounded-lg hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
-                                >
-                                    <RefreshCw size={14}/> Recomeçar Autenticação
-                                </button>
-                            </div>
-
-                            <div className="flex flex-col gap-2 bg-white p-4 rounded-xl border border-blue-100">
-                                <div className="flex items-start gap-2">
-                                    <span className="w-5 h-5 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">1</span>
-                                    <div className="flex flex-col gap-2 w-full">
-                                        <p className="text-xs text-slate-600 leading-tight">
-                                            No painel do Bling, crie um novo <strong>OAuth Application</strong> e configure:
-                                        </p>
-                                        
-                                        <div className="bg-red-50 border border-red-200 rounded-lg p-2">
-                                            <p className="text-[10px] font-bold text-red-600 mb-1">❌ ERRO COMUM:</p>
-                                            <p className="text-[10px] text-red-700">
-                                                Se a <strong>Redirect URI</strong> no Bling não bate com a URL abaixo, o código será revogado automaticamente!
-                                            </p>
-                                        </div>
-
-                                        <div className="bg-blue-50 p-2 rounded border border-blue-100">
-                                            <p className="text-[10px] font-bold text-blue-600 uppercase mb-1">✅ Redirect URI (COPIE E COLE NO BLING):</p>
-                                            <code className="block bg-white p-2 rounded border border-blue-200 text-blue-700 break-all select-all text-[10px] font-mono">{currentOrigin}</code>
-                                        </div>
-
-                                        <div className="bg-slate-50 p-2 rounded border border-slate-100">
-                                            <p className="text-[10px] font-bold text-slate-500 uppercase mb-1">📋 Também cadastre no Bling:</p>
-                                            <ul className="text-[10px] text-slate-600 list-disc ml-4 space-y-1">
-                                                <li><strong>Client ID:</strong> Copie e cole no campo acima</li>
-                                                <li><strong>Client Secret:</strong> Copie e cole no campo acima</li>
-                                                <li><strong>Redirect URI:</strong> Deve ser EXATAMENTE igual ao azul acima</li>
-                                                <li><strong>Escopos:</strong> Marque as permissões necessárias</li>
-                                            </ul>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="flex items-start gap-2">
-                                    <span className="w-5 h-5 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">2</span>
-                                    <div className="flex flex-col items-start gap-2 w-full">
-                                        <button onClick={handleOpenAuthorizeUrl} className="text-xs font-bold text-white bg-blue-500 px-3 py-1.5 rounded hover:bg-blue-600 transition-colors shadow-sm">
-                                            Clique aqui para Autorizar o App
-                                        </button>
-                                        <p className="text-[10px] text-slate-500 mt-1">
-                                            Uma janela popup abrirá para você fazer login no Bling.
-                                        </p>
-                                    </div>
-                                </div>
-                                <div className="flex items-start gap-2 mt-1">
-                                    <span className="w-5 h-5 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold text-xs shrink-0 mt-0.5">3</span>
-                                    <p className="text-xs text-slate-600 leading-tight">Após autorizar na janela popup, ela fechará automaticamente e o token será gerado aqui.</p>
-                                </div>
-                            </div>
-
-                            {/* Manual Code Input Backup */}
-                            <div className="pt-2 border-t border-blue-100">
-                                <details>
-                                    <summary className="text-[10px] font-bold text-slate-400 cursor-pointer hover:text-blue-600">Inserir código manualmente (se o redirect automático falhar)</summary>
-                                    <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
-                                        <p className="text-[10px] text-red-800 font-semibold mb-2">
-                                            ⚠️ <strong>Se viu "has already been used":</strong>
-                                        </p>
-                                        <ol className="text-[10px] text-red-700 list-decimal ml-4 space-y-1">
-                                            <li>O código <strong>expirou</strong> (válido por 10 minutos)</li>
-                                            <li>Ou foi <strong>revogado</strong> após primeiro erro</li>
-                                            <li><strong>Solução:</strong> Revogar acesso no Bling e autorizar novamente</li>
-                                        </ol>
-                                    </div>
-                                    <div className="mt-3 bg-yellow-50 border border-yellow-200 rounded-lg p-2 mb-2">
-                                        <p className="text-[10px] text-yellow-800 font-semibold">
-                                            ⚠️ <strong>Redirect URI deve ser EXATO:</strong> Verifique se a URL abaixo está registrada no Bling OAuth App
-                                        </p>
-                                    </div>
-                                    <div className="mt-2 flex gap-2">
-                                        <input 
-                                            type="text" 
-                                            value={authCode} 
-                                            onChange={e => setAuthCode(e.target.value)} 
-                                            className="flex-grow p-2 border border-slate-200 rounded-lg text-sm font-mono"
-                                            placeholder="Cole o código (code=abc123...) aqui"
-                                        />
-                                        <button 
-                                            onClick={handleGenerateToken} 
-                                            disabled={isExchangingToken || !authCode}
-                                            className="px-3 py-2 bg-slate-200 text-slate-700 font-bold text-xs uppercase rounded-lg hover:bg-slate-300 disabled:opacity-50 whitespace-nowrap"
-                                        >
-                                            {isExchangingToken ? 'Gerando...' : 'Gerar'}
-                                        </button>
-                                    </div>
-                                </details>
-                            </div>
-                            
-                            {showDebug && (
-                                <div className="bg-slate-900 text-slate-100 rounded-lg p-3 font-mono text-[10px] max-h-48 overflow-y-auto border border-slate-700">
-                                    <p className="font-bold text-blue-400 mb-2">📋 Debug Log:</p>
-                                    {debugLog.map((log, i) => (
-                                        <div key={i} className="text-slate-300 break-all">{log}</div>
-                                    ))}
-                                </div>
-                            )}
-                         </div>
-                    )}
-
-                    {authTab === 'token_manual' && (
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">Access Token</label>
-                                <input 
-                                    type="password" 
-                                    value={apiKey} 
-                                    onChange={e => setApiKey(e.target.value)} 
-                                    className="w-full p-3 bg-slate-50 border-2 border-slate-200 rounded-xl font-mono text-sm focus:border-blue-500 outline-none"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">Refresh Token</label>
-                                <input 
-                                    type="password" 
-                                    value={refreshToken} 
-                                    onChange={e => setRefreshToken(e.target.value)} 
-                                    className="w-full p-3 bg-slate-50 border-2 border-slate-200 rounded-xl font-mono text-sm focus:border-blue-500 outline-none"
-                                />
-                            </div>
-                            <div className="text-[10px] text-slate-400 leading-relaxed bg-gray-50 p-3 rounded-lg border border-gray-100">
-                                <p><strong>Nota:</strong> O sistema usará o Access Token fixo acima. Se ele expirar, você precisará gerar um novo na aba "Gerar Novo Token".</p>
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="p-4 bg-purple-50 rounded-xl border border-purple-100 flex items-center justify-between">
-                         <div>
-                            <h3 className="text-xs font-black text-purple-800 uppercase tracking-widest mb-1">Sincronização Automática (Polling)</h3>
-                            <p className="text-[10px] text-purple-600">Simula Webhook: Baixa novos pedidos a cada 60s.</p>
-                         </div>
-                         <button onClick={() => setAutoSync(!autoSync)} className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${autoSync ? 'bg-purple-600' : 'bg-gray-300'}`}>
-                            <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${autoSync ? 'translate-x-6' : 'translate-x-1'}`} />
-                        </button>
-                    </div>
-
-                    {/* Data mínima para auto-sync */}
-                    <div className="p-4 bg-purple-50/60 rounded-xl border border-purple-100">
-                        <h3 className="text-xs font-black text-purple-800 uppercase tracking-widest mb-1">Sincronizar Pedidos A Partir De</h3>
-                        <p className="text-[10px] text-purple-600 mb-2">Pedidos anteriores a esta data não serão puxados no auto-sync, evitando reimportar notas já emitidas.</p>
-                        <input
-                            type="date"
-                            value={autoSyncFromDate}
-                            onChange={e => setAutoSyncFromDate(e.target.value)}
-                            className="w-full p-2 border-2 border-purple-200 rounded-lg bg-white font-bold text-sm outline-none focus:border-purple-500"
-                        />
-                        {!autoSyncFromDate && (
-                            <p className="text-[10px] text-purple-400 mt-1">⚠️ Sem data definida: usa últimos 7 dias</p>
                         )}
-                    </div>
 
-                    <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
-                        <h3 className="text-xs font-black text-blue-800 uppercase tracking-widest mb-3">Escopo da Integração</h3>
-                        <div className="mb-3 flex items-center justify-between bg-white border border-blue-100 rounded-lg p-3">
-                            <span className="text-xs font-black text-slate-700 uppercase tracking-widest">Todos os escopos</span>
-                            <button
-                                type="button"
-                                onClick={() => toggleAllScopes(!allScopesEnabled)}
-                                className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors ${allScopesEnabled ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-                            >
-                                {allScopesEnabled ? 'Ativos' : 'Ativar todos'}
+                        <div className="p-4 bg-purple-50 rounded-xl border border-purple-100 flex items-center justify-between">
+                            <div>
+                                <h3 className="text-xs font-black text-purple-800 uppercase tracking-widest mb-1">Sincronização Automática (Polling)</h3>
+                                <p className="text-[10px] text-purple-600">Simula Webhook: Baixa novos pedidos a cada 60s.</p>
+                            </div>
+                            <button onClick={() => setAutoSync(!autoSync)} className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${autoSync ? 'bg-purple-600' : 'bg-gray-300'}`}>
+                                <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${autoSync ? 'translate-x-6' : 'translate-x-1'}`} />
                             </button>
                         </div>
-                        <div className="grid grid-cols-1 gap-3">
-                            <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
-                                <input type="checkbox" checked={scope.importarPedidos} onChange={e => setScope({...scope, importarPedidos: e.target.checked})} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"/>
-                                <span className="text-sm font-bold text-slate-700">Importar Pedidos de Venda</span>
-                            </label>
-                            <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
-                                <input type="checkbox" checked={scope.importarNotasFiscais} onChange={e => setScope({...scope, importarNotasFiscais: e.target.checked})} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"/>
-                                <span className="text-sm font-bold text-slate-700">Consultar Notas Fiscais (NFe)</span>
-                            </label>
-                            <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
-                                <input type="checkbox" checked={scope.gerarEtiquetas} onChange={e => setScope({...scope, gerarEtiquetas: e.target.checked})} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"/>
-                                <span className="text-sm font-bold text-slate-700">Gerar Etiquetas ZPL (Logística)</span>
-                            </label>
-                            <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
-                                <input type="checkbox" checked={scope.importarProdutos} onChange={e => setScope({...scope, importarProdutos: e.target.checked})} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"/>
-                                <span className="text-sm font-bold text-slate-700">Visualizar Catálogo de Produtos</span>
-                            </label>
-                            <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
-                                <input type="checkbox" checked={!!scope.pedidosVenda} onChange={e => setScope({...scope, pedidosVenda: e.target.checked})} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"/>
-                                <span className="text-sm font-bold text-slate-700">Escopo Bling: Pedidos de Venda</span>
-                            </label>
-                            <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
-                                <input type="checkbox" checked={!!scope.produtos} onChange={e => setScope({...scope, produtos: e.target.checked})} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"/>
-                                <span className="text-sm font-bold text-slate-700">Escopo Bling: Produtos</span>
-                            </label>
-                            <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
-                                <input type="checkbox" checked={!!scope.contatos} onChange={e => setScope({...scope, contatos: e.target.checked})} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"/>
-                                <span className="text-sm font-bold text-slate-700">Escopo Bling: Contatos/Clientes</span>
-                            </label>
-                            <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
-                                <input type="checkbox" checked={!!scope.estoque} onChange={e => setScope({...scope, estoque: e.target.checked})} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"/>
-                                <span className="text-sm font-bold text-slate-700">Escopo Bling: Estoque</span>
-                            </label>
-                            <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
-                                <input type="checkbox" checked={!!scope.nfe} onChange={e => setScope({...scope, nfe: e.target.checked})} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"/>
-                                <span className="text-sm font-bold text-slate-700">Escopo Bling: NFe/SEFAZ</span>
-                            </label>
-                            <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
-                                <input type="checkbox" checked={!!scope.logistica} onChange={e => setScope({...scope, logistica: e.target.checked})} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"/>
-                                <span className="text-sm font-bold text-slate-700">Escopo Bling: Logística/Etiquetas</span>
-                            </label>
-                            <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
-                                <input type="checkbox" checked={!!scope.financeiro} onChange={e => setScope({...scope, financeiro: e.target.checked})} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"/>
-                                <span className="text-sm font-bold text-slate-700">Escopo Bling: Financeiro</span>
-                            </label>
-                            <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
-                                <input type="checkbox" checked={!!scope.webhooks} onChange={e => setScope({...scope, webhooks: e.target.checked})} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"/>
-                                <span className="text-sm font-bold text-slate-700">Escopo Bling: Webhooks/Notificações</span>
-                            </label>
+
+                        {/* Data mínima para auto-sync */}
+                        <div className="p-4 bg-purple-50/60 rounded-xl border border-purple-100">
+                            <h3 className="text-xs font-black text-purple-800 uppercase tracking-widest mb-1">Sincronizar Pedidos A Partir De</h3>
+                            <p className="text-[10px] text-purple-600 mb-2">Pedidos anteriores a esta data não serão puxados no auto-sync, evitando reimportar notas já emitidas.</p>
+                            <input
+                                type="date"
+                                value={autoSyncFromDate}
+                                onChange={e => setAutoSyncFromDate(e.target.value)}
+                                className="w-full p-2 border-2 border-purple-200 rounded-lg bg-white font-bold text-sm outline-none focus:border-purple-500"
+                            />
+                            {!autoSyncFromDate && (
+                                <p className="text-[10px] text-purple-400 mt-1">⚠️ Sem data definida: usa últimos 7 dias</p>
+                            )}
                         </div>
-                    </div>
-                </>)}
+
+                        <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
+                            <h3 className="text-xs font-black text-blue-800 uppercase tracking-widest mb-3">Escopo da Integração</h3>
+                            <div className="mb-3 flex items-center justify-between bg-white border border-blue-100 rounded-lg p-3">
+                                <span className="text-xs font-black text-slate-700 uppercase tracking-widest">Todos os escopos</span>
+                                <button
+                                    type="button"
+                                    onClick={() => toggleAllScopes(!allScopesEnabled)}
+                                    className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest transition-colors ${allScopesEnabled ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                >
+                                    {allScopesEnabled ? 'Ativos' : 'Ativar todos'}
+                                </button>
+                            </div>
+                            <div className="grid grid-cols-1 gap-3">
+                                <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
+                                    <input type="checkbox" checked={scope.importarPedidos} onChange={e => setScope({ ...scope, importarPedidos: e.target.checked })} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
+                                    <span className="text-sm font-bold text-slate-700">Importar Pedidos de Venda</span>
+                                </label>
+                                <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
+                                    <input type="checkbox" checked={scope.importarNotasFiscais} onChange={e => setScope({ ...scope, importarNotasFiscais: e.target.checked })} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
+                                    <span className="text-sm font-bold text-slate-700">Consultar Notas Fiscais (NFe)</span>
+                                </label>
+                                <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
+                                    <input type="checkbox" checked={scope.gerarEtiquetas} onChange={e => setScope({ ...scope, gerarEtiquetas: e.target.checked })} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
+                                    <span className="text-sm font-bold text-slate-700">Gerar Etiquetas ZPL (Logística)</span>
+                                </label>
+                                <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
+                                    <input type="checkbox" checked={scope.importarProdutos} onChange={e => setScope({ ...scope, importarProdutos: e.target.checked })} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
+                                    <span className="text-sm font-bold text-slate-700">Visualizar Catálogo de Produtos</span>
+                                </label>
+                                <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
+                                    <input type="checkbox" checked={!!scope.pedidosVenda} onChange={e => setScope({ ...scope, pedidosVenda: e.target.checked })} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
+                                    <span className="text-sm font-bold text-slate-700">Escopo Bling: Pedidos de Venda</span>
+                                </label>
+                                <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
+                                    <input type="checkbox" checked={!!scope.produtos} onChange={e => setScope({ ...scope, produtos: e.target.checked })} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
+                                    <span className="text-sm font-bold text-slate-700">Escopo Bling: Produtos</span>
+                                </label>
+                                <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
+                                    <input type="checkbox" checked={!!scope.contatos} onChange={e => setScope({ ...scope, contatos: e.target.checked })} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
+                                    <span className="text-sm font-bold text-slate-700">Escopo Bling: Contatos/Clientes</span>
+                                </label>
+                                <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
+                                    <input type="checkbox" checked={!!scope.estoque} onChange={e => setScope({ ...scope, estoque: e.target.checked })} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
+                                    <span className="text-sm font-bold text-slate-700">Escopo Bling: Estoque</span>
+                                </label>
+                                <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
+                                    <input type="checkbox" checked={!!scope.nfe} onChange={e => setScope({ ...scope, nfe: e.target.checked })} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
+                                    <span className="text-sm font-bold text-slate-700">Escopo Bling: NFe/SEFAZ</span>
+                                </label>
+                                <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
+                                    <input type="checkbox" checked={!!scope.logistica} onChange={e => setScope({ ...scope, logistica: e.target.checked })} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
+                                    <span className="text-sm font-bold text-slate-700">Escopo Bling: Logística/Etiquetas</span>
+                                </label>
+                                <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
+                                    <input type="checkbox" checked={!!scope.financeiro} onChange={e => setScope({ ...scope, financeiro: e.target.checked })} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
+                                    <span className="text-sm font-bold text-slate-700">Escopo Bling: Financeiro</span>
+                                </label>
+                                <label className="flex items-center gap-3 cursor-pointer p-2 hover:bg-blue-100/50 rounded-lg transition-colors">
+                                    <input type="checkbox" checked={!!scope.webhooks} onChange={e => setScope({ ...scope, webhooks: e.target.checked })} className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500" />
+                                    <span className="text-sm font-bold text-slate-700">Escopo Bling: Webhooks/Notificações</span>
+                                </label>
+                            </div>
+                        </div>
+                    </>)}
                 </div>
 
                 {/* ─── ABA ETIQUETAS ─── */}
                 {configTab === 'etiquetas' && (
-                <div className="space-y-5">
-                    <p className="text-xs text-slate-500 bg-orange-50 border border-orange-100 rounded-xl p-3">
-                        Configure o comportamento padrão ao gerar etiquetas e DANFE na aba Bling.
-                    </p>
+                    <div className="space-y-5">
+                        <p className="text-xs text-slate-500 bg-orange-50 border border-orange-100 rounded-xl p-3">
+                            Configure o comportamento padrão ao gerar etiquetas e DANFE na aba Bling.
+                        </p>
 
-                    {/* Modo padrão de impressão */}
-                    <div className="p-4 bg-orange-50 rounded-xl border border-orange-100">
-                        <h3 className="text-xs font-black text-orange-800 uppercase tracking-widest mb-3 flex items-center gap-2">
-                            <Printer size={14}/> Modo Padrão de Impressão
-                        </h3>
-                        <div className="grid grid-cols-2 gap-2">
-                            <button
-                                onClick={() => setEtqModoPadrao('danfe_etiqueta')}
-                                className={`p-3 rounded-xl border-2 text-left transition-all ${etqModoPadrao === 'danfe_etiqueta' ? 'border-orange-500 bg-orange-100' : 'border-slate-200 bg-white hover:border-orange-300'}`}
-                            >
-                                <p className="text-xs font-black text-slate-800 uppercase">DANFE + Etiqueta</p>
-                                <p className="text-[10px] text-slate-500 mt-1">Imprime a nota fiscal junto com a etiqueta de envio</p>
-                            </button>
-                            <button
-                                onClick={() => setEtqModoPadrao('apenas_etiqueta')}
-                                className={`p-3 rounded-xl border-2 text-left transition-all ${etqModoPadrao === 'apenas_etiqueta' ? 'border-orange-500 bg-orange-100' : 'border-slate-200 bg-white hover:border-orange-300'}`}
-                            >
-                                <p className="text-xs font-black text-slate-800 uppercase">Apenas Etiqueta (ZPL)</p>
-                                <p className="text-[10px] text-slate-500 mt-1">Somente a etiqueta de envio da transportadora</p>
-                            </button>
+                        {/* Modo padrão de impressão */}
+                        <div className="p-4 bg-orange-50 rounded-xl border border-orange-100">
+                            <h3 className="text-xs font-black text-orange-800 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                <Printer size={14} /> Modo Padrão de Impressão
+                            </h3>
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    onClick={() => setEtqModoPadrao('danfe_etiqueta')}
+                                    className={`p-3 rounded-xl border-2 text-left transition-all ${etqModoPadrao === 'danfe_etiqueta' ? 'border-orange-500 bg-orange-100' : 'border-slate-200 bg-white hover:border-orange-300'}`}
+                                >
+                                    <p className="text-xs font-black text-slate-800 uppercase">DANFE + Etiqueta</p>
+                                    <p className="text-[10px] text-slate-500 mt-1">Imprime a nota fiscal junto com a etiqueta de envio</p>
+                                </button>
+                                <button
+                                    onClick={() => setEtqModoPadrao('apenas_etiqueta')}
+                                    className={`p-3 rounded-xl border-2 text-left transition-all ${etqModoPadrao === 'apenas_etiqueta' ? 'border-orange-500 bg-orange-100' : 'border-slate-200 bg-white hover:border-orange-300'}`}
+                                >
+                                    <p className="text-xs font-black text-slate-800 uppercase">Apenas Etiqueta (ZPL)</p>
+                                    <p className="text-[10px] text-slate-500 mt-1">Somente a etiqueta de envio da transportadora</p>
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Fonte do ZPL */}
+                        <div className="p-4 bg-orange-50 rounded-xl border border-orange-100">
+                            <h3 className="text-xs font-black text-orange-800 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                <Cloud size={14} /> Fonte do ZPL
+                            </h3>
+                            <div className="grid grid-cols-2 gap-2">
+                                <button
+                                    onClick={() => setEtqFonteZpl('bling_api')}
+                                    className={`p-3 rounded-xl border-2 text-left transition-all ${etqFonteZpl === 'bling_api' ? 'border-orange-500 bg-orange-100' : 'border-slate-200 bg-white hover:border-orange-300'}`}
+                                >
+                                    <p className="text-xs font-black text-slate-800 uppercase">Bling API (Real)</p>
+                                    <p className="text-[10px] text-slate-500 mt-1">Usa o ZPL oficial gerado pelo Bling (recomendado)</p>
+                                </button>
+                                <button
+                                    onClick={() => setEtqFonteZpl('local')}
+                                    className={`p-3 rounded-xl border-2 text-left transition-all ${etqFonteZpl === 'local' ? 'border-orange-500 bg-orange-100' : 'border-slate-200 bg-white hover:border-orange-300'}`}
+                                >
+                                    <p className="text-xs font-black text-slate-800 uppercase">Gerado Localmente</p>
+                                    <p className="text-[10px] text-slate-500 mt-1">Gera etiqueta a partir dos dados do pedido (fallback)</p>
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Delay entre impressões */}
+                        <div className="p-4 bg-orange-50/60 rounded-xl border border-orange-100">
+                            <h3 className="text-xs font-black text-orange-800 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                <Clock size={14} /> Delay entre Impressões
+                            </h3>
+                            <p className="text-[10px] text-orange-600 mb-2">Intervalo em milissegundos entre envios de ZPL para a impressora em lote.</p>
+                            <div className="flex items-center gap-3">
+                                <input
+                                    type="number"
+                                    min={0}
+                                    max={5000}
+                                    step={50}
+                                    value={etqDelay}
+                                    onChange={e => setEtqDelay(Number(e.target.value))}
+                                    className="w-28 p-2 border-2 border-orange-200 rounded-lg bg-white font-bold text-sm outline-none focus:border-orange-500"
+                                />
+                                <span className="text-xs text-slate-500 font-bold">ms</span>
+                                <span className="text-[10px] text-slate-400">(0 = sem delay)</span>
+                            </div>
                         </div>
                     </div>
-
-                    {/* Fonte do ZPL */}
-                    <div className="p-4 bg-orange-50 rounded-xl border border-orange-100">
-                        <h3 className="text-xs font-black text-orange-800 uppercase tracking-widest mb-3 flex items-center gap-2">
-                            <Cloud size={14}/> Fonte do ZPL
-                        </h3>
-                        <div className="grid grid-cols-2 gap-2">
-                            <button
-                                onClick={() => setEtqFonteZpl('bling_api')}
-                                className={`p-3 rounded-xl border-2 text-left transition-all ${etqFonteZpl === 'bling_api' ? 'border-orange-500 bg-orange-100' : 'border-slate-200 bg-white hover:border-orange-300'}`}
-                            >
-                                <p className="text-xs font-black text-slate-800 uppercase">Bling API (Real)</p>
-                                <p className="text-[10px] text-slate-500 mt-1">Usa o ZPL oficial gerado pelo Bling (recomendado)</p>
-                            </button>
-                            <button
-                                onClick={() => setEtqFonteZpl('local')}
-                                className={`p-3 rounded-xl border-2 text-left transition-all ${etqFonteZpl === 'local' ? 'border-orange-500 bg-orange-100' : 'border-slate-200 bg-white hover:border-orange-300'}`}
-                            >
-                                <p className="text-xs font-black text-slate-800 uppercase">Gerado Localmente</p>
-                                <p className="text-[10px] text-slate-500 mt-1">Gera etiqueta a partir dos dados do pedido (fallback)</p>
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Delay entre impressões */}
-                    <div className="p-4 bg-orange-50/60 rounded-xl border border-orange-100">
-                        <h3 className="text-xs font-black text-orange-800 uppercase tracking-widest mb-2 flex items-center gap-2">
-                            <Clock size={14}/> Delay entre Impressões
-                        </h3>
-                        <p className="text-[10px] text-orange-600 mb-2">Intervalo em milissegundos entre envios de ZPL para a impressora em lote.</p>
-                        <div className="flex items-center gap-3">
-                            <input
-                                type="number"
-                                min={0}
-                                max={5000}
-                                step={50}
-                                value={etqDelay}
-                                onChange={e => setEtqDelay(Number(e.target.value))}
-                                className="w-28 p-2 border-2 border-orange-200 rounded-lg bg-white font-bold text-sm outline-none focus:border-orange-500"
-                            />
-                            <span className="text-xs text-slate-500 font-bold">ms</span>
-                            <span className="text-[10px] text-slate-400">(0 = sem delay)</span>
-                        </div>
-                    </div>
-                </div>
                 )}
 
                 {/* ─── ABA EXPORTAÇÃO ─── */}
                 {configTab === 'exportacao' && (
-                <div className="space-y-5">
-                    <p className="text-xs text-slate-500 bg-green-50 border border-green-100 rounded-xl p-3">
-                        Configure os padrões para sincronização e exportação de pedidos do Bling para o ERP.
-                    </p>
+                    <div className="space-y-5">
+                        <p className="text-xs text-slate-500 bg-green-50 border border-green-100 rounded-xl p-3">
+                            Configure os padrões para sincronização e exportação de pedidos do Bling para o ERP.
+                        </p>
 
-                    {/* Situações (status) dos pedidos */}
-                    <div className="p-4 bg-green-50 rounded-xl border border-green-100">
-                        <h3 className="text-xs font-black text-green-800 uppercase tracking-widest mb-3 flex items-center gap-2">
-                            <Filter size={14}/> Situações a Importar (Status Bling)
-                        </h3>
-                        <p className="text-[10px] text-green-600 mb-3">Selecione quais situações de pedido serão incluídas ao sincronizar do Bling.</p>
-                        <div className="space-y-2">
-                            {[
-                                { id: 6,  label: '6 — Em Aberto', desc: 'Pedido aguardando processamento' },
-                                { id: 9,  label: '9 — Atendido', desc: 'Pedido já atendido/separado' },
-                                { id: 15, label: '15 — Em Andamento', desc: 'Pedido em andamento' },
-                                { id: 12, label: '12 — Cancelado', desc: 'Pedido cancelado' },
-                            ].map(s => (
-                                <label key={s.id} className="flex items-center gap-3 cursor-pointer p-2.5 bg-white rounded-xl border border-green-100 hover:border-green-300 transition-all">
+                        {/* Situações (status) dos pedidos */}
+                        <div className="p-4 bg-green-50 rounded-xl border border-green-100">
+                            <h3 className="text-xs font-black text-green-800 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                <Filter size={14} /> Situações a Importar (Status Bling)
+                            </h3>
+                            <p className="text-[10px] text-green-600 mb-3">Selecione quais situações de pedido serão incluídas ao sincronizar do Bling.</p>
+                            <div className="space-y-2">
+                                {[
+                                    { id: 6, label: '6 — Em Aberto', desc: 'Pedido aguardando processamento' },
+                                    { id: 9, label: '9 — Atendido', desc: 'Pedido já atendido/separado' },
+                                    { id: 15, label: '15 — Em Andamento', desc: 'Pedido em andamento' },
+                                    { id: 12, label: '12 — Cancelado', desc: 'Pedido cancelado' },
+                                ].map(s => (
+                                    <label key={s.id} className="flex items-center gap-3 cursor-pointer p-2.5 bg-white rounded-xl border border-green-100 hover:border-green-300 transition-all">
+                                        <input
+                                            type="checkbox"
+                                            checked={expStatus.includes(s.id)}
+                                            onChange={e => setExpStatus(prev => e.target.checked ? [...prev, s.id] : prev.filter(x => x !== s.id))}
+                                            className="w-4 h-4 text-green-600 rounded"
+                                        />
+                                        <div>
+                                            <p className="text-xs font-black text-slate-800">{s.label}</p>
+                                            <p className="text-[10px] text-slate-400">{s.desc}</p>
+                                        </div>
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Período e Canal */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="p-4 bg-green-50/60 rounded-xl border border-green-100">
+                                <h3 className="text-xs font-black text-green-800 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                    <History size={14} /> Período Padrão
+                                </h3>
+                                <p className="text-[10px] text-green-600 mb-2">Quantos dias atrás buscar pedidos por padrão.</p>
+                                <div className="flex items-center gap-2">
                                     <input
-                                        type="checkbox"
-                                        checked={expStatus.includes(s.id)}
-                                        onChange={e => setExpStatus(prev => e.target.checked ? [...prev, s.id] : prev.filter(x => x !== s.id))}
-                                        className="w-4 h-4 text-green-600 rounded"
+                                        type="number"
+                                        min={1}
+                                        max={365}
+                                        value={expDias}
+                                        onChange={e => setExpDias(Number(e.target.value))}
+                                        className="w-20 p-2 border-2 border-green-200 rounded-lg bg-white font-bold text-sm outline-none focus:border-green-500"
                                     />
-                                    <div>
-                                        <p className="text-xs font-black text-slate-800">{s.label}</p>
-                                        <p className="text-[10px] text-slate-400">{s.desc}</p>
-                                    </div>
-                                </label>
-                            ))}
+                                    <span className="text-xs text-slate-500 font-bold">dias</span>
+                                </div>
+                            </div>
+                            <div className="p-4 bg-green-50/60 rounded-xl border border-green-100">
+                                <h3 className="text-xs font-black text-green-800 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                    <Tag size={14} /> Canal Padrão
+                                </h3>
+                                <p className="text-[10px] text-green-600 mb-2">Canal de origem padrão para os pedidos.</p>
+                                <select
+                                    value={expCanal}
+                                    onChange={e => setExpCanal(e.target.value as any)}
+                                    className="w-full p-2 border-2 border-green-200 rounded-lg bg-white font-bold text-xs outline-none focus:border-green-500"
+                                >
+                                    <option value="TODOS">Todos os canais</option>
+                                    <option value="ML">Mercado Livre</option>
+                                    <option value="SHOPEE">Shopee</option>
+                                    <option value="SITE">Site / Loja</option>
+                                </select>
+                            </div>
                         </div>
-                    </div>
 
-                    {/* Período e Canal */}
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="p-4 bg-green-50/60 rounded-xl border border-green-100">
-                            <h3 className="text-xs font-black text-green-800 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                <History size={14}/> Período Padrão
-                            </h3>
-                            <p className="text-[10px] text-green-600 mb-2">Quantos dias atrás buscar pedidos por padrão.</p>
-                            <div className="flex items-center gap-2">
-                                <input
-                                    type="number"
-                                    min={1}
-                                    max={365}
-                                    value={expDias}
-                                    onChange={e => setExpDias(Number(e.target.value))}
-                                    className="w-20 p-2 border-2 border-green-200 rounded-lg bg-white font-bold text-sm outline-none focus:border-green-500"
-                                />
-                                <span className="text-xs text-slate-500 font-bold">dias</span>
+                        {/* Limite e Auto-Rastreio */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="p-4 bg-green-50/60 rounded-xl border border-green-100">
+                                <h3 className="text-xs font-black text-green-800 uppercase tracking-widest mb-2">Limite por Sincronização</h3>
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        type="number"
+                                        min={10}
+                                        max={1000}
+                                        step={10}
+                                        value={expLimite}
+                                        onChange={e => setExpLimite(Number(e.target.value))}
+                                        className="w-20 p-2 border-2 border-green-200 rounded-lg bg-white font-bold text-sm outline-none focus:border-green-500"
+                                    />
+                                    <span className="text-xs text-slate-500 font-bold">pedidos</span>
+                                </div>
                             </div>
-                        </div>
-                        <div className="p-4 bg-green-50/60 rounded-xl border border-green-100">
-                            <h3 className="text-xs font-black text-green-800 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                <Tag size={14}/> Canal Padrão
-                            </h3>
-                            <p className="text-[10px] text-green-600 mb-2">Canal de origem padrão para os pedidos.</p>
-                            <select
-                                value={expCanal}
-                                onChange={e => setExpCanal(e.target.value as any)}
-                                className="w-full p-2 border-2 border-green-200 rounded-lg bg-white font-bold text-xs outline-none focus:border-green-500"
-                            >
-                                <option value="TODOS">Todos os canais</option>
-                                <option value="ML">Mercado Livre</option>
-                                <option value="SHOPEE">Shopee</option>
-                                <option value="SITE">Site / Loja</option>
-                            </select>
+                            <div className="p-4 bg-green-50/60 rounded-xl border border-green-100 flex items-center justify-between">
+                                <div>
+                                    <h3 className="text-xs font-black text-green-800 uppercase tracking-widest mb-1">Auto-Importar Rastreio</h3>
+                                    <p className="text-[10px] text-green-600">Importar código de rastreamento junto com o pedido.</p>
+                                </div>
+                                <button onClick={() => setExpAutoRastreio(!expAutoRastreio)} className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors shrink-0 ${expAutoRastreio ? 'bg-green-600' : 'bg-gray-300'}`}>
+                                    <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${expAutoRastreio ? 'translate-x-6' : 'translate-x-1'}`} />
+                                </button>
+                            </div>
                         </div>
                     </div>
-
-                    {/* Limite e Auto-Rastreio */}
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="p-4 bg-green-50/60 rounded-xl border border-green-100">
-                            <h3 className="text-xs font-black text-green-800 uppercase tracking-widest mb-2">Limite por Sincronização</h3>
-                            <div className="flex items-center gap-2">
-                                <input
-                                    type="number"
-                                    min={10}
-                                    max={1000}
-                                    step={10}
-                                    value={expLimite}
-                                    onChange={e => setExpLimite(Number(e.target.value))}
-                                    className="w-20 p-2 border-2 border-green-200 rounded-lg bg-white font-bold text-sm outline-none focus:border-green-500"
-                                />
-                                <span className="text-xs text-slate-500 font-bold">pedidos</span>
-                            </div>
-                        </div>
-                        <div className="p-4 bg-green-50/60 rounded-xl border border-green-100 flex items-center justify-between">
-                            <div>
-                                <h3 className="text-xs font-black text-green-800 uppercase tracking-widest mb-1">Auto-Importar Rastreio</h3>
-                                <p className="text-[10px] text-green-600">Importar código de rastreamento junto com o pedido.</p>
-                            </div>
-                            <button onClick={() => setExpAutoRastreio(!expAutoRastreio)} className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors shrink-0 ${expAutoRastreio ? 'bg-green-600' : 'bg-gray-300'}`}>
-                                <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${expAutoRastreio ? 'translate-x-6' : 'translate-x-1'}`} />
-                            </button>
-                        </div>
-                    </div>
-                </div>
                 )}
 
                 <div className="mt-6 flex justify-end gap-3 pt-4 border-t border-slate-100">
                     <button onClick={onClose} className="px-6 py-3 bg-slate-100 text-slate-500 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-slate-200 transition-all">Cancelar</button>
                     <button onClick={handleSaveManual} className="px-8 py-3 bg-blue-600 text-white rounded-xl font-black uppercase text-xs tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 active:scale-95 transition-all flex items-center gap-2">
-                        <Save size={18}/> Salvar Configurações
+                        <Save size={18} /> Salvar Configurações
                     </button>
                 </div>
             </div>
@@ -917,10 +918,10 @@ const BlingConfigModal: React.FC<{
     );
 };
 
-const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, onLaunchSuccess, addToast, setCurrentPage, onLoadZpl, stockItems: erpStockItems = [], skuLinks: erpSkuLinks = [], allOrders: erpAllOrders = [], onLinkSku }) => {
+const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, onLaunchSuccess, onUpdateOrdersBatch, addToast, setCurrentPage, onLoadZpl, stockItems: erpStockItems = [], skuLinks: erpSkuLinks = [], allOrders: erpAllOrders = [], onLinkSku }) => {
     const integrations = generalSettings.integrations;
     const settings = integrations?.bling;
-    
+
     // Derived state for better readability
     const isConnected = !!settings?.apiKey && settings.apiKey.length > 0;
     const scopeSettings = { ...DEFAULT_BLING_SCOPE, ...(settings?.scope || {}) };
@@ -1107,7 +1108,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     window.history.replaceState({}, document.title, window.location.pathname);
                     return;
                 }
-                
+
                 const { clientId, clientSecret } = JSON.parse(storedConfig);
                 setIsHandlingCallback(true);
                 addToast('Processando autenticação do Bling...', 'info');
@@ -1119,7 +1120,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     const redirectUri = currentOrigin;
 
                     const data = await executeBlingTokenExchange(normalizedCode, clientId, clientSecret, redirectUri);
-                    
+
                     if (data.access_token) {
                         const newSettings: BlingSettings = {
                             apiKey: data.access_token,
@@ -1136,7 +1137,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 gerarEtiquetas: true
                             }
                         };
-                        
+
                         onSaveSettings(prev => ({
                             ...prev,
                             integrations: {
@@ -1179,7 +1180,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     const autoFilters = { startDate: syncFrom, endDate: getToday(), status: 'TODOS' as const };
                     const ordersResult = await syncBlingOrders(token, autoFilters.startDate, autoFilters.endDate, 'TODOS');
                     const rawOrders = ordersResult.orders || ordersResult.items || [];
-                    
+
                     if (rawOrders.length > 0) {
                         setSyncedOrders(rawOrders);
                         const orderItems = rawOrders.map(transformSyncedOrder);
@@ -1190,10 +1191,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     if (activeTab === 'nfe') {
                         const invoices = await fetchBlingInvoices(token, { ...autoFilters, status: 'EMITIDAS' });
                         const invoiceMap = new Map<string, BlingInvoice>(invoices.map(inv => [inv.idPedidoVenda!, inv]));
-                        
+
                         setEnrichedOrders(prev => {
-                             // Mescla com dados existentes se possível
-                             return rawOrders.map((order: any) => ({
+                            // Mescla com dados existentes se possível
+                            return rawOrders.map((order: any) => ({
                                 ...transformSyncedOrder(order),
                                 invoice: invoiceMap.get(order.blingId || order.orderId),
                             }));
@@ -1275,13 +1276,13 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             } else {
                 addToast('Nenhum pedido de venda encontrado no Bling para os filtros selecionados.', 'info');
             }
-        } catch (error: any) { 
+        } catch (error: any) {
             if (error.message === "TOKEN_EXPIRED") {
-                 addToast("Sessão expirada. Tente recarregar a página ou gerar novo token.", "error");
+                addToast("Sessão expirada. Tente recarregar a página ou gerar novo token.", "error");
             } else {
-                 addToast(`Erro na sincronização: ${error.message}`, 'error'); 
+                addToast(`Erro na sincronização: ${error.message}`, 'error');
             }
-        } 
+        }
         finally { setIsSyncing(false); }
     };
 
@@ -1297,27 +1298,27 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 syncBlingOrders(token, filters.startDate, filters.endDate, filters.status === 'TODOS' ? 'TODOS' : filters.status),
                 syncBlingInvoices(token, filters.startDate, filters.endDate, 'TODOS')
             ]);
-            
+
             const rawOrders = ordersResult.orders || ordersResult.items || [];
             const rawInvoices = invoicesResult.invoices || [];
             const invoiceMap = new Map<string, BlingInvoice>(
                 rawInvoices.map((inv: BlingInvoice) => [inv.idPedidoVenda!, inv])
             );
-            
+
             const enriched: EnrichedBlingOrder[] = rawOrders.map((order: any) => ({
                 ...transformSyncedOrder(order),
                 invoice: invoiceMap.get(order.blingId || order.orderId),
             }));
-            
+
             setSyncedOrders(rawOrders);
             setEnrichedOrders(enriched);
             if (enriched.length === 0) addToast('Nenhum pedido encontrado para os filtros.', 'info');
             else addToast(`${rawOrders.length} pedido(s) e ${rawInvoices.length} nota(s) carregados`, 'info');
 
-        } catch (error: any) { addToast(`Erro ao buscar dados: ${error.message}`, 'error'); } 
+        } catch (error: any) { addToast(`Erro ao buscar dados: ${error.message}`, 'error'); }
         finally { setIsSyncing(false); }
     };
-    
+
     const handleFetchStock = async () => {
         setIsLoadingStock(true);
         setStockItems([]);
@@ -1368,8 +1369,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             // Atualiza o item localmente para refletir imediatamente
             setStockItems(prev => prev.map(it =>
                 it.id === adjustStockModal.item.id
-                    ? { ...it, saldoFisico: adjustOp === 'B' ? qty : adjustOp === 'E' ? it.saldoFisico + qty : Math.max(0, it.saldoFisico - qty),
-                              estoqueReal: adjustOp === 'B' ? qty : adjustOp === 'E' ? it.saldoFisico + qty : Math.max(0, it.saldoFisico - qty) }
+                    ? {
+                        ...it, saldoFisico: adjustOp === 'B' ? qty : adjustOp === 'E' ? it.saldoFisico + qty : Math.max(0, it.saldoFisico - qty),
+                        estoqueReal: adjustOp === 'B' ? qty : adjustOp === 'E' ? it.saldoFisico + qty : Math.max(0, it.saldoFisico - qty)
+                    }
                     : it
             ));
         } catch (err: any) {
@@ -1388,8 +1391,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
 
             const productsResult = await fetchBlingProducts(token);
             setProducts(productsResult);
-             if(productsResult.length === 0) addToast('Nenhum produto encontrado.', 'info');
-        } catch (error: any) { addToast(`Erro ao buscar produtos: ${error.message}`, 'error'); } 
+            if (productsResult.length === 0) addToast('Nenhum produto encontrado.', 'info');
+        } catch (error: any) { addToast(`Erro ao buscar produtos: ${error.message}`, 'error'); }
         finally { setIsSyncing(false); }
     };
 
@@ -1475,7 +1478,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
 
             const zpl = await fetchEtiquetaZplForPedido(token, invoice.idPedidoVenda);
             if (zpl) setZplModeModal({ zpl, loteId: `ZPL-NF-${invoice.id}`, descricao: invoice.idPedidoVenda });
-        } catch (error: any) { addToast(`Erro ao gerar ZPL: ${error.message}`, 'error'); } 
+        } catch (error: any) { addToast(`Erro ao gerar ZPL: ${error.message}`, 'error'); }
         finally { setGeneratingZplId(null); }
     };
 
@@ -1631,12 +1634,19 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         }
         setIsBatchEmitindo(true);
         let ok = 0, fail = 0;
+        const loteId = `EMISSAO-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
+        const successfulNfes: { nfeNumero: string, pedidoVendaId: string }[] = [];
+        const orderIdsToUpdate: string[] = [];
+
         for (const nfe of pendentes) {
             try {
                 const token = await getValidToken();
                 if (!token) throw new Error('Token inválido.');
                 await enviarNfe(token, nfe.id);
                 ok++;
+                successfulNfes.push({ nfeNumero: nfe.numero || String(nfe.id), pedidoVendaId: nfe.numeroVenda || '' });
+                if (nfe.numeroVenda) orderIdsToUpdate.push(nfe.numeroVenda);
+
                 setNfeSaida(prev => prev.map(n => n.id === nfe.id ? { ...n, situacao: 3, situacaoDescr: 'Aguardando Recibo' } : n));
             } catch {
                 fail++;
@@ -1644,6 +1654,30 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             // delay entre emissões para rate limit
             await new Promise(r => setTimeout(r, 600));
         }
+
+        if (ok > 0) {
+            // Persistir lote localmente para o DANFEManagerPage
+            try {
+                const cachedLotes = JSON.parse(localStorage.getItem('nfe_lotes_diarios') || '[]');
+                const newLote = {
+                    id: loteId,
+                    data: new Date().toISOString(),
+                    total: ok + fail,
+                    ok,
+                    fail,
+                    nfes: successfulNfes
+                };
+                localStorage.setItem('nfe_lotes_diarios', JSON.stringify([newLote, ...cachedLotes].slice(0, 50)));
+            } catch (e) {
+                console.error('Erro ao salvar lote local:', e);
+            }
+
+            // Atualizar banco de dados
+            if (onUpdateOrdersBatch && orderIdsToUpdate.length > 0) {
+                await onUpdateOrdersBatch(orderIdsToUpdate, loteId);
+            }
+        }
+
         persistNfeSaida(nfeSaida);
         setSelectedNfeSaidaIds(new Set());
         setIsBatchEmitindo(false);
@@ -1697,7 +1731,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         const getNfeCanal = (nfe: NfeSaida): 'ML' | 'SHOPEE' | 'SITE' => {
             const l = (nfe.loja || '').toUpperCase();
             const nv = (nfe.numeroVenda || '').toUpperCase();
-            
+
             if (l.includes('MERCADO') || l.includes('LIVRE') || l.includes('MLB') || l.startsWith('ML') || nv.startsWith('MLB')) return 'ML';
             if (l.includes('SHOPEE') || nv.includes('SHP') || nv.startsWith('21') || nv.startsWith('22')) return 'SHOPEE';
             if (l.includes('MAGALU') || l.includes('MAGAZINE') || l.includes('MGL')) return 'SITE';
@@ -2121,8 +2155,17 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             const order = targets[i];
             setBatchZplNotasProgress({ current: i + 1, total: targets.length });
             try {
-                const zpl = await fetchEtiquetaZplForPedido(token, order.invoice!.idPedidoVenda!);
+                let zpl = await fetchEtiquetaZplForPedido(token, order.invoice!.idPedidoVenda!);
                 if (zpl) {
+                    // Adicionar SKU ao final da etiqueta ZPL se solicitado
+                    // O ZPL termina com ^XZ. Vamos injetar campos de texto antes do fim.
+                    const skuText = order.sku || 'N/A';
+                    const canalText = order.canal || 'S/ Canal';
+                    const pedidoLoja = order.id_pedido_loja || order.bling_numero || 'N/A';
+
+                    const extraInfoZpl = `^CF0,20^FO40,1120^FDSKU: ${skuText}^FS^FO40,1145^FDCANAL: ${canalText}^FS^FO40,1170^FDPED: ${pedidoLoja}^FS^XZ`;
+                    zpl = zpl.replace(/\^XZ/gi, extraInfoZpl);
+
                     zplParts.push(zpl);
                     successCount++;
                     // Marca como gerado nesta sessão
@@ -2164,29 +2207,59 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         setIsBatchZplNotas(false);
         setBatchZplNotasProgress(null);
     };
-    
+
     const handleBatchGerarNFe = async (emitir = false) => {
         if (selectedVendasIds.size === 0) return;
         setIsBatchEmitindo(true);
         try {
             const token = await getValidToken();
             if (!token) throw new Error('Token do Bling expirado.');
-            
+
             const ids = Array.from(selectedVendasIds);
+            const loteId = `GERACAO-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
+
             const response = await fetch('/api/bling/nfe/batch-criar-emitir', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: token },
                 body: JSON.stringify({ blingOrderIds: ids, emitir }),
             });
             const result = await response.json();
-            
+
             if (result.success) {
                 const results = result.results || [];
-                const ok = results.filter((r: any) => r.success).length;
+                const okItems = results.filter((r: any) => r.success);
+                const ok = okItems.length;
                 const fail = results.filter((r: any) => !r.success).length;
-                
+
                 if (ok > 0) {
                     addToast(`✅ ${ok} NF-e(s) processada(s) com sucesso!`, 'success');
+
+                    // Persistir lote localmente
+                    try {
+                        const cachedLotes = JSON.parse(localStorage.getItem('nfe_lotes_diarios') || '[]');
+                        const successfulNfes = okItems.map((r: any) => ({
+                            nfeNumero: String(r.nfeId || r.blingOrderId),
+                            pedidoVendaId: String(r.blingOrderId)
+                        }));
+                        const newLote = {
+                            id: loteId,
+                            data: new Date().toISOString(),
+                            total: ok + fail,
+                            ok,
+                            fail,
+                            nfes: successfulNfes
+                        };
+                        localStorage.setItem('nfe_lotes_diarios', JSON.stringify([newLote, ...cachedLotes].slice(0, 50)));
+                    } catch (e) {
+                        console.error('Erro ao salvar lote local:', e);
+                    }
+
+                    // Atualizar banco de dados
+                    if (onUpdateOrdersBatch) {
+                        const successfulOrderIds = okItems.map((r: any) => String(r.blingOrderId));
+                        await onUpdateOrdersBatch(successfulOrderIds, loteId);
+                    }
+
                     // Refresh para atualizar status e remover do "Em Aberto" se necessário
                     await handleFetchVendasEmAberto(true);
                     await handleFetchOrdersAndInvoices();
@@ -2461,7 +2534,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             hasAutoFetchedVendas.current = true;
             handleFetchVendasEmAberto();
         }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTab, isConnected]);
 
     // ── Set de SKU codes ligados a produtos ERP (para indicador no catálogo) ──
@@ -2512,14 +2585,14 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 (order.customer_name && order.customer_name.toLowerCase().includes(searchLower)) ||
                 ((order as any).loja && (order as any).loja.toLowerCase().includes(searchLower))
             );
-            
+
             let matchesNfe = true;
             if (filterNfeStatus !== 'TODOS') {
-                 const status = order.invoice?.situacao?.toLowerCase() || '';
-                 if (filterNfeStatus === 'EMITIDA') matchesNfe = status === 'emitida' || status === 'autorizada';
-                 else if (filterNfeStatus === 'PENDENTE') matchesNfe = !!order.invoice && status !== 'emitida' && status !== 'autorizada';
-                 else if (filterNfeStatus === 'AUTORIZADA_SEM_DANFE') matchesNfe = !!order.invoice && (status === 'autorizada' || status === 'emitida') && !order.invoice.linkDanfe;
-                 else if (filterNfeStatus === 'SEM_NOTA') matchesNfe = !order.invoice;
+                const status = order.invoice?.situacao?.toLowerCase() || '';
+                if (filterNfeStatus === 'EMITIDA') matchesNfe = status === 'emitida' || status === 'autorizada';
+                else if (filterNfeStatus === 'PENDENTE') matchesNfe = !!order.invoice && status !== 'emitida' && status !== 'autorizada';
+                else if (filterNfeStatus === 'AUTORIZADA_SEM_DANFE') matchesNfe = !!order.invoice && (status === 'autorizada' || status === 'emitida') && !order.invoice.linkDanfe;
+                else if (filterNfeStatus === 'SEM_NOTA') matchesNfe = !order.invoice;
             }
 
             // Filtro de loja/canal
@@ -2570,21 +2643,21 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         {isConnected ? <><CheckCircle size={12} /> Conectado</> : <><Settings size={12} /> Não Configurado</>}
                     </div>
                     {isAutoSyncing && (
-                         <div className="flex items-center gap-2 text-[10px] font-bold text-purple-700 bg-purple-100 px-3 py-1.5 rounded-full border border-purple-200 uppercase tracking-widest animate-pulse">
+                        <div className="flex items-center gap-2 text-[10px] font-bold text-purple-700 bg-purple-100 px-3 py-1.5 rounded-full border border-purple-200 uppercase tracking-widest animate-pulse">
                             <RefreshCw size={12} className="animate-spin" /> Sincronizando...
                         </div>
                     )}
                 </div>
                 <div className="flex items-center gap-3">
-                     <button
+                    <button
                         onClick={toggleAutoSync}
                         className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${settings?.autoSync ? 'bg-purple-100 text-purple-800 border border-purple-200' : 'bg-gray-100 text-gray-500 border border-gray-200'}`}
                         title={settings?.autoSync ? "Desativar Sincronização Automática" : "Ativar Sincronização Automática"}
                     >
-                        {settings?.autoSync ? <ToggleRight size={24} className="text-purple-600"/> : <ToggleLeft size={24} />}
+                        {settings?.autoSync ? <ToggleRight size={24} className="text-purple-600" /> : <ToggleLeft size={24} />}
                         {settings?.autoSync ? 'Auto Sync ON' : 'Auto Sync OFF'}
                     </button>
-                    <button 
+                    <button
                         onClick={() => setIsConfigModalOpen(true)}
                         className="p-3 bg-white border border-slate-200 rounded-xl text-slate-500 hover:text-blue-600 hover:border-blue-200 hover:shadow-md transition-all flex items-center gap-2 group"
                         title="Configurações do Bling"
@@ -2599,7 +2672,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             {!isConnected && (
                 <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex items-center justify-between flex-wrap gap-4 animate-in slide-in-from-top-2">
                     <div className="flex items-center gap-3">
-                        <div className="p-2 bg-white rounded-lg shadow-sm text-blue-600"><Info size={24}/></div>
+                        <div className="p-2 bg-white rounded-lg shadow-sm text-blue-600"><Info size={24} /></div>
                         <div>
                             <p className="font-bold text-blue-900 text-sm uppercase tracking-tight">Integração não configurada</p>
                             <p className="text-xs text-blue-700 font-medium">Para sincronizar pedidos, notas e produtos, você precisa configurar o acesso OAuth.</p>
@@ -2611,10 +2684,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
 
             {/* Tabs — Importação, NF-e, Etiquetas, Catálogo */}
             <div className="flex border-b overflow-x-auto">
-                <button onClick={() => setActiveTab('importacao')} className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'importacao' ? 'border-yellow-500 text-yellow-700 bg-yellow-50/50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}><ShoppingBag size={16}/> Importação</button>
-                <button onClick={() => setActiveTab('nfe')} className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'nfe' ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}><FileText size={16}/> NF-e</button>
-                <button onClick={() => setActiveTab('etiquetas')} className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'etiquetas' ? 'border-blue-600 text-blue-700 bg-blue-50/50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}><Printer size={16}/> Etiquetas {zplLotes.length > 0 && <span className="bg-blue-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">{zplLotes.length}</span>}</button>
-                {canViewProducts && <button onClick={() => setActiveTab('catalogo')} className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'catalogo' ? 'border-purple-600 text-purple-700 bg-purple-50/50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}><Package size={16}/> Catálogo</button>}
+                <button onClick={() => setActiveTab('importacao')} className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'importacao' ? 'border-yellow-500 text-yellow-700 bg-yellow-50/50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}><ShoppingBag size={16} /> Importação</button>
+                <button onClick={() => setActiveTab('nfe')} className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'nfe' ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}><FileText size={16} /> NF-e</button>
+                <button onClick={() => setActiveTab('etiquetas')} className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'etiquetas' ? 'border-blue-600 text-blue-700 bg-blue-50/50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}><Printer size={16} /> Etiquetas {zplLotes.length > 0 && <span className="bg-blue-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">{zplLotes.length}</span>}</button>
+                {canViewProducts && <button onClick={() => setActiveTab('catalogo')} className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === 'catalogo' ? 'border-purple-600 text-purple-700 bg-purple-50/50' : 'border-transparent text-gray-400 hover:text-gray-600'}`}><Package size={16} /> Catálogo</button>}
             </div>
 
             {/* Content: Importação (Pedidos de Vendas do Bling) */}
@@ -2627,14 +2700,14 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 <div className="bg-emerald-50 border border-emerald-200 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
                                     <span className="text-xs font-black text-emerald-700">✅ Lote {lastCompletedLote.id} — {lastCompletedLote.success} etiqueta(s){lastCompletedLote.failed.length > 0 ? `, ${lastCompletedLote.failed.length} falha(s)` : ''}</span>
                                     <div className="flex items-center gap-2">
-                                        <button onClick={() => setZplModeModal({ zpl: lastCompletedLote.zplContent, loteId: lastCompletedLote.id })} className="flex items-center gap-1 text-[10px] font-black uppercase px-3 py-1.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-all"><Printer size={11}/> Imprimir</button>
+                                        <button onClick={() => setZplModeModal({ zpl: lastCompletedLote.zplContent, loteId: lastCompletedLote.id })} className="flex items-center gap-1 text-[10px] font-black uppercase px-3 py-1.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-all"><Printer size={11} /> Imprimir</button>
                                         <button onClick={() => setActiveTab('etiquetas')} className="text-[10px] font-black text-blue-600 hover:underline px-2 py-1.5">Ver Lotes →</button>
-                                        <button onClick={() => setLastCompletedLote(null)} className="text-emerald-400 hover:text-emerald-600"><X size={14}/></button>
+                                        <button onClick={() => setLastCompletedLote(null)} className="text-emerald-400 hover:text-emerald-600"><X size={14} /></button>
                                     </div>
                                 </div>
                             ) : (
                                 <div className="bg-blue-50 border border-blue-200 rounded-2xl px-4 py-2.5 flex items-center justify-between">
-                                    <span className="text-[11px] font-black text-blue-700"><Printer size={12} className="inline mr-1"/>{zplLotes.length} lote(s) ZPL gerado(s)</span>
+                                    <span className="text-[11px] font-black text-blue-700"><Printer size={12} className="inline mr-1" />{zplLotes.length} lote(s) ZPL gerado(s)</span>
                                     <button onClick={() => setActiveTab('etiquetas')} className="text-[10px] font-black text-blue-600 hover:underline">Abrir Etiquetas →</button>
                                 </div>
                             )}
@@ -2646,7 +2719,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         <div className="flex justify-between items-start mb-5 flex-wrap gap-3">
                             <div>
                                 <h2 className="text-xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
-                                    <ShoppingBag className="text-yellow-500"/> Importação — Pedidos de Vendas
+                                    <ShoppingBag className="text-yellow-500" /> Importação — Pedidos de Vendas
                                     {filteredVendasOrders.length > 0 && <span className="text-sm text-slate-400 font-bold normal-case tracking-normal ml-1">({filteredVendasOrders.length})</span>}
                                 </h2>
                                 <p className="text-[11px] text-slate-400 mt-0.5">
@@ -2663,17 +2736,17 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                             disabled={isBatchEmitindo}
                                             className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-lg shadow-emerald-100 hover:bg-emerald-700 disabled:opacity-50 transition-all active:scale-95"
                                         >
-                                            {isBatchEmitindo ? <Loader2 size={14} className="animate-spin"/> : <FileText size={14}/>} NF-e ({selectedVendasIds.size})
+                                            {isBatchEmitindo ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />} NF-e ({selectedVendasIds.size})
                                         </button>
                                         <button onClick={handleBatchZpl} disabled={isGeneratingBatchZpl} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-lg shadow-blue-100 hover:bg-blue-700 disabled:opacity-50 transition-all active:scale-95">
-                                            {isGeneratingBatchZpl ? <Loader2 size={14} className="animate-spin"/> : <Printer size={14}/>} ZPL ({selectedVendasIds.size})
+                                            {isGeneratingBatchZpl ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />} ZPL ({selectedVendasIds.size})
                                         </button>
                                         <button
                                             onClick={() => setShowImportConfirm(true)}
                                             disabled={isImportingToERP}
                                             className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-lg shadow-green-100 hover:bg-green-700 disabled:opacity-50 transition-all active:scale-95"
                                         >
-                                            {isImportingToERP ? <Loader2 size={14} className="animate-spin"/> : <Download size={14}/>}
+                                            {isImportingToERP ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
                                             Importar ERP ({selectedVendasIds.size})
                                         </button>
                                         <button onClick={() => setSelectedVendasIds(new Set())} className="px-3 py-2 text-xs font-black uppercase bg-slate-100 text-slate-500 rounded-xl hover:bg-slate-200 transition-all">Limpar</button>
@@ -2684,15 +2757,15 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
 
                         {/* Painel de busca do Bling */}
                         <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-4 mb-4">
-                            <p className="text-[10px] font-black text-yellow-700 uppercase tracking-widest mb-3 flex items-center gap-2"><Zap size={12}/> Buscar do Bling — Venda &gt; Pedidos de Vendas</p>
+                            <p className="text-[10px] font-black text-yellow-700 uppercase tracking-widest mb-3 flex items-center gap-2"><Zap size={12} /> Buscar do Bling — Venda &gt; Pedidos de Vendas</p>
                             <div className="flex flex-wrap gap-3 items-end">
                                 <div>
                                     <label className="text-[10px] font-black text-yellow-700 uppercase tracking-widest mb-1 block">Data Inicial</label>
-                                    <input type="date" value={vendasStartDate} onChange={e => setVendasStartDate(e.target.value)} className="p-2.5 border-2 border-yellow-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-yellow-500"/>
+                                    <input type="date" value={vendasStartDate} onChange={e => setVendasStartDate(e.target.value)} className="p-2.5 border-2 border-yellow-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-yellow-500" />
                                 </div>
                                 <div>
                                     <label className="text-[10px] font-black text-yellow-700 uppercase tracking-widest mb-1 block">Data Final</label>
-                                    <input type="date" value={vendasEndDate} onChange={e => setVendasEndDate(e.target.value)} className="p-2.5 border-2 border-yellow-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-yellow-500"/>
+                                    <input type="date" value={vendasEndDate} onChange={e => setVendasEndDate(e.target.value)} className="p-2.5 border-2 border-yellow-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-yellow-500" />
                                 </div>
                                 <div>
                                     <label className="text-[10px] font-black text-yellow-700 uppercase tracking-widest mb-1 block">Situação</label>
@@ -2709,7 +2782,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                     disabled={isLoadingVendas}
                                     className="flex items-center gap-2 px-5 py-2.5 bg-yellow-500 text-white font-black uppercase text-xs tracking-widest rounded-xl hover:bg-yellow-600 disabled:opacity-50 transition-all shadow shadow-yellow-200 active:scale-95"
                                 >
-                                    {isLoadingVendas ? <Loader2 size={14} className="animate-spin"/> : <Zap size={14}/>}
+                                    {isLoadingVendas ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />}
                                     {isLoadingVendas ? 'Buscando...' : 'Buscar Pedidos'}
                                 </button>
                                 {vendasDirectOrders.length > 0 && (
@@ -2731,8 +2804,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         {/* Filtros locais */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-2">
                             <div className="relative md:col-span-2">
-                                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-                                <input type="text" value={vendasSearch} onChange={e => setVendasSearch(e.target.value)} placeholder="Nº pedido, cliente, loja, SKU..." className="w-full pl-9 p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-yellow-400"/>
+                                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <input type="text" value={vendasSearch} onChange={e => setVendasSearch(e.target.value)} placeholder="Nº pedido, cliente, loja, SKU..." className="w-full pl-9 p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-yellow-400" />
                             </div>
                             <select value={vendasCanalFilter} onChange={e => setVendasCanalFilter(e.target.value as any)} className="p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-yellow-400">
                                 <option value="TODOS">Todos os canais</option>
@@ -2747,13 +2820,13 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         <div className="bg-white rounded-3xl border border-gray-200 shadow-xl p-16 text-center text-slate-400">
                             {isLoadingVendas ? (
                                 <>
-                                    <Loader2 size={48} className="mx-auto mb-4 opacity-40 animate-spin text-yellow-500"/>
+                                    <Loader2 size={48} className="mx-auto mb-4 opacity-40 animate-spin text-yellow-500" />
                                     <p className="font-bold text-sm text-yellow-700">Carregando pedidos em aberto...</p>
                                     <p className="text-xs mt-1">Buscando automaticamente do Bling</p>
                                 </>
                             ) : (
                                 <>
-                                    <ShoppingBag size={48} className="mx-auto mb-4 opacity-20"/>
+                                    <ShoppingBag size={48} className="mx-auto mb-4 opacity-20" />
                                     <p className="font-bold text-sm">
                                         {vendasDirectOrders.length === 0
                                             ? 'Nenhum pedido carregado ainda.'
@@ -2776,8 +2849,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                             <th className="p-3 text-left text-[9px] font-black uppercase tracking-widest w-10">
                                                 <button onClick={toggleSelectAllVendas} className="text-white hover:text-yellow-300 transition-colors">
                                                     {selectedVendasIds.size === filteredVendasOrders.length && filteredVendasOrders.length > 0
-                                                        ? <CheckSquare size={16}/>
-                                                        : <Square size={16}/>}
+                                                        ? <CheckSquare size={16} />
+                                                        : <Square size={16} />}
                                                 </button>
                                             </th>
                                             <th className="p-3 w-6"></th>
@@ -2810,13 +2883,13 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                     <tr className={`transition-colors ${isSelected ? 'bg-yellow-50' : isExpanded ? 'bg-slate-50' : 'hover:bg-slate-50'}`}>
                                                         <td className="p-3 text-center">
                                                             <button onClick={() => toggleSelectVenda(key)} className="text-slate-400 hover:text-yellow-600 transition-colors">
-                                                                {isSelected ? <CheckSquare size={16} className="text-yellow-500"/> : <Square size={16}/>}
+                                                                {isSelected ? <CheckSquare size={16} className="text-yellow-500" /> : <Square size={16} />}
                                                             </button>
                                                         </td>
                                                         <td className="p-3 text-center cursor-pointer" onClick={toggleExpand}>
                                                             {(order.itens?.length || 0) > 0
-                                                                ? (isExpanded ? <ChevronDown size={14} className="text-blue-500"/> : <ChevronRight size={14} className="text-slate-400"/>)
-                                                                : <span className="w-3 inline-block"/>}
+                                                                ? (isExpanded ? <ChevronDown size={14} className="text-blue-500" /> : <ChevronRight size={14} className="text-slate-400" />)
+                                                                : <span className="w-3 inline-block" />}
                                                         </td>
                                                         <td className="p-3">
                                                             <span className={`text-[9px] font-black px-2 py-1 rounded-full border uppercase tracking-widest ${canalStyle}`}>
@@ -2835,7 +2908,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                 ? <span className="font-mono text-blue-700 bg-blue-50 px-2 py-1 rounded text-[9px]">{order.rastreamento}</span>
                                                                 : <span className="text-slate-300 text-[9px]">—</span>}
                                                         </td>
-                                                        <td className="p-3 font-black text-emerald-600 whitespace-nowrap">{Number(order.total || 0).toLocaleString('pt-BR', {style:'currency',currency:'BRL'})}</td>
+                                                        <td className="p-3 font-black text-emerald-600 whitespace-nowrap">{Number(order.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
                                                         <td className="p-3"><span className="text-[9px] font-black px-2 py-1 rounded-full bg-slate-100 text-slate-600 uppercase">{order.status || '-'}</span></td>
                                                         {/* ERP column */}
                                                         <td className="p-3">
@@ -2848,9 +2921,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                         {/* NFe column */}
                                                         <td className="p-3">
                                                             {vendasInv ? (
-                                                                <span className={`text-[9px] font-black px-2 py-1 rounded-full whitespace-nowrap ${
-                                                                    nfeEmitida ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
-                                                                }`}>
+                                                                <span className={`text-[9px] font-black px-2 py-1 rounded-full whitespace-nowrap ${nfeEmitida ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
+                                                                    }`}>
                                                                     {nfeEmitida ? '✅ Emitida' : vendasInv.situacao || 'Gerada'}
                                                                 </span>
                                                             ) : (
@@ -2860,7 +2932,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                     title="Gerar NF-e — escolha entre Bling ou ERP"
                                                                     className="flex items-center gap-1 text-[9px] font-black uppercase bg-emerald-50 text-emerald-700 px-2 py-1.5 rounded-lg hover:bg-emerald-100 border border-emerald-100 disabled:opacity-50 whitespace-nowrap transition-all"
                                                                 >
-                                                                    {gerandoNFeId === (order.orderId || order.blingId) ? <Loader2 size={10} className="animate-spin"/> : <FileText size={10}/>} NF-e
+                                                                    {gerandoNFeId === (order.orderId || order.blingId) ? <Loader2 size={10} className="animate-spin" /> : <FileText size={10} />} NF-e
                                                                 </button>
                                                             )}
                                                         </td>
@@ -2884,7 +2956,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                     disabled={generatingZplId === key}
                                                                     className="flex items-center gap-1 text-[9px] font-black uppercase bg-blue-50 text-blue-600 px-2 py-1.5 rounded-lg hover:bg-blue-100 border border-blue-100 disabled:opacity-50 whitespace-nowrap transition-all"
                                                                 >
-                                                                    {generatingZplId === key ? <Loader2 size={10} className="animate-spin"/> : <Printer size={10}/>} ZPL
+                                                                    {generatingZplId === key ? <Loader2 size={10} className="animate-spin" /> : <Printer size={10} />} ZPL
                                                                 </button>
                                                             )}
                                                         </td>
@@ -2895,7 +2967,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                                                                     {/* Dados do cliente */}
                                                                     <div className="bg-white border border-yellow-100 rounded-xl p-3">
-                                                                        <p className="text-[9px] font-black text-yellow-600 uppercase tracking-widest mb-2 flex items-center gap-1"><User size={10}/> Cliente</p>
+                                                                        <p className="text-[9px] font-black text-yellow-600 uppercase tracking-widest mb-2 flex items-center gap-1"><User size={10} /> Cliente</p>
                                                                         <p className="text-xs font-bold text-slate-700">{order.customer_name}</p>
                                                                         {order.customer_cpf_cnpj && <p className="text-[9px] text-slate-500 mt-0.5">Doc: {order.customer_cpf_cnpj}</p>}
                                                                         {order.customer_email && <p className="text-[9px] text-slate-500">{order.customer_email}</p>}
@@ -2904,7 +2976,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                     </div>
                                                                     {/* Endereço de entrega */}
                                                                     <div className="bg-white border border-yellow-100 rounded-xl p-3">
-                                                                        <p className="text-[9px] font-black text-yellow-600 uppercase tracking-widest mb-2 flex items-center gap-1"><MapPin size={10}/> Entrega</p>
+                                                                        <p className="text-[9px] font-black text-yellow-600 uppercase tracking-widest mb-2 flex items-center gap-1"><MapPin size={10} /> Entrega</p>
                                                                         {order.enderecoEntrega ? (
                                                                             <>
                                                                                 <p className="text-xs font-bold text-slate-700">{order.enderecoEntrega.nome}</p>
@@ -2918,26 +2990,26 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                     </div>
                                                                     {/* Pagamento + valores */}
                                                                     <div className="bg-white border border-yellow-100 rounded-xl p-3">
-                                                                        <p className="text-[9px] font-black text-yellow-600 uppercase tracking-widest mb-2 flex items-center gap-1"><CreditCard size={10}/> Pagamento</p>
+                                                                        <p className="text-[9px] font-black text-yellow-600 uppercase tracking-widest mb-2 flex items-center gap-1"><CreditCard size={10} /> Pagamento</p>
                                                                         {order.pagamentos && order.pagamentos.length > 0 ? order.pagamentos.map((p: any, pi: number) => (
                                                                             <div key={pi} className="flex justify-between text-[9px] text-slate-600">
                                                                                 <span>{p.forma}{p.parcelas > 1 ? ` (${p.parcelas}x)` : ''}</span>
-                                                                                <span className="font-black text-emerald-700">{Number(p.valor).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</span>
+                                                                                <span className="font-black text-emerald-700">{Number(p.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
                                                                             </div>
                                                                         )) : <p className="text-[9px] text-slate-300">Não informado</p>}
-                                                                        {order.frete > 0 && <div className="flex justify-between text-[9px] text-slate-500 mt-1 border-t border-slate-100 pt-1"><span>Frete</span><span>{Number(order.frete).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</span></div>}
-                                                                        {order.desconto > 0 && <div className="flex justify-between text-[9px] text-red-500 mt-0.5"><span>Desconto</span><span>-{Number(order.desconto).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</span></div>}
+                                                                        {order.frete > 0 && <div className="flex justify-between text-[9px] text-slate-500 mt-1 border-t border-slate-100 pt-1"><span>Frete</span><span>{Number(order.frete).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span></div>}
+                                                                        {order.desconto > 0 && <div className="flex justify-between text-[9px] text-red-500 mt-0.5"><span>Desconto</span><span>-{Number(order.desconto).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span></div>}
                                                                         {order.observacoes && <p className="text-[9px] text-slate-500 mt-1 border-t border-slate-100 pt-1 italic">{order.observacoes}</p>}
                                                                     </div>
                                                                 </div>
                                                                 {/* Itens */}
                                                                 {order.itens && order.itens.length > 0 ? (
                                                                     <>
-                                                                        <p className="text-[9px] font-black text-yellow-600 uppercase tracking-widest mb-2 flex items-center gap-1"><Tag size={10}/> Itens do Pedido ({order.itens.length})</p>
+                                                                        <p className="text-[9px] font-black text-yellow-600 uppercase tracking-widest mb-2 flex items-center gap-1"><Tag size={10} /> Itens do Pedido ({order.itens.length})</p>
                                                                         <table className="w-full text-xs">
                                                                             <thead>
                                                                                 <tr className="text-[9px] font-black text-slate-400 uppercase">
-                                                                                    {['SKU','Descrição','Produto ERP Vinculado','Un','Qtd','Vlr Unit.','Subtotal'].map(h =>
+                                                                                    {['SKU', 'Descrição', 'Produto ERP Vinculado', 'Un', 'Qtd', 'Vlr Unit.', 'Subtotal'].map(h =>
                                                                                         <th key={h} className="text-left pb-1 pr-4">{h}</th>
                                                                                     )}
                                                                                 </tr>
@@ -2952,14 +3024,14 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                                             <td className="py-1.5 pr-4 text-slate-700 max-w-[200px]">{item.descricao || '-'}</td>
                                                                                             <td className="py-1.5 pr-4 max-w-[200px]">
                                                                                                 {linkedName
-                                                                                                    ? <span className="flex items-center gap-1 text-green-700 font-bold text-[10px]"><LinkIcon size={9}/>{linkedName}</span>
+                                                                                                    ? <span className="flex items-center gap-1 text-green-700 font-bold text-[10px]"><LinkIcon size={9} />{linkedName}</span>
                                                                                                     : <span className="text-[9px] text-slate-300 italic">—</span>
                                                                                                 }
                                                                                             </td>
                                                                                             <td className="py-1.5 pr-4 text-slate-400 text-[9px]">{item.unidade || 'UN'}</td>
                                                                                             <td className="py-1.5 pr-4 font-black text-center">{item.quantidade ?? '-'}</td>
-                                                                                            <td className="py-1.5 pr-4 font-bold text-emerald-700">{Number(item.valorUnitario || 0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</td>
-                                                                                            <td className="py-1.5 pr-4 font-black text-emerald-800">{Number(item.subtotal || 0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}</td>
+                                                                                            <td className="py-1.5 pr-4 font-bold text-emerald-700">{Number(item.valorUnitario || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
+                                                                                            <td className="py-1.5 pr-4 font-black text-emerald-800">{Number(item.subtotal || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
                                                                                         </tr>
                                                                                     );
                                                                                 })}
@@ -2992,7 +3064,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         <div className="flex justify-between items-start mb-6 flex-wrap gap-3">
                             <div>
                                 <h2 className="text-xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
-                                    <FileText className="text-emerald-600"/> Notas Fiscais de Saída
+                                    <FileText className="text-emerald-600" /> Notas Fiscais de Saída
                                     {nfeSaida.length > 0 && <span className="text-sm text-slate-400 font-bold normal-case tracking-normal ml-1">({filteredNfeSaida.length}/{nfeSaida.length})</span>}
                                 </h2>
                                 <p className="text-[11px] text-slate-400 mt-0.5">Vendas {'>'} Notas Fiscais — Emita, selecione, gere etiquetas + DANFE, baixe XMLs.</p>
@@ -3006,14 +3078,14 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 {/* Botões baixar XMLs e DANFEs do período */}
                                 {filteredNfeSaida.length > 0 && (
                                     <>
-                                    <button onClick={handleBaixarXmlLote} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 hover:bg-blue-100 disabled:opacity-50 transition-all">
-                                        {isDownloadingXml ? <Loader2 size={11} className="animate-spin"/> : <Download size={11}/>}
-                                        {isDownloadingXml ? `XML... ${xmlDownloadProgress?.current || 0}/${xmlDownloadProgress?.total || 0}` : 'Baixar Todos XML'}
-                                    </button>
-                                    <button onClick={handleBaixarDanfeLote} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full bg-green-50 text-green-700 border border-green-100 hover:bg-green-100 disabled:opacity-50 transition-all">
-                                        {isDownloadingDanfe ? <Loader2 size={11} className="animate-spin"/> : <FileText size={11}/>}
-                                        {isDownloadingDanfe ? `DANFE... ${danfeDownloadProgress?.current || 0}/${danfeDownloadProgress?.total || 0}` : 'Baixar Todos DANFE'}
-                                    </button>
+                                        <button onClick={handleBaixarXmlLote} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 hover:bg-blue-100 disabled:opacity-50 transition-all">
+                                            {isDownloadingXml ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
+                                            {isDownloadingXml ? `XML... ${xmlDownloadProgress?.current || 0}/${xmlDownloadProgress?.total || 0}` : 'Baixar Todos XML'}
+                                        </button>
+                                        <button onClick={handleBaixarDanfeLote} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full bg-green-50 text-green-700 border border-green-100 hover:bg-green-100 disabled:opacity-50 transition-all">
+                                            {isDownloadingDanfe ? <Loader2 size={11} className="animate-spin" /> : <FileText size={11} />}
+                                            {isDownloadingDanfe ? `DANFE... ${danfeDownloadProgress?.current || 0}/${danfeDownloadProgress?.total || 0}` : 'Baixar Todos DANFE'}
+                                        </button>
                                     </>
                                 )}
                             </div>
@@ -3046,11 +3118,11 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                             <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end">
                                 <div>
                                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Data Início</label>
-                                    <input type="date" value={filters.startDate} onChange={e => setFilters(p => ({...p, startDate: e.target.value}))} className="w-full p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500"/>
+                                    <input type="date" value={filters.startDate} onChange={e => setFilters(p => ({ ...p, startDate: e.target.value }))} className="w-full p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500" />
                                 </div>
                                 <div>
                                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Data Fim</label>
-                                    <input type="date" value={filters.endDate} onChange={e => setFilters(p => ({...p, endDate: e.target.value}))} className="w-full p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500"/>
+                                    <input type="date" value={filters.endDate} onChange={e => setFilters(p => ({ ...p, endDate: e.target.value }))} className="w-full p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500" />
                                 </div>
                                 <div>
                                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Loja / Canal</label>
@@ -3070,12 +3142,12 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 <div className="relative">
                                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Buscar</label>
                                     <div className="relative">
-                                        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-                                        <input type="text" value={nfeSaidaSearch} onChange={e => setNfeSaidaSearch(e.target.value)} placeholder="Nº, cliente, chave..." className="w-full pl-10 p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500"/>
+                                        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                        <input type="text" value={nfeSaidaSearch} onChange={e => setNfeSaidaSearch(e.target.value)} placeholder="Nº, cliente, chave..." className="w-full pl-10 p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500" />
                                     </div>
                                 </div>
                                 <button onClick={handleFetchNfeSaida} disabled={isLoadingNfeSaida} className="flex items-center justify-center gap-2 py-2.5 bg-emerald-600 text-white font-black uppercase text-xs tracking-widest rounded-xl hover:bg-emerald-700 disabled:opacity-50 transition-all shadow-lg shadow-emerald-100 active:scale-95">
-                                    {isLoadingNfeSaida ? <Loader2 size={14} className="animate-spin"/> : <Cloud size={14}/>} {isLoadingNfeSaida ? 'Buscando...' : 'Buscar NF-e'}
+                                    {isLoadingNfeSaida ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />} {isLoadingNfeSaida ? 'Buscando...' : 'Buscar NF-e'}
                                 </button>
                             </div>
                         </div>
@@ -3141,24 +3213,24 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                     {/* Emitir pendentes selecionadas */}
                                     {nfeSaida.some(n => selectedNfeSaidaIds.has(n.id) && n.situacao === 1) && (
                                         <button onClick={handleBatchEmitirNfe} disabled={isBatchEmitindo} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-yellow-500 text-white hover:bg-yellow-600 disabled:opacity-50 transition-all shadow shadow-yellow-200">
-                                            {isBatchEmitindo ? <Loader2 size={12} className="animate-spin"/> : <Send size={12}/>}
+                                            {isBatchEmitindo ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
                                             {isBatchEmitindo ? 'Emitindo...' : 'Emitir Selecionadas'}
                                         </button>
                                     )}
                                     {/* Gerar Etiquetas + DANFE Simplificada em lote */}
                                     {nfeSaida.some(n => selectedNfeSaidaIds.has(n.id) && (n.situacao === 5 || n.situacao === 6)) && canGerarEtiquetas && (
                                         <button onClick={handleBatchEtiquetaDanfe} disabled={isBatchEmitindo} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-all shadow shadow-indigo-200">
-                                            {isBatchEmitindo ? <Loader2 size={12} className="animate-spin"/> : <Printer size={12}/>}
+                                            {isBatchEmitindo ? <Loader2 size={12} className="animate-spin" /> : <Printer size={12} />}
                                             Etiqueta + DANFE Lote
                                         </button>
                                     )}
                                     {/* Download XMLs e DANFEs selecionados */}
                                     <button onClick={handleBaixarXmlSelecionados} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-all shadow shadow-blue-200">
-                                        {isDownloadingXml ? <Loader2 size={12} className="animate-spin"/> : <Download size={12}/>}
+                                        {isDownloadingXml ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
                                         {isDownloadingXml ? `XML... ${xmlDownloadProgress?.current || 0}/${xmlDownloadProgress?.total || 0}` : 'Baixar XMLs'}
                                     </button>
                                     <button onClick={handleBaixarDanfeSelecionados} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-all shadow shadow-green-200">
-                                        {isDownloadingDanfe ? <Loader2 size={12} className="animate-spin"/> : <FileText size={12}/>}
+                                        {isDownloadingDanfe ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
                                         {isDownloadingDanfe ? `DANFE... ${danfeDownloadProgress?.current || 0}/${danfeDownloadProgress?.total || 0}` : 'Baixar DANFEs'}
                                     </button>
                                 </div>
@@ -3169,7 +3241,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         {isBatchEmitindo && (
                             <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-2xl p-4">
                                 <span className="text-xs font-black text-yellow-700 flex items-center gap-2">
-                                    <Loader2 size={12} className="animate-spin"/> Enviando NF-e para SEFAZ... Aguarde.
+                                    <Loader2 size={12} className="animate-spin" /> Enviando NF-e para SEFAZ... Aguarde.
                                 </span>
                             </div>
                         )}
@@ -3177,12 +3249,12 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                             <div className="mb-4 bg-blue-50 border border-blue-200 rounded-2xl p-4">
                                 <div className="flex items-center justify-between mb-2">
                                     <span className="text-xs font-black text-blue-700 flex items-center gap-2">
-                                        <Loader2 size={12} className="animate-spin"/> Baixando XMLs...
+                                        <Loader2 size={12} className="animate-spin" /> Baixando XMLs...
                                     </span>
                                     <span className="text-xs font-bold text-blue-600">{xmlDownloadProgress.current}/{xmlDownloadProgress.total}</span>
                                 </div>
                                 <div className="w-full bg-blue-200 rounded-full h-2 overflow-hidden">
-                                    <div className="bg-blue-600 h-2 rounded-full transition-all duration-300" style={{ width: `${Math.round((xmlDownloadProgress.current / xmlDownloadProgress.total) * 100)}%` }}/>
+                                    <div className="bg-blue-600 h-2 rounded-full transition-all duration-300" style={{ width: `${Math.round((xmlDownloadProgress.current / xmlDownloadProgress.total) * 100)}%` }} />
                                 </div>
                             </div>
                         )}
@@ -3190,12 +3262,12 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                             <div className="mb-4 bg-green-50 border border-green-200 rounded-2xl p-4">
                                 <div className="flex items-center justify-between mb-2">
                                     <span className="text-xs font-black text-green-700 flex items-center gap-2">
-                                        <Loader2 size={12} className="animate-spin"/> Baixando DANFEs...
+                                        <Loader2 size={12} className="animate-spin" /> Baixando DANFEs...
                                     </span>
                                     <span className="text-xs font-bold text-green-600">{danfeDownloadProgress.current}/{danfeDownloadProgress.total}</span>
                                 </div>
                                 <div className="w-full bg-green-200 rounded-full h-2 overflow-hidden">
-                                    <div className="bg-green-600 h-2 rounded-full transition-all duration-300" style={{ width: `${Math.round((danfeDownloadProgress.current / danfeDownloadProgress.total) * 100)}%` }}/>
+                                    <div className="bg-green-600 h-2 rounded-full transition-all duration-300" style={{ width: `${Math.round((danfeDownloadProgress.current / danfeDownloadProgress.total) * 100)}%` }} />
                                 </div>
                             </div>
                         )}
@@ -3217,8 +3289,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                         className="flex items-center justify-center w-5 h-5 rounded border-2 border-white/40 hover:border-white transition-colors"
                                                     >
                                                         {filteredNfeSaida.length > 0 && filteredNfeSaida.every(n => selectedNfeSaidaIds.has(n.id))
-                                                            ? <CheckSquare size={14} className="text-emerald-300"/>
-                                                            : <Square size={14} className="text-white/50"/>}
+                                                            ? <CheckSquare size={14} className="text-emerald-300" />
+                                                            : <Square size={14} className="text-white/50" />}
                                                     </button>
                                                 </th>
                                                 {['Número', 'Nome', 'CNPJ/CPF', 'Data Emissão', 'Pedido (Loja)', 'Pedido Bling', 'Loja', 'Situação', 'Valor (R$)', 'Ações'].map(h =>
@@ -3263,7 +3335,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                     })}
                                                                     className="flex items-center justify-center w-5 h-5 rounded border-2 transition-colors border-slate-300 hover:border-emerald-500"
                                                                 >
-                                                                    {isSelected ? <CheckSquare size={14} className="text-emerald-600"/> : <Square size={14} className="text-slate-300"/>}
+                                                                    {isSelected ? <CheckSquare size={14} className="text-emerald-600" /> : <Square size={14} className="text-slate-300" />}
                                                                 </button>
                                                             </td>
                                                             <td className="p-3 font-black text-slate-700">{nfe.numero || nfe.id}</td>
@@ -3290,19 +3362,18 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                 })()}
                                                             </td>
                                                             <td className="p-3">
-                                                                <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest whitespace-nowrap ${
-                                                                    isPendente ? 'bg-yellow-100 text-yellow-700 border border-yellow-200' :
+                                                                <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest whitespace-nowrap ${isPendente ? 'bg-yellow-100 text-yellow-700 border border-yellow-200' :
                                                                     isEmitidaDanfe ? 'bg-green-100 text-green-700 border border-green-200' :
-                                                                    isAutorizadaSemDanfe ? 'bg-blue-100 text-blue-700 border border-blue-200' :
-                                                                    nfe.situacao === 2 ? 'bg-red-100 text-red-700 border border-red-200' :
-                                                                    nfe.situacao === 3 ? 'bg-orange-100 text-orange-700 border border-orange-200' :
-                                                                    nfe.situacao === 4 ? 'bg-red-100 text-red-700 border border-red-200' :
-                                                                    'bg-gray-100 text-gray-500 border border-gray-200'
-                                                                }`}>
+                                                                        isAutorizadaSemDanfe ? 'bg-blue-100 text-blue-700 border border-blue-200' :
+                                                                            nfe.situacao === 2 ? 'bg-red-100 text-red-700 border border-red-200' :
+                                                                                nfe.situacao === 3 ? 'bg-orange-100 text-orange-700 border border-orange-200' :
+                                                                                    nfe.situacao === 4 ? 'bg-red-100 text-red-700 border border-red-200' :
+                                                                                        'bg-gray-100 text-gray-500 border border-gray-200'
+                                                                    }`}>
                                                                     {isPendente ? 'Pendente' :
-                                                                     isEmitidaDanfe ? 'Emitida DANFE' :
-                                                                     isAutorizadaSemDanfe ? 'Autoriz. s/ DANFE' :
-                                                                     nfe.situacaoDescr}
+                                                                        isEmitidaDanfe ? 'Emitida DANFE' :
+                                                                            isAutorizadaSemDanfe ? 'Autoriz. s/ DANFE' :
+                                                                                nfe.situacaoDescr}
                                                                 </span>
                                                             </td>
                                                             <td className="p-3 font-black text-emerald-600 whitespace-nowrap">
@@ -3314,41 +3385,41 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                     {isPendente && (
                                                                         <button onClick={() => handleEmitirNfe(nfe)} disabled={isLoading || isBatchEmitindo} title="Enviar NF-e para SEFAZ"
                                                                             className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-yellow-100 text-yellow-800 px-2.5 py-1.5 rounded-lg hover:bg-yellow-200 border border-yellow-200 disabled:opacity-50 transition-all">
-                                                                            {isLoading ? <Loader2 size={11} className="animate-spin"/> : <Send size={11}/>} Emitir
+                                                                            {isLoading ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Emitir
                                                                         </button>
                                                                     )}
                                                                     {/* DANFE */}
                                                                     {(isEmitidaDanfe || isAutorizadaSemDanfe) && (
                                                                         <button onClick={() => handleAbrirDanfe(nfe)} title="Abrir DANFE"
                                                                             className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-orange-50 text-orange-600 px-2.5 py-1.5 rounded-lg hover:bg-orange-100 border border-orange-100 transition-all">
-                                                                            <Eye size={11}/> DANFE
+                                                                            <Eye size={11} /> DANFE
                                                                         </button>
                                                                     )}
                                                                     {/* Etiqueta + DANFE Simplificada */}
                                                                     {(isEmitidaDanfe || isAutorizadaSemDanfe) && canGerarEtiquetas && (
                                                                         <button onClick={() => handleGerarEtiquetaNfe(nfe)} disabled={isLoading} title="Gerar Etiqueta de Envio + DANFE Simplificada"
                                                                             className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-indigo-50 text-indigo-700 px-2.5 py-1.5 rounded-lg hover:bg-indigo-100 border border-indigo-100 disabled:opacity-50 transition-all">
-                                                                            {isLoading ? <Loader2 size={11} className="animate-spin"/> : <Printer size={11}/>} Etiq+DANFE
+                                                                            {isLoading ? <Loader2 size={11} className="animate-spin" /> : <Printer size={11} />} Etiq+DANFE
                                                                         </button>
                                                                     )}
                                                                     {/* XML */}
                                                                     {(isEmitidaDanfe || isAutorizadaSemDanfe) && (
                                                                         <button onClick={() => handleDownloadXml(nfe)} title="Baixar XML"
                                                                             className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-blue-50 text-blue-600 px-2.5 py-1.5 rounded-lg hover:bg-blue-100 border border-blue-100 transition-all">
-                                                                            <Download size={11}/> XML
+                                                                            <Download size={11} /> XML
                                                                         </button>
                                                                     )}
                                                                     {/* Chave */}
                                                                     {(isEmitidaDanfe || isAutorizadaSemDanfe) && (
                                                                         <button onClick={() => handleCopiarChave(nfe)} title="Copiar chave de acesso"
                                                                             className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-slate-50 text-slate-600 px-2.5 py-1.5 rounded-lg hover:bg-slate-100 border border-slate-100 transition-all">
-                                                                            <Copy size={11}/> Chave
+                                                                            <Copy size={11} /> Chave
                                                                         </button>
                                                                     )}
                                                                     {/* Vincular Itens */}
                                                                     <button onClick={() => handleExpandNfeItems(nfe)} disabled={isLoadingNfeItems && expandedNfeItemsId === nfe.id} title="Ver / vincular itens da NF-e"
                                                                         className={`flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded-lg border transition-all ${isItemsExpanded ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-purple-50 text-purple-600 border-purple-100 hover:bg-purple-100'}`}>
-                                                                        {isLoadingNfeItems && expandedNfeItemsId === nfe.id ? <Loader2 size={11} className="animate-spin"/> : <Package size={11}/>}
+                                                                        {isLoadingNfeItems && expandedNfeItemsId === nfe.id ? <Loader2 size={11} className="animate-spin" /> : <Package size={11} />}
                                                                         {isItemsExpanded ? 'Fechar' : 'Itens'}
                                                                     </button>
                                                                 </div>
@@ -3360,11 +3431,11 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                 <td colSpan={10} className="p-4">
                                                                     <div className="rounded-xl border border-purple-100 bg-white p-4">
                                                                         <p className="text-[10px] font-black text-purple-700 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                                                            <Package size={12}/> Itens da NF-e {nfe.numero || nfe.id}
+                                                                            <Package size={12} /> Itens da NF-e {nfe.numero || nfe.id}
                                                                         </p>
                                                                         {isLoadingNfeItems ? (
                                                                             <div className="text-center py-4">
-                                                                                <Loader2 size={20} className="mx-auto mb-2 animate-spin text-purple-400"/>
+                                                                                <Loader2 size={20} className="mx-auto mb-2 animate-spin text-purple-400" />
                                                                                 <p className="text-xs text-purple-400">Carregando itens...</p>
                                                                             </div>
                                                                         ) : nfeItems.length > 0 ? (
@@ -3386,7 +3457,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                                                 <td className="p-2 font-bold text-slate-700">{item.descricao || item.produto?.descricao || '-'}</td>
                                                                                                 <td className="p-2">
                                                                                                     {linkedName
-                                                                                                        ? <span className="flex items-center gap-1 text-green-700 font-bold"><LinkIcon size={10}/>{linkedName}</span>
+                                                                                                        ? <span className="flex items-center gap-1 text-green-700 font-bold"><LinkIcon size={10} />{linkedName}</span>
                                                                                                         : <span className="text-xs text-slate-300 italic">Não vinculado</span>
                                                                                                     }
                                                                                                 </td>
@@ -3417,19 +3488,19 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                             <div className="text-center py-16 text-slate-300">
                                 {isLoadingNfeSaida ? (
                                     <>
-                                        <Loader2 size={48} className="mx-auto mb-4 opacity-40 animate-spin text-emerald-500"/>
+                                        <Loader2 size={48} className="mx-auto mb-4 opacity-40 animate-spin text-emerald-500" />
                                         <p className="font-bold text-sm text-emerald-700">Buscando notas fiscais do Bling...</p>
                                         <p className="text-xs mt-1">Consultando todas as páginas do período selecionado.</p>
                                     </>
                                 ) : nfeSaida.length > 0 ? (
                                     <>
-                                        <Filter size={48} className="mx-auto mb-4 opacity-20"/>
+                                        <Filter size={48} className="mx-auto mb-4 opacity-20" />
                                         <p className="font-bold text-sm">Nenhuma nota corresponde ao filtro atual.</p>
                                         <p className="text-xs mt-1">Tente alterar o filtro de situação, loja ou busca.</p>
                                     </>
                                 ) : (
                                     <>
-                                        <FileText size={48} className="mx-auto mb-4 opacity-20"/>
+                                        <FileText size={48} className="mx-auto mb-4 opacity-20" />
                                         <p className="font-bold text-sm">Nenhuma nota fiscal carregada.</p>
                                         <p className="text-xs mt-1">Selecione o período e clique em <strong className="text-emerald-600">Buscar NF-e</strong> para carregar as notas fiscais de saída do Bling.</p>
                                     </>
@@ -3455,39 +3526,39 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             {/* Content: Catálogo */}
             {activeTab === 'catalogo' && (
                 <div className="bg-white p-8 rounded-3xl border border-gray-200 shadow-xl animate-in fade-in slide-in-from-bottom-4">
-                    <h2 className="text-xl font-black text-slate-800 mb-6 uppercase tracking-tighter flex items-center gap-2"><Package className="text-purple-500"/> Catálogo de Produtos</h2>
+                    <h2 className="text-xl font-black text-slate-800 mb-6 uppercase tracking-tighter flex items-center gap-2"><Package className="text-purple-500" /> Catálogo de Produtos</h2>
                     <div className="flex gap-4 items-center mb-6">
-                        <div className="relative flex-grow"><Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"/><input type="text" value={productSearch} onChange={e => setProductSearch(e.target.value)} placeholder="Filtrar por nome ou SKU..." className="w-full pl-12 p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 font-bold text-sm outline-none focus:border-blue-500"/></div>
+                        <div className="relative flex-grow"><Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" /><input type="text" value={productSearch} onChange={e => setProductSearch(e.target.value)} placeholder="Filtrar por nome ou SKU..." className="w-full pl-12 p-4 border-2 border-slate-100 rounded-2xl bg-slate-50 font-bold text-sm outline-none focus:border-blue-500" /></div>
                         <button onClick={handleFetchProducts} disabled={isSyncing} className="flex-shrink-0 flex items-center justify-center gap-3 px-8 py-4 bg-purple-600 text-white font-black uppercase text-sm tracking-widest rounded-2xl hover:bg-purple-700 disabled:opacity-50 transition-all shadow-xl shadow-purple-100 active:scale-95">{isSyncing ? <Loader2 className="animate-spin" /> : <Zap />} {isSyncing ? 'Buscando...' : 'Atualizar Lista'}</button>
                     </div>
                     {products.length > 0 && (
                         <div className="overflow-hidden border border-slate-100 rounded-2xl">
                             <div className="overflow-x-auto max-h-[60vh] custom-scrollbar">
                                 <table className="min-w-full text-sm">
-                                    <thead className="bg-slate-900 text-white sticky top-0"><tr>{['SKU', 'Descrição', 'Estoque', 'Preço', 'Vínculo ERP'].map(h=><th key={h} className="p-4 text-left text-[10px] font-black uppercase tracking-widest">{h}</th>)}</tr></thead>
+                                    <thead className="bg-slate-900 text-white sticky top-0"><tr>{['SKU', 'Descrição', 'Estoque', 'Preço', 'Vínculo ERP'].map(h => <th key={h} className="p-4 text-left text-[10px] font-black uppercase tracking-widest">{h}</th>)}</tr></thead>
                                     <tbody className="divide-y divide-slate-100">{filteredProducts.map(p => {
                                         const isLinked = erpSkuLinkedCodes.has((p.codigo || '').toUpperCase());
                                         return (
-                                        <tr key={p.id} className="hover:bg-slate-50 transition-colors">
-                                            <td className="p-4 font-black text-slate-700 font-mono">{p.codigo}</td>
-                                            <td className="p-4 font-bold text-slate-600">{p.descricao}</td>
-                                            <td className="p-4 font-black text-center text-blue-600">{p.estoqueAtual}</td>
-                                            <td className="p-4 font-black text-emerald-600">{p.preco.toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'})}</td>
-                                            <td className="p-4">
-                                                {isLinked ? (
-                                                    <span className="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-700 text-[10px] font-black px-2.5 py-1 rounded-full border border-emerald-200">
-                                                        <LinkIcon size={10}/> Vinculado
-                                                    </span>
-                                                ) : (
-                                                    <button
-                                                        onClick={() => { setCatalogLinkModal({ blingCode: p.codigo, blingName: p.descricao }); setCatalogLinkTarget(''); }}
-                                                        className="inline-flex items-center gap-1.5 bg-indigo-50 text-indigo-600 text-[10px] font-black px-2.5 py-1 rounded-full border border-indigo-200 hover:bg-indigo-100 transition-all"
-                                                    >
-                                                        <LinkIcon size={10}/> Vincular ERP
-                                                    </button>
-                                                )}
-                                            </td>
-                                        </tr>
+                                            <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                                                <td className="p-4 font-black text-slate-700 font-mono">{p.codigo}</td>
+                                                <td className="p-4 font-bold text-slate-600">{p.descricao}</td>
+                                                <td className="p-4 font-black text-center text-blue-600">{p.estoqueAtual}</td>
+                                                <td className="p-4 font-black text-emerald-600">{p.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
+                                                <td className="p-4">
+                                                    {isLinked ? (
+                                                        <span className="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-700 text-[10px] font-black px-2.5 py-1 rounded-full border border-emerald-200">
+                                                            <LinkIcon size={10} /> Vinculado
+                                                        </span>
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => { setCatalogLinkModal({ blingCode: p.codigo, blingName: p.descricao }); setCatalogLinkTarget(''); }}
+                                                            className="inline-flex items-center gap-1.5 bg-indigo-50 text-indigo-600 text-[10px] font-black px-2.5 py-1 rounded-full border border-indigo-200 hover:bg-indigo-100 transition-all"
+                                                        >
+                                                            <LinkIcon size={10} /> Vincular ERP
+                                                        </button>
+                                                    )}
+                                                </td>
+                                            </tr>
                                         );
                                     })}</tbody>
                                 </table>
@@ -3505,7 +3576,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         <div className="flex justify-between items-start mb-4 flex-wrap gap-3">
                             <div>
                                 <h2 className="text-xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
-                                    <Printer className="text-blue-600"/> Etiquetas ZPL
+                                    <Printer className="text-blue-600" /> Etiquetas ZPL
                                     {zplLotes.length > 0 && <span className="text-sm text-slate-400 font-bold normal-case tracking-normal ml-1">({zplLotes.length} lote(s))</span>}
                                 </h2>
                                 <p className="text-[11px] text-slate-400 mt-0.5">Lotes de etiquetas ZPL gerados nesta sessão. Imprima DANFE simplificado + etiqueta de transporte.</p>
@@ -3527,7 +3598,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     {/* Painel: Puxar etiquetas do Bling */}
                     <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4">
                         <p className="text-[10px] font-black text-blue-700 uppercase tracking-widest mb-3 flex items-center gap-2">
-                            <Download size={12}/> Puxar Etiquetas do Bling
+                            <Download size={12} /> Puxar Etiquetas do Bling
                         </p>
                         <div className="flex flex-wrap gap-3 items-end">
                             <div>
@@ -3546,7 +3617,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 disabled={isPullingEtiquetas}
                                 className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white text-xs font-black uppercase tracking-widest rounded-xl shadow-lg shadow-blue-200 hover:bg-blue-700 disabled:opacity-50 transition-all active:scale-95"
                             >
-                                {isPullingEtiquetas ? <Loader2 size={14} className="animate-spin"/> : <Download size={14}/>}
+                                {isPullingEtiquetas ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
                                 Puxar Etiquetas
                             </button>
                             <p className="text-[10px] text-blue-500 self-center">
@@ -3563,7 +3634,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4">
                             <div className="flex items-center justify-between mb-2">
                                 <span className="text-xs font-black text-blue-700 flex items-center gap-2">
-                                    <Loader2 size={12} className="animate-spin"/> Gerando etiquetas ZPL em lote...
+                                    <Loader2 size={12} className="animate-spin" /> Gerando etiquetas ZPL em lote...
                                 </span>
                                 <span className="text-xs font-bold text-blue-600">{batchZplNotasProgress.current} / {batchZplNotasProgress.total}</span>
                             </div>
@@ -3587,22 +3658,22 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                     onClick={() => { onLoadZpl(lastCompletedLote.zplContent, true); }}
                                     className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-4 py-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-all"
                                 >
-                                    <FileText size={12}/> DANFE + Etiqueta
+                                    <FileText size={12} /> DANFE + Etiqueta
                                 </button>
                                 <button
                                     onClick={() => { onLoadZpl(lastCompletedLote.zplContent, false); }}
                                     className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-4 py-2.5 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition-all"
                                 >
-                                    <Printer size={12}/> Apenas Etiqueta
+                                    <Printer size={12} /> Apenas Etiqueta
                                 </button>
                                 <button
                                     onClick={() => { onLoadZpl(lastCompletedLote.zplContent); setCurrentPage('etiquetas'); }}
                                     className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-4 py-2.5 rounded-xl bg-purple-600 text-white hover:bg-purple-700 transition-all"
                                 >
-                                    <Printer size={12}/> Ir p/ Etiquetas
+                                    <Printer size={12} /> Ir p/ Etiquetas
                                 </button>
                                 <button onClick={() => setLastCompletedLote(null)} className="text-emerald-400 hover:text-emerald-600 p-1">
-                                    <X size={14}/>
+                                    <X size={14} />
                                 </button>
                             </div>
                         </div>
@@ -3611,7 +3682,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     {/* Lista de Lotes */}
                     {zplLotes.length === 0 ? (
                         <div className="bg-white rounded-3xl border border-gray-200 shadow-xl p-16 text-center text-slate-400">
-                            <Printer size={48} className="mx-auto mb-4 opacity-20"/>
+                            <Printer size={48} className="mx-auto mb-4 opacity-20" />
                             <p className="font-bold text-sm">Nenhuma etiqueta gerada ainda nesta sessão.</p>
                             <p className="text-xs mt-1">Vá para a aba <strong className="text-emerald-600">NF-e</strong> e gere ZPL a partir de notas emitidas, ou use a aba <strong className="text-yellow-600">Importação</strong> para gerar ZPL dos pedidos.</p>
                         </div>
@@ -3646,19 +3717,19 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                             onClick={() => setZplModeModal({ zpl: lote.zplContent, loteId: lote.id })}
                                             className="flex-1 flex items-center justify-center gap-1 text-[9px] font-black uppercase tracking-widest py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-all"
                                         >
-                                            <Printer size={10}/> Imprimir
+                                            <Printer size={10} /> Imprimir
                                         </button>
                                         <button
                                             onClick={() => { onLoadZpl(lote.zplContent); setCurrentPage('etiquetas'); }}
                                             className="flex-1 flex items-center justify-center gap-1 text-[9px] font-black uppercase tracking-widest py-2 rounded-xl bg-purple-600 text-white hover:bg-purple-700 transition-all"
                                         >
-                                            <FileOutput size={10}/> Processar
+                                            <FileOutput size={10} /> Processar
                                         </button>
                                         <button
                                             onClick={() => copyZplBatch(lote.zplContent, lote.id)}
                                             className="flex items-center justify-center gap-1 text-[9px] font-black uppercase tracking-widest px-3 py-2 rounded-xl bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all"
                                         >
-                                            <Copy size={10}/>
+                                            <Copy size={10} />
                                         </button>
                                     </div>
                                 </div>
@@ -3668,11 +3739,11 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 </div>
             )}
 
-            <BlingConfigModal 
-                isOpen={isConfigModalOpen} 
-                onClose={() => setIsConfigModalOpen(false)} 
-                currentSettings={integrations?.bling} 
-                onSave={handleSaveConfig} 
+            <BlingConfigModal
+                isOpen={isConfigModalOpen}
+                onClose={() => setIsConfigModalOpen(false)}
+                currentSettings={integrations?.bling}
+                onSave={handleSaveConfig}
             />
 
             {/* ── Modal: Confirmar salvar NF-e buscadas ───────────────────────── */}
@@ -3681,10 +3752,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl w-full max-w-sm p-8 animate-in fade-in zoom-in-95">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
-                                <Cloud className="text-emerald-600" size={20}/> Salvar NF-e?
+                                <Cloud className="text-emerald-600" size={20} /> Salvar NF-e?
                             </h3>
                             <button onClick={() => { setShowNfeSaveConfirm(false); setPendingNfeSaida(null); }} className="p-2 rounded-full hover:bg-slate-100 text-slate-400">
-                                <X size={18}/>
+                                <X size={18} />
                             </button>
                         </div>
                         <p className="text-sm text-slate-600 mb-1">
@@ -3698,13 +3769,13 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 onClick={handleConfirmSaveNfeSaida}
                                 className="flex-1 flex items-center justify-center gap-2 py-3 bg-emerald-600 text-white text-xs font-black uppercase tracking-widest rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 active:scale-95"
                             >
-                                <CheckSquare size={14}/> Sim, Salvar
+                                <CheckSquare size={14} /> Sim, Salvar
                             </button>
                             <button
                                 onClick={handleDiscardSaveNfeSaida}
                                 className="flex-1 flex items-center justify-center gap-2 py-3 bg-slate-100 text-slate-600 text-xs font-black uppercase tracking-widest rounded-xl hover:bg-slate-200 transition-all active:scale-95"
                             >
-                                <Eye size={14}/> Não, só exibir
+                                <Eye size={14} /> Não, só exibir
                             </button>
                         </div>
                     </div>
@@ -3717,10 +3788,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl w-full max-w-md p-8 animate-in fade-in zoom-in-95">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
-                                <LinkIcon className="text-indigo-600" size={20}/> Vincular ao ERP
+                                <LinkIcon className="text-indigo-600" size={20} /> Vincular ao ERP
                             </h3>
                             <button onClick={() => { setCatalogLinkModal(null); setCatalogLinkTarget(''); }} className="p-2 rounded-full hover:bg-slate-100 text-slate-400">
-                                <X size={18}/>
+                                <X size={18} />
                             </button>
                         </div>
                         <p className="text-xs text-slate-500 mb-1">SKU Bling: <span className="font-black text-slate-700 font-mono">{catalogLinkModal.blingCode}</span></p>
@@ -3742,7 +3813,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 disabled={!catalogLinkTarget || isLinkingCatalog}
                                 className="flex-1 flex items-center justify-center gap-2 py-3 bg-indigo-600 text-white text-xs font-black uppercase tracking-widest rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-lg shadow-indigo-100 active:scale-95"
                             >
-                                {isLinkingCatalog ? <Loader2 size={14} className="animate-spin"/> : <LinkIcon size={14}/>} Vincular
+                                {isLinkingCatalog ? <Loader2 size={14} className="animate-spin" /> : <LinkIcon size={14} />} Vincular
                             </button>
                             <button
                                 onClick={() => { setCatalogLinkModal(null); setCatalogLinkTarget(''); }}
@@ -3764,7 +3835,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 🏷️ Processar Etiqueta ZPL
                             </h3>
                             <button onClick={() => setZplModeModal(null)} className="text-slate-400 hover:text-slate-600 p-1 rounded-full hover:bg-slate-100">
-                                <X size={16}/>
+                                <X size={16} />
                             </button>
                         </div>
                         {zplModeModal.descricao && (
@@ -3779,7 +3850,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 }}
                                 className="w-full flex items-center gap-2 text-sm font-black uppercase bg-blue-50 text-blue-700 px-4 py-3 rounded-xl hover:bg-blue-100 border border-blue-200 transition-all"
                             >
-                                <FileText size={14}/> DANFE + Etiqueta
+                                <FileText size={14} /> DANFE + Etiqueta
                             </button>
                             <button
                                 onClick={() => {
@@ -3789,7 +3860,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 }}
                                 className="w-full flex items-center gap-2 text-sm font-black uppercase bg-emerald-50 text-emerald-700 px-4 py-3 rounded-xl hover:bg-emerald-100 border border-emerald-200 transition-all"
                             >
-                                <Printer size={14}/> Apenas Etiqueta
+                                <Printer size={14} /> Apenas Etiqueta
                             </button>
                             <button
                                 onClick={() => {
@@ -3814,10 +3885,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl w-full max-w-md p-8 animate-in fade-in zoom-in-95">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
-                                <FileText className="text-blue-600" size={20}/> Gerar NF-e
+                                <FileText className="text-blue-600" size={20} /> Gerar NF-e
                             </h3>
                             <button onClick={() => { setShowGerarNFeModal(false); setNfeModalOrder(null); }} className="p-2 rounded-full hover:bg-slate-100 text-slate-400">
-                                <X size={18}/>
+                                <X size={18} />
                             </button>
                         </div>
                         <p className="text-sm text-slate-500 mb-2">Pedido: <span className="font-black text-slate-700">{nfeModalOrder.orderId || nfeModalOrder.blingId}</span></p>
@@ -3826,7 +3897,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         <div className="space-y-3">
                             {/* Via Bling */}
                             <div className="border-2 border-blue-100 rounded-2xl p-4 hover:border-blue-300 transition-all">
-                                <p className="text-xs font-black text-blue-700 uppercase tracking-widest mb-1 flex items-center gap-1.5"><span className="w-2 h-2 bg-blue-500 rounded-full inline-block"/>Via Bling (Recomendado)</p>
+                                <p className="text-xs font-black text-blue-700 uppercase tracking-widest mb-1 flex items-center gap-1.5"><span className="w-2 h-2 bg-blue-500 rounded-full inline-block" />Via Bling (Recomendado)</p>
                                 <p className="text-xs text-slate-500 mb-3">Gera NF-e diretamente do pedido de venda via rota nativa do Bling. Itens, contato, parcelas e frete são preenchidos automaticamente.</p>
                                 <div className="flex gap-2">
                                     <button
@@ -3834,28 +3905,28 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                         disabled={!!gerandoNFeId}
                                         className="flex-1 flex items-center justify-center gap-1.5 text-xs font-black uppercase bg-blue-50 text-blue-700 px-3 py-2 rounded-xl hover:bg-blue-100 border border-blue-200 disabled:opacity-50 transition-all"
                                     >
-                                        <FileText size={12}/> Criar NF-e
+                                        <FileText size={12} /> Criar NF-e
                                     </button>
                                     <button
                                         onClick={() => { setShowGerarNFeModal(false); handleGerarNFeDoPedido(nfeModalOrder.orderId || nfeModalOrder.blingId, nfeModalOrder, true, 'bling'); setNfeModalOrder(null); }}
                                         disabled={!!gerandoNFeId}
                                         className="flex-1 flex items-center justify-center gap-1.5 text-xs font-black uppercase bg-indigo-50 text-indigo-700 px-3 py-2 rounded-xl hover:bg-indigo-100 border border-indigo-200 disabled:opacity-50 transition-all"
                                     >
-                                        <Send size={12}/> Criar + Emitir
+                                        <Send size={12} /> Criar + Emitir
                                     </button>
                                 </div>
                             </div>
 
                             {/* Via ERP Próprio */}
                             <div className="border-2 border-emerald-100 rounded-2xl p-4 hover:border-emerald-300 transition-all">
-                                <p className="text-xs font-black text-emerald-700 uppercase tracking-widest mb-1 flex items-center gap-1.5"><span className="w-2 h-2 bg-emerald-500 rounded-full inline-block"/>Via ERP Próprio</p>
+                                <p className="text-xs font-black text-emerald-700 uppercase tracking-widest mb-1 flex items-center gap-1.5"><span className="w-2 h-2 bg-emerald-500 rounded-full inline-block" />Via ERP Próprio</p>
                                 <p className="text-xs text-slate-500 mb-3">Usa o certificado digital local do ERP para gerar rascunho e transmitir diretamente ao SEFAZ.</p>
                                 <button
                                     onClick={() => { setShowGerarNFeModal(false); handleGerarNFeDoPedido(nfeModalOrder.orderId || nfeModalOrder.blingId, nfeModalOrder, false, 'erp'); setNfeModalOrder(null); }}
                                     disabled={!!gerandoNFeId}
                                     className="w-full flex items-center justify-center gap-1.5 text-xs font-black uppercase bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl hover:bg-emerald-100 border border-emerald-200 disabled:opacity-50 transition-all"
                                 >
-                                    <FileText size={12}/> Gerar via ERP
+                                    <FileText size={12} /> Gerar via ERP
                                 </button>
                             </div>
                         </div>
@@ -3873,10 +3944,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl w-full max-w-lg p-8 animate-in fade-in zoom-in-95">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
-                                <Settings className="text-amber-600" size={20}/> Editar Pedido #{editPedidoModal.id}
+                                <Settings className="text-amber-600" size={20} /> Editar Pedido #{editPedidoModal.id}
                             </h3>
                             <button onClick={() => setEditPedidoModal(null)} className="p-2 rounded-full hover:bg-slate-100 text-slate-400">
-                                <X size={18}/>
+                                <X size={18} />
                             </button>
                         </div>
 
@@ -3920,7 +3991,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 Cancelar
                             </button>
                             <button onClick={handleSalvarPedido} disabled={isSavingPedido} className="flex-1 flex items-center justify-center gap-2 text-xs font-black uppercase tracking-widest py-3 rounded-xl bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 transition-all shadow-lg shadow-amber-100">
-                                {isSavingPedido ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>} Salvar
+                                {isSavingPedido ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Salvar
                             </button>
                         </div>
                     </div>
@@ -3933,7 +4004,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col">
                         {/* Header */}
                         <div className="bg-gradient-to-r from-green-600 to-emerald-600 p-5">
-                            <h2 className="text-lg font-black text-white flex items-center gap-2"><Download size={18}/> Confirmar Importação para ERP</h2>
+                            <h2 className="text-lg font-black text-white flex items-center gap-2"><Download size={18} /> Confirmar Importação para ERP</h2>
                             <p className="text-sm text-green-100 mt-0.5">{selectedVendasIds.size} pedido(s) selecionado(s)</p>
                         </div>
                         {/* Body */}
@@ -3960,48 +4031,47 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                     .filter(o => selectedVendasIds.has(o.blingId || o.orderId))
                                     .slice(0, importQuantityLimit)
                                     .map((order, idx) => (
-                                    <div key={idx} className="border border-gray-200 rounded-xl p-3 bg-gray-50">
-                                        <div className="flex justify-between items-start mb-1.5">
-                                            <div className="flex items-center gap-2">
-                                                <span className="font-black text-gray-800 text-sm">#{order.orderId || order.blingId || order.blingNumero}</span>
-                                                <span className="text-sm text-gray-600">{order.customer_name}</span>
+                                        <div key={idx} className="border border-gray-200 rounded-xl p-3 bg-gray-50">
+                                            <div className="flex justify-between items-start mb-1.5">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="font-black text-gray-800 text-sm">#{order.orderId || order.blingId || order.blingNumero}</span>
+                                                    <span className="text-sm text-gray-600">{order.customer_name}</span>
+                                                </div>
+                                                <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border uppercase ${order.canal === 'SHOPEE' ? 'bg-orange-100 text-orange-700 border-orange-200' :
+                                                    order.canal === 'ML' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
+                                                        'bg-blue-100 text-blue-700 border-blue-200'
+                                                    }`}>
+                                                    {order.canal || 'SITE'}
+                                                </span>
                                             </div>
-                                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border uppercase ${
-                                                order.canal === 'SHOPEE' ? 'bg-orange-100 text-orange-700 border-orange-200' :
-                                                order.canal === 'ML'     ? 'bg-yellow-100 text-yellow-800 border-yellow-200' :
-                                                                           'bg-blue-100 text-blue-700 border-blue-200'
-                                            }`}>
-                                                {order.canal || 'SITE'}
-                                            </span>
-                                        </div>
-                                        {order.itens?.length > 0 ? (
-                                            <table className="w-full text-xs mt-2 border-collapse">
-                                                <thead>
-                                                    <tr className="text-[9px] text-gray-400 uppercase border-b border-gray-200">
-                                                        <th className="text-left pb-1">SKU</th>
-                                                        <th className="text-left pb-1">Descrição</th>
-                                                        <th className="text-center pb-1">Qtd</th>
-                                                        <th className="text-right pb-1">Valor Unit.</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {order.itens.map((item: any, i: number) => (
-                                                        <tr key={i} className="border-t border-gray-100">
-                                                            <td className="py-1 font-mono text-blue-600 text-[10px]">{item.sku || '—'}</td>
-                                                            <td className="py-1 text-gray-700 max-w-[180px] truncate">{item.descricao || '—'}</td>
-                                                            <td className="py-1 text-center font-black text-gray-800">{item.quantidade}</td>
-                                                            <td className="py-1 text-right text-emerald-700">
-                                                                {Number(item.valorUnitario || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                                                            </td>
+                                            {order.itens?.length > 0 ? (
+                                                <table className="w-full text-xs mt-2 border-collapse">
+                                                    <thead>
+                                                        <tr className="text-[9px] text-gray-400 uppercase border-b border-gray-200">
+                                                            <th className="text-left pb-1">SKU</th>
+                                                            <th className="text-left pb-1">Descrição</th>
+                                                            <th className="text-center pb-1">Qtd</th>
+                                                            <th className="text-right pb-1">Valor Unit.</th>
                                                         </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        ) : (
-                                            <p className="text-[10px] text-gray-400 mt-1 italic">Nenhum item detalhado disponível para este pedido</p>
-                                        )}
-                                    </div>
-                                ))}
+                                                    </thead>
+                                                    <tbody>
+                                                        {order.itens.map((item: any, i: number) => (
+                                                            <tr key={i} className="border-t border-gray-100">
+                                                                <td className="py-1 font-mono text-blue-600 text-[10px]">{item.sku || '—'}</td>
+                                                                <td className="py-1 text-gray-700 max-w-[180px] truncate">{item.descricao || '—'}</td>
+                                                                <td className="py-1 text-center font-black text-gray-800">{item.quantidade}</td>
+                                                                <td className="py-1 text-right text-emerald-700">
+                                                                    {Number(item.valorUnitario || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            ) : (
+                                                <p className="text-[10px] text-gray-400 mt-1 italic">Nenhum item detalhado disponível para este pedido</p>
+                                            )}
+                                        </div>
+                                    ))}
                             </div>
                         </div>
                         {/* Footer */}
@@ -4034,7 +4104,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 disabled={isImportingToERP}
                                 className="flex items-center gap-2 px-8 py-2.5 bg-green-600 text-white rounded-xl font-black text-sm hover:bg-green-700 disabled:opacity-50 transition-all shadow-lg shadow-green-100"
                             >
-                                {isImportingToERP ? <Loader2 size={16} className="animate-spin"/> : <Download size={16}/>}
+                                {isImportingToERP ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                                 Confirmar Importação {importQuantityLimit < selectedVendasIds.size ? `(${importQuantityLimit})` : `(${selectedVendasIds.size})`}
                             </button>
                         </div>

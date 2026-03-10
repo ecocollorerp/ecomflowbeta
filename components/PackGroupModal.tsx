@@ -21,11 +21,13 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
     const [name, setName] = useState('');
     const [barcode, setBarcode] = useState('');
     const [minQty, setMinQty] = useState(0);
+    const [tipo, setTipo] = useState<'volatil' | 'tradicional'>('tradicional');
+    const [quantidadeVolatil, setQuantidadeVolatil] = useState(0);
     const [selectedCodes, setSelectedCodes] = useState<string[]>([]);
     const [itemBarcodes, setItemBarcodes] = useState<Record<string, string>>({});
     const [searchTerm, setSearchTerm] = useState('');
     const [isSaving, setIsSaving] = useState(false);
-    
+
     const barcodeInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -33,10 +35,12 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
             setName(groupToEdit?.name || '');
             setBarcode(groupToEdit?.barcode || '');
             setMinQty(groupToEdit?.min_pack_qty || 0);
-            
+            setTipo(groupToEdit?.tipo || 'tradicional');
+            setQuantidadeVolatil(groupToEdit?.quantidade_volatil || 0);
+
             const initialCodes = groupToEdit?.item_codes || [];
             setSelectedCodes(initialCodes);
-            
+
             // Mapear barcodes atuais dos produtos selecionados
             const initialBarcodes: Record<string, string> = {};
             initialCodes.forEach(code => {
@@ -51,8 +55,8 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
 
     const filteredProducts = useMemo(() => {
         const lower = searchTerm.toLowerCase();
-        return allProducts.filter(p => 
-            !selectedCodes.includes(p.code) && 
+        return allProducts.filter(p =>
+            !selectedCodes.includes(p.code) &&
             (p.name.toLowerCase().includes(lower) || p.code.toLowerCase().includes(lower))
         ).slice(0, 10);
     }, [allProducts, searchTerm, selectedCodes]);
@@ -77,8 +81,9 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
     };
 
     const handleSave = async () => {
-        if (!name.trim() || selectedCodes.length === 0) return;
-        
+        if (!name.trim()) return;
+        if (tipo === 'tradicional' && selectedCodes.length === 0) return;
+
         setIsSaving(true);
 
         try {
@@ -86,7 +91,7 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
             for (const code of selectedCodes) {
                 const product = allProducts.find(p => p.code === code);
                 const newBarcodeValue = itemBarcodes[code]?.trim();
-                
+
                 if (product && product.barcode !== newBarcodeValue) {
                     await dbClient
                         .from('stock_items')
@@ -100,7 +105,9 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
                 name: name.trim(),
                 barcode: barcode.trim(),
                 min_pack_qty: minQty,
-                item_codes: selectedCodes
+                item_codes: selectedCodes,
+                tipo,
+                quantidade_volatil: tipo === 'volatil' ? quantidadeVolatil : 0
             }, groupToEdit?.id);
 
             onClose();
@@ -133,33 +140,73 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
                         <div className="md:col-span-2">
                             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Nome do Grupo (Identificação no Dashboard)</label>
-                            <input 
-                                type="text" 
-                                value={name} 
+                            <input
+                                type="text"
+                                value={name}
                                 onChange={e => setName(e.target.value)}
                                 className="w-full p-3 border-2 border-slate-200 rounded-xl font-bold focus:border-blue-500 outline-none"
                                 placeholder="ex: 5kg Papel Branco Premium"
                             />
                         </div>
+
+                        {/* Tipo do Estoque */}
+                        <div className="md:col-span-2">
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Tipo de Estoque</label>
+                            <div className="grid grid-cols-2 gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setTipo('tradicional')}
+                                    className={`p-4 rounded-2xl border-2 text-left transition-all ${tipo === 'tradicional' ? 'border-blue-500 bg-blue-50 shadow-lg shadow-blue-100' : 'border-slate-200 hover:border-slate-300'}`}
+                                >
+                                    <p className="text-sm font-black text-slate-800">📊 Tradicional</p>
+                                    <p className="text-[10px] text-slate-500 mt-1">Estoque calculado automaticamente pela soma dos SKUs selecionados</p>
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setTipo('volatil')}
+                                    className={`p-4 rounded-2xl border-2 text-left transition-all ${tipo === 'volatil' ? 'border-amber-500 bg-amber-50 shadow-lg shadow-amber-100' : 'border-slate-200 hover:border-slate-300'}`}
+                                >
+                                    <p className="text-sm font-black text-slate-800">⚡ Volátil</p>
+                                    <p className="text-[10px] text-slate-500 mt-1">Quantidade manual, independente do estoque cadastrado</p>
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Quantidade Volátil */}
+                        {tipo === 'volatil' && (
+                            <div className="md:col-span-2">
+                                <label className="block text-[10px] font-black text-amber-600 uppercase tracking-widest mb-1">Quantidade (Volátil)</label>
+                                <input
+                                    type="number"
+                                    min={0}
+                                    value={quantidadeVolatil}
+                                    onChange={e => setQuantidadeVolatil(Number(e.target.value))}
+                                    className="w-full p-3 border-2 border-amber-300 rounded-xl font-bold bg-amber-50 focus:border-amber-500 outline-none"
+                                    placeholder="Quantidade manual..."
+                                />
+                                <p className="text-[10px] text-amber-600 mt-1">Esta quantidade é digitada manualmente e pode ser alterada a qualquer momento.</p>
+                            </div>
+                        )}
+
                         <div>
                             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Código de Barras do PACOTE (EAN/GTIN)</label>
                             <div className="relative">
-                                <input 
+                                <input
                                     ref={barcodeInputRef}
-                                    type="text" 
-                                    value={barcode} 
+                                    type="text"
+                                    value={barcode}
                                     onChange={e => setBarcode(e.target.value.toUpperCase())}
                                     className="w-full pl-10 p-3 border-2 border-slate-200 rounded-xl font-mono font-bold focus:border-blue-500 outline-none"
                                     placeholder="Escanear etiqueta do fardo..."
                                 />
-                                <Scan size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+                                <Scan size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                             </div>
                         </div>
                         <div>
                             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Meta Mínima de Estoque (Pacotes)</label>
-                            <input 
-                                type="number" 
-                                value={minQty} 
+                            <input
+                                type="number"
+                                value={minQty}
                                 onChange={e => setMinQty(Number(e.target.value))}
                                 className="w-full p-3 border-2 border-slate-200 rounded-xl font-bold focus:border-blue-500 outline-none"
                             />
@@ -180,18 +227,18 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
                                         </div>
                                         <div className="flex-1 max-w-[200px]">
                                             <div className="relative">
-                                                <input 
+                                                <input
                                                     type="text"
                                                     value={itemBarcodes[code] || ''}
                                                     onChange={e => handleItemBarcodeChange(code, e.target.value)}
                                                     placeholder="Barcode SKU..."
                                                     className="w-full pl-8 py-1.5 text-[10px] font-mono font-bold border rounded-lg focus:ring-1 focus:ring-blue-500 outline-none"
                                                 />
-                                                <Scan size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-300"/>
+                                                <Scan size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-300" />
                                             </div>
                                         </div>
                                         <button onClick={() => toggleCode(code)} className="p-2 text-red-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all">
-                                            <Trash2 size={16}/>
+                                            <Trash2 size={16} />
                                         </button>
                                     </div>
                                 );
@@ -206,9 +253,9 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
                         {/* Busca de Produtos */}
                         <div className="relative">
                             <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                            <input 
-                                type="text" 
-                                value={searchTerm} 
+                            <input
+                                type="text"
+                                value={searchTerm}
                                 onChange={e => setSearchTerm(e.target.value)}
                                 placeholder="Buscar novos produtos para incluir no pacote..."
                                 className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-sm focus:bg-white focus:border-blue-500 outline-none transition-all"
@@ -218,8 +265,8 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
                         {searchTerm && (
                             <div className="mt-2 border rounded-2xl overflow-hidden shadow-xl animate-in slide-in-from-top-2">
                                 {filteredProducts.map(p => (
-                                    <button 
-                                        key={p.id} 
+                                    <button
+                                        key={p.id}
                                         onClick={() => toggleCode(p.code)}
                                         className="w-full p-4 text-left hover:bg-blue-50 flex justify-between items-center group bg-white border-b last:border-b-0"
                                     >
@@ -242,12 +289,12 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
 
                 <div className="mt-8 flex justify-end gap-3 pt-5 border-t border-slate-50">
                     <button onClick={onClose} className="px-6 py-3 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-slate-200 transition-all">Cancelar</button>
-                    <button 
-                        onClick={handleSave} 
-                        disabled={!name.trim() || selectedCodes.length === 0 || isSaving}
+                    <button
+                        onClick={handleSave}
+                        disabled={!name.trim() || (tipo === 'tradicional' && selectedCodes.length === 0) || isSaving}
                         className="px-10 py-3 bg-blue-600 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 disabled:opacity-50 transition-all flex items-center gap-2"
                     >
-                        {isSaving ? <Loader2 className="animate-spin" size={18}/> : <Save size={18}/>}
+                        {isSaving ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
                         {isSaving ? 'Salvando...' : 'Salvar Alterações'}
                     </button>
                 </div>

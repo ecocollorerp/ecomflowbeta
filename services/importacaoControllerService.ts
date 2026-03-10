@@ -3,7 +3,7 @@
 // Controle manual de importações do Bling (SEM AUTO-IMPORTAÇÃO)
 // ============================================================================
 
-import { supabaseClient as dbClient } from './supabaseClient';
+import { dbClient } from '../lib/supabaseClient';
 import { auditLogService } from './auditLogService';
 
 export interface PedidoblingNaoVinculado {
@@ -29,6 +29,7 @@ export interface PedidoblingNaoVinculado {
   id_pedido_loja?: string;
   jaImportado?: boolean;
   dataImportacao?: string;
+  codigoRastreamento?: string;
 }
 
 export interface ImportacaoManual {
@@ -45,21 +46,17 @@ export interface ImportacaoManual {
   erro?: string;
 }
 
-/**
- * Serviço de Importação Manual
- * Permite usuário controlar QUANDO importar pedidos do Bling
- */
 export class ImportacaoControllerService {
   /**
-   * 🎯 Buscar pedidos do Bling que NÃO estão vinculados em ImportaçõesERP
+   * 🎯 Buscar TODOS os pedidos do Bling que NÃO estão vinculados (Paginação Ilimitada Limitada pelo Usuário)
+   * CORRIGIDO: Usa 'limite', 'pagina', 'dataInicial', 'dataFinal' da API v3
    */
   static async buscarPedidosNaoVinculados(
     token: string,
     opcoes: {
-      limit?: number;
-      offset?: number;
-      dataInicio?: string;
-      dataFim?: string;
+      quantidadeDesejada?: number;
+      dataInicial?: string;
+      dataFinal?: string;
       origem?: string;
     } = {}
   ): Promise<{
@@ -70,32 +67,48 @@ export class ImportacaoControllerService {
     try {
       console.log('🔍 Buscando pedidos Bling não vinculados...');
 
-      const { limit = 100, offset = 0, dataInicio, dataFim, origem } = opcoes;
+      const { quantidadeDesejada = 100, dataInicial, dataFinal } = opcoes;
+      const limite = 100;
+      let pagina = 1;
+      let continuarBuscando = true;
+      let todosPedidosBling: any[] = [];
 
-      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      // PASSO 1: Buscar TODOS os pedidos do Bling (com filtros opcionais)
-      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      let urlBling = `https://www.bling.com.br/Api/v3/pedidos/vendas?limit=${limit}&offset=${offset}`;
-      
-      if (dataInicio) urlBling += `&dataInicio=${dataInicio}`;
-      if (dataFim) urlBling += `&dataFim=${dataFim}`;
+      while (continuarBuscando) {
+        let urlBling = `https://www.bling.com.br/Api/v3/pedidos/vendas?limite=${limite}&pagina=${pagina}`;
+        if (dataInicial) urlBling += `&dataInicial=${dataInicial}`;
+        if (dataFinal) urlBling += `&dataFinal=${dataFinal}`;
 
-      const respBling = await fetch(urlBling, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json',
-        },
-      });
+        const respBling = await fetch(urlBling, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: 'application/json',
+          },
+        });
 
-      if (!respBling.ok) {
-        throw new Error(`Erro ao buscar Bling: ${respBling.status}`);
+        if (!respBling.ok) {
+          if (respBling.status === 429) {
+            console.warn('Rate limit Bling atingido. Aguardando...');
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
+          throw new Error(`Erro ao buscar Bling: ${respBling.status}`);
+        }
+
+        const dataBling = await respBling.json();
+        const pedidosBase = dataBling?.data || [];
+
+        todosPedidosBling = [...todosPedidosBling, ...pedidosBase];
+
+        if (pedidosBase.length < limite || todosPedidosBling.length >= quantidadeDesejada * 2 || pagina >= 20) {
+          continuarBuscando = false;
+        } else {
+          pagina++;
+          await new Promise(r => setTimeout(r, 400)); // Rate limit prevention
+        }
       }
 
-      const dataBling = await respBling.json();
-      const pedidosBling = dataBling?.data || [];
-
       // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      // PASSO 2: Buscar pedidos JÁ importados na tabela `orders` do ERP
+      // BUSCAR IMPORTADOS NO ERP
       // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       const { data: pedidosERP } = await dbClient
         .from('orders')
@@ -106,72 +119,38 @@ export class ImportacaoControllerService {
         (pedidosERP || []).map(p => String(p.external_id || p.numero_pedido))
       );
 
-      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-      // PASSO 3: Filtrar apenas pedidos NÃO vinculados
-      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
       const avisos: string[] = [];
-      const pedidosNaoVinculados: PedidoblingNaoVinculado[] = pedidosBling
-        .filter((pedido: any) => {
-          const jaImportado = idsJaImportados.has(String(pedido.id));
-          return !jaImportado; // Retorna APENAS não importados
-        })
+      const naoVinculadosProcessados: PedidoblingNaoVinculado[] = todosPedidosBling
+        .filter((pedido: any) => !idsJaImportados.has(String(pedido.id)))
         .map((pedido: any) => {
-          // ✅ Detectar origem CORRETA: Marketplace (não Bling)
           let origem: 'SHOPEE' | 'MERCADO_LIVRE' | 'SITE' | 'OUTRO' = 'OUTRO';
-          
-          // Procurar em diferentes campos para identificar o marketplace
-          const canalStr = (pedido?.canal || pedido?.canaldados || pedido?.origem || '').toUpperCase();
-          const nomeLojaStr = (pedido?.nomeLojaVirtual || '').toUpperCase();
-          const idLojaVirtual = pedido?.idLojaVirtual || pedido?.lojaVirtualId;
-          
-          // 🔍 Procurar por "Número loja virtual" nas informações adicionais
-          let numeroLojaVirtualExtraido = pedido.numeroLoja;
-          
-          // Verificar em observacoes e outras campos que podem conter informações adicionais
-          const camposTexto = [
-            pedido?.observacoes,
-            pedido?.observacoesInternas,
-            pedido?.informacoesAdicionais,
-            pedido?.dadosAdicionais,
-            JSON.stringify(pedido?.informacoesAdicionais || {}),
-            JSON.stringify(pedido?.dadosAdicionais || {})
-          ].filter(Boolean);
-          
-          for (const campo of camposTexto) {
-            if (typeof campo === 'string') {
-              // Procurar por padrões como "Número loja virtual: 12345" ou "Número da loja: 12345"
-              const match = campo.match(/(?:Número\s+(?:loja\s+virtual|da\s+loja)|Order\s+ID|Pedido\s+original)\s*[:\-]?\s*([A-Za-z0-9\-_]+)/i);
-              if (match && match[1]) {
-                numeroLojaVirtualExtraido = match[1].trim();
-                break;
-              }
-            }
+
+          const canalStr = (pedido?.canal?.descricao || pedido?.canal || '').toUpperCase();
+          const nomeLojaStr = (pedido?.loja?.nome || '').toUpperCase();
+          let numeroLojaOriginal = pedido.numeroLoja || '';
+
+          if (!numeroLojaOriginal) {
+            const info = pedido?.observacoes || JSON.stringify(pedido?.informacoesAdicionais || {});
+            const match = info.match(/(?:Número\s+(?:loja|virtual)|Pedido)\s*[:\-]?\s*([A-Za-z0-9\-_]+)/i);
+            if (match) numeroLojaOriginal = match[1].trim();
           }
-          
-          if (canalStr.includes('SHOPEE') || nomeLojaStr.includes('SHOPEE') || numeroLojaVirtualExtraido?.toUpperCase().includes('SP')) {
+
+          if (canalStr.includes('SHOPEE') || nomeLojaStr.includes('SHOPEE') || numeroLojaOriginal.toUpperCase().includes('SP')) {
             origem = 'SHOPEE';
-          } else if (canalStr.includes('MERCADO') || nomeLojaStr.includes('MERCADO') || numeroLojaVirtualExtraido?.match(/ML[A-Z0-9]+/i)) {
+          } else if (canalStr.includes('MERCADO') || nomeLojaStr.includes('MERCADO') || numeroLojaOriginal.match(/ML[A-Z0-9]+/i)) {
             origem = 'MERCADO_LIVRE';
-          } else if (canalStr.includes('SITE') || canalStr.includes('TRAY') || canalStr.includes('WOOCOMMERCE') || nomeLojaStr.includes('SITE')) {
+          } else if (canalStr.includes('SITE') || nomeLojaStr.includes('SITE')) {
             origem = 'SITE';
-          } else if (numeroLojaVirtualExtraido && numeroLojaVirtualExtraido !== pedido.numeroLoja) {
-            // Se encontramos um número diferente nas informações adicionais, tentar identificar a plataforma
-            if (numeroLojaVirtualExtraido.match(/ML[A-Z0-9]+/i)) {
-              origem = 'MERCADO_LIVRE';
-            } else if (numeroLojaVirtualExtraido.toUpperCase().includes('SP') || numeroLojaVirtualExtraido.match(/\d{10,}/)) {
-              origem = 'SHOPEE';
-            }
           }
 
           return {
             id: `bling_${pedido.id}`,
             numero: pedido.numero,
-            numeroLoja: numeroLojaVirtualExtraido || pedido.numeroLoja,
+            numeroLoja: numeroLojaOriginal,
             dataCompra: pedido.data || new Date().toISOString(),
             cliente: {
               nome: pedido?.contato?.nome || 'Sem nome',
               cpfCnpj: pedido?.contato?.numeroDocumento || '-',
-              email: pedido?.contato?.email,
             },
             origem,
             itens: (pedido?.itens || []).map((item: any) => ({
@@ -181,240 +160,43 @@ export class ImportacaoControllerService {
               valor: item.valor,
             })),
             total: pedido.total || 0,
-            status: pedido.status || 'aberto',
+            status: pedido.situacao?.descricao || 'aberto',
             venda_origem: nomeLojaStr || canalStr,
-            id_pedido_loja: numeroLojaVirtualExtraido || pedido.numeroLoja,
+            id_pedido_loja: numeroLojaOriginal,
             jaImportado: false,
-            dataImportacao: undefined,
+            codigoRastreamento: pedido?.transporte?.codigoRastreamento || ''
           };
         });
 
-      if (pedidosNaoVinculados.length === 0) {
-        avisos.push('✅ Todos os pedidos do Bling já estão vinculados no ERP!');
+      if (naoVinculadosProcessados.length === 0) {
+        avisos.push('✅ Todos os pedidos retornados do Bling já estão no ERP.');
       } else {
-        avisos.push(`⚠️ ${pedidosNaoVinculados.length} pedido(s) ainda não vinculado(s)`);
+        avisos.push(`⚠️ Exibindo ${naoVinculadosProcessados.slice(0, quantidadeDesejada).length} de ${naoVinculadosProcessados.length} não vinculados.`);
       }
 
       return {
-        pedidosNaoVinculados,
-        total: pedidosBling.length,
+        pedidosNaoVinculados: naoVinculadosProcessados.slice(0, quantidadeDesejada),
+        total: todosPedidosBling.length,
         avisos,
       };
     } catch (error: any) {
-      console.error('❌ Erro ao buscar pedidos não vinculados:', error.message);
+      console.error('❌ Erro:', error);
       throw error;
     }
   }
 
   /**
-   * 📋 Buscar apenas pedidos Mercado Livre que têm etiqueta pronta
-   */
-  static async buscarMercadoLivreComEtiquetaPronta(
-    token: string,
-    opcoes: {
-      limit?: number;
-      offset?: number;
-    } = {}
-  ): Promise<{
-    pedidos: PedidoblingNaoVinculado[];
-    total: number;
-    comEtiqueta: number;
-    semEtiqueta: number;
-  }> {
-    try {
-      console.log('🎫 Buscando pedidos Mercado Livre com etiqueta pronta...');
-
-      const { limit = 100, offset = 0 } = opcoes;
-
-      // Buscar pedidos do Mercado Livre do Bling
-      const urlBling = `https://www.bling.com.br/Api/v3/pedidos/vendas?limit=${limit}&offset=${offset}&channel=marketplace`;
-
-      const respBling = await fetch(urlBling, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json',
-        },
-      });
-
-      if (!respBling.ok) {
-        throw new Error(`Erro ao buscar Bling: ${respBling.status}`);
-      }
-
-      const dataBling = await respBling.json();
-      const pedidosBling = (dataBling?.data || []).filter((p: any) => {
-        // Filtrar apenas Mercado Livre
-        const canal = (p?.canal || p?.canaldados || '').toUpperCase();
-        const nomeLojaVirtual = (p?.nomeLojaVirtual || '').toUpperCase();
-        return (
-          canal.includes('MERCADO') ||
-          nomeLojaVirtual.includes('MERCADO') ||
-          canal.includes('ML')
-        );
-      });
-
-      // Filtrar apenas os que têm etiqueta (transportadora + rastreio)
-      const comEtiqueta = pedidosBling.filter(
-        (p: any) => p?.transporte?.codigoRastreamento
-      );
-
-      console.log(
-        `📊 Total Mercado Livre: ${pedidosBling.length} | Com etiqueta: ${comEtiqueta.length}`
-      );
-
-      return {
-        pedidos: comEtiqueta.map((pedido: any) => ({
-          id: `bling_${pedido.id}`,
-          numero: pedido.numero,
-          numeroLoja: pedido.numeroLoja,
-          dataCompra: pedido.data || new Date().toISOString(),
-          cliente: {
-            nome: pedido?.contato?.nome || 'Sem nome',
-            cpfCnpj: pedido?.contato?.numeroDocumento || '-',
-            email: pedido?.contato?.email,
-          },
-          origem: 'MERCADO_LIVRE' as const,
-          itens: (pedido?.itens || []).map((item: any) => ({
-            descricao: item.descricao,
-            sku: item.codigo,
-            quantidade: item.quantidade,
-            valor: item.valor,
-          })),
-          total: pedido.total || 0,
-          status: pedido.status || 'aberto',
-          jaImportado: false,
-        })),
-        total: pedidosBling.length,
-        comEtiqueta: comEtiqueta.length,
-        semEtiqueta: pedidosBling.length - comEtiqueta.length,
-      };
-    } catch (error: any) {
-      console.error('❌ Erro ao buscar Mercado Livre:', error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * 📋 Buscar pedidos NFe SEM limite de quantidade (usuário escolhe quantos quer)
-   */
-  static async buscarPedidosNfeComSelecaoCustomizada(
-    token: string,
-    opcoes: {
-      quantidadeDesejada?: number; // Usuário escolhe quantos quer
-      dataInicio?: string;
-      dataFim?: string;
-      status?: string;
-    } = {}
-  ): Promise<{
-    pedidosDisponiveis: PedidoblingNaoVinculado[];
-    total: number;
-    quantidadeDesejada: number;
-  }> {
-    try {
-      console.log('📋 Buscando pedidos NFe (sem limite)...');
-
-      const { quantidadeDesejada = 50, dataInicio, dataFim, status } = opcoes;
-
-      // Carregar TODOS os pedidos (paginação infinita)
-      let todosOsPedidos: any[] = [];
-      let offset = 0;
-      const limit = 100;
-      let continuarCarregando = true;
-
-      while (continuarCarregando) {
-        let url = `https://www.bling.com.br/Api/v3/pedidos/vendas?limit=${limit}&offset=${offset}`;
-
-        if (dataInicio) url += `&dataInicio=${dataInicio}`;
-        if (dataFim) url += `&dataFim=${dataFim}`;
-
-        const resp = await fetch(url, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/json',
-          },
-        });
-
-        if (!resp.ok) {
-          throw new Error(`Erro ao buscar: ${resp.status}`);
-        }
-
-        const data = await resp.json();
-        const pedidos = data?.data || [];
-
-        if (pedidos.length === 0) {
-          continuarCarregando = false;
-        } else {
-          todosOsPedidos = [...todosOsPedidos, ...pedidos];
-          offset += limit;
-
-          console.log(
-            `   📥 Carregado: ${todosOsPedidos.length} pedidos (página ${Math.ceil(offset / limit)})`
-          );
-
-          if (todosOsPedidos.length >= quantidadeDesejada * 2) {
-            // Carregar um pouco mais que o desejado
-            continuarCarregando = false;
-          }
-        }
-      }
-
-      // Retornar a quantidade desejada
-      const pedidosSelecionados = todosOsPedidos.slice(0, quantidadeDesejada);
-      const pedidosSelecionadosFormatados = pedidosSelecionados.map((pedido: any) => {
-          let origem: 'SHOPEE' | 'MERCADO_LIVRE' | 'SITE' | 'OUTRO' = 'OUTRO';
-          const canalStr = (pedido?.canal || pedido?.canaldados || '').toUpperCase();
-          const nomeLojaStr = (pedido?.loja?.nome || pedido?.nomeLojaVirtual || '').toUpperCase();
-          if (canalStr.includes('MERCADO') || nomeLojaStr.includes('MERCADO') || canalStr.includes('ML')) origem = 'MERCADO_LIVRE';
-          else if (canalStr.includes('SHOPEE') || nomeLojaStr.includes('SHOPEE')) origem = 'SHOPEE';
-          else if (canalStr.includes('SITE') || nomeLojaStr.includes('SITE')) origem = 'SITE';
-
-          return {
-            id: `bling_${pedido.id}`,
-            numero: pedido.numero,
-            numeroLoja: pedido.numeroLoja,
-            dataCompra: pedido.data || new Date().toISOString(),
-            cliente: {
-              nome: pedido?.contato?.nome || 'Sem nome',
-              cpfCnpj: pedido?.contato?.numeroDocumento || '-',
-              email: pedido?.contato?.email,
-            },
-            origem,
-            itens: (pedido?.itens || []).map((item: any) => ({
-              descricao: item.descricao,
-              sku: item.codigo,
-              quantidade: item.quantidade,
-              valor: item.valor,
-            })),
-            total: pedido.total || 0,
-            status: pedido.status || 'aberto',
-            venda_origem: nomeLojaStr || canalStr,
-            id_pedido_loja: pedido.numeroLoja,
-            jaImportado: false,
-          };
-      });
-
-      return {
-        pedidosDisponiveis: pedidosSelecionadosFormatados,
-        total: todosOsPedidos.length,
-        quantidadeDesejada,
-      };
-    } catch (error: any) {
-      console.error('❌ Erro ao buscar pedidos NFe customizados:', error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * 📋 Buscar TODOS os pedidos em aberto filtrados por plataforma (Mercado Livre ou Shopee)
-   * Carrega todos os pedidos em aberto até não haver mais, somando progressivamente
+   * 📋 Buscar pedidos em aberto de plataformas específicas (com paginação)
+   * CORRIGIDO: API V3
    */
   static async buscarPedidosEmAbertoPorPlataforma(
     token: string,
     plataforma: 'MERCADO_LIVRE' | 'SHOPEE' | 'TODOS',
     opcoes: {
       quantidadeDesejada?: number;
-      dataInicio?: string;
-      dataFim?: string;
-      apenasComEtiqueta?: boolean; // Para MercadoLivre: filtrar apenas pedidos com etiqueta disponível
+      dataInicial?: string;
+      dataFinal?: string;
+      apenasComEtiqueta?: boolean;
     } = {}
   ): Promise<{
     pedidosDisponiveis: PedidoblingNaoVinculado[];
@@ -423,45 +205,24 @@ export class ImportacaoControllerService {
     plataforma: string;
   }> {
     try {
-      console.log(`📋 Buscando pedidos em aberto da ${plataforma}...`);
+      console.log(`📋 Buscando ${plataforma}...`);
 
-      const { quantidadeDesejada = 9999, dataInicio, dataFim, apenasComEtiqueta = false } = opcoes;
-
-      // Carregar TODOS os pedidos em aberto (paginação infinita)
+      const { quantidadeDesejada = 200, dataInicial, dataFinal, apenasComEtiqueta = false } = opcoes;
       let todosOsPedidos: any[] = [];
       let pagina = 1;
       const limite = 100;
       let continuarCarregando = true;
 
-      // Mapeamento de plataforma para filtros do Bling
-      const filtrosPlataforma = {
-        MERCADO_LIVRE: {
-          canal: 'MERCADO',
-          loja: 'MERCADO'
-        },
-        SHOPEE: {
-          canal: 'SHOPEE',
-          loja: 'SHOPEE'
-        }
-      };
-
-      const filtro = filtrosPlataforma[plataforma];
-
       while (continuarCarregando) {
-        let url = `https://www.bling.com.br/Api/v3/pedidos/vendas?limite=${limite}&pagina=${pagina}&idsSituacoes=6&idsSituacoes=15`;
+        // IDs 6 = Em aberto, 15 = Em andamento
+        let url = `https://www.bling.com.br/Api/v3/pedidos/vendas?limite=${limite}&pagina=${pagina}&idsSituacoes[]=6&idsSituacoes[]=15`;
+        if (dataInicial) url += `&dataInicial=${dataInicial}`;
+        if (dataFinal) url += `&dataFinal=${dataFinal}`;
 
-        if (dataInicio) url += `&dataInicial=${dataInicio}`;
-        if (dataFim) url += `&dataFinal=${dataFim}`;
-
-        const resp = await fetch(url, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/json',
-          },
-        });
-
+        const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         if (!resp.ok) {
-          throw new Error(`Erro ao buscar pedidos: ${resp.status}`);
+          if (resp.status === 429) { await new Promise(r => setTimeout(r, 2000)); continue; }
+          throw new Error(`Erro: ${resp.status}`);
         }
 
         const data = await resp.json();
@@ -470,287 +231,106 @@ export class ImportacaoControllerService {
         if (pedidos.length === 0) {
           continuarCarregando = false;
         } else {
-          // Filtrar por plataforma
-          const pedidosFiltrados = pedidos.filter((pedido: any) => {
-            const canal = (pedido?.canal || pedido?.canaldados || '').toUpperCase();
-            const nomeLoja = (pedido?.loja?.nome || pedido?.nomeLojaVirtual || '').toUpperCase();
+          for (const p of pedidos) {
+            const canal = (p?.canal?.descricao || '').toUpperCase();
+            const nomeLoja = (p?.loja?.nome || '').toUpperCase();
+            const obs = (p.observacoes || '').toUpperCase();
 
-            if (plataforma === 'TODOS') {
-              return true;
-            } else if (plataforma === 'MERCADO_LIVRE') {
-              const ehMercadoLivre = canal.includes('MERCADO') || nomeLoja.includes('MERCADO') || canal.includes('ML');
-              
-              // Se apenasComEtiqueta for true, filtrar apenas pedidos com etiqueta disponível
-              if (apenasComEtiqueta && ehMercadoLivre) {
-                // Procurar por campo "etiqueta" ou "tag" ou "numero" que indique disponibilidade
-                const temEtiqueta = pedido?.etiqueta || pedido?.tag || pedido?.numeroEtiqueta;
-                const estaDisponivel = pedido?.situacao === 'DISPONÍVEL' || pedido?.etiquetaDisponivel === true || pedido?.transporte?.codigoRastreamento;
-                return temEtiqueta || estaDisponivel;
+            let isPlataformaMlc = canal.includes('MERCADO') || nomeLoja.includes('MERCADO');
+            let isPlataformaShopee = canal.includes('SHOPEE') || nomeLoja.includes('SHOPEE') || obs.includes('SHOPEE');
+
+            let ok = false;
+            if (plataforma === 'TODOS') ok = true;
+            else if (plataforma === 'MERCADO_LIVRE' && isPlataformaMlc) ok = true;
+            else if (plataforma === 'SHOPEE' && isPlataformaShopee) ok = true;
+
+            if (ok) {
+              // Checa etiqueta
+              if (apenasComEtiqueta) {
+                const temRastreio = p?.transporte?.codigoRastreamento?.length > 0;
+                if (temRastreio) todosOsPedidos.push(p);
+              } else {
+                todosOsPedidos.push(p);
               }
-              
-              return ehMercadoLivre;
-            } else if (plataforma === 'SHOPEE') {
-              return canal.includes('SHOPEE') || nomeLoja.includes('SHOPEE');
             }
-            return false;
-          });
-
-          todosOsPedidos = [...todosOsPedidos, ...pedidosFiltrados];
-          pagina++;
-
-          console.log(
-            `   📥 Carregado: ${todosOsPedidos.length} pedidos ${plataforma} (página ${pagina - 1})`
-          );
-
-          // Continuar até carregar pelo menos a quantidade desejada ou não haver mais páginas
-          if (todosOsPedidos.length >= quantidadeDesejada || pedidos.length < limite) {
-            continuarCarregando = false;
           }
-        }
 
-        // Segurança: máximo 50 páginas
-        if (pagina > 50) {
-          continuarCarregando = false;
+          if (todosOsPedidos.length >= quantidadeDesejada || pedidos.length < limite || pagina > 10) {
+            continuarCarregando = false;
+          } else {
+            pagina++;
+            await new Promise(r => setTimeout(r, 300));
+          }
         }
       }
 
-      // Retornar a quantidade desejada ou todos se houver menos
-      const pedidosSelecionados = todosOsPedidos.slice(0, quantidadeDesejada);
+      const formatados = todosOsPedidos.slice(0, quantidadeDesejada).map((pedido: any) => {
+        let numeroLojaOriginal = pedido.numeroLoja || '';
+        if (!numeroLojaOriginal) {
+          const info = pedido?.observacoes || '';
+          const match = info.match(/(?:Número|Pedido)\s*[:\-]?\s*([A-Za-z0-9\-_]+)/i);
+          if (match) numeroLojaOriginal = match[1].trim();
+        }
 
-      const pedidosSelecionadosFormatados = pedidosSelecionados.map((pedido: any) => {
-          // 🔍 Extrair número da loja virtual das informações adicionais
-          let numeroLojaVirtualExtraido = pedido.numeroLoja;
-          
-          const camposTexto = [
-            pedido?.observacoes,
-            pedido?.observacoesInternas,
-            pedido?.informacoesAdicionais,
-            pedido?.dadosAdicionais,
-            JSON.stringify(pedido?.informacoesAdicionais || {}),
-            JSON.stringify(pedido?.dadosAdicionais || {})
-          ].filter(Boolean);
-          
-          for (const campo of camposTexto) {
-            if (typeof campo === 'string') {
-              const match = campo.match(/(?:Número\s+(?:loja\s+virtual|da\s+loja)|Order\s+ID|Pedido\s+original)\s*[:\-]?\s*([A-Za-z0-9\-_]+)/i);
-              if (match && match[1]) {
-                numeroLojaVirtualExtraido = match[1].trim();
-                break;
-              }
-            }
-          }
+        let origem: 'SHOPEE' | 'MERCADO_LIVRE' | 'SITE' | 'OUTRO' = 'OUTRO';
+        const canalStr = (pedido?.loja?.nome || '').toUpperCase();
+        if (canalStr.includes('MERCADO')) origem = 'MERCADO_LIVRE';
+        else if (canalStr.includes('SHOPEE')) origem = 'SHOPEE';
+        else if (canalStr.includes('SITE')) origem = 'SITE';
 
-            let origem: 'SHOPEE' | 'MERCADO_LIVRE' | 'SITE' | 'OUTRO' = 'OUTRO';
-            const canalStr = (pedido?.canal || pedido?.canaldados || '').toUpperCase();
-            const nomeLojaStr = (pedido?.loja?.nome || pedido?.nomeLojaVirtual || '').toUpperCase();
-            if (canalStr.includes('MERCADO') || nomeLojaStr.includes('MERCADO') || canalStr.includes('ML')) origem = 'MERCADO_LIVRE';
-            else if (canalStr.includes('SHOPEE') || nomeLojaStr.includes('SHOPEE')) origem = 'SHOPEE';
-            else if (canalStr.includes('SITE') || nomeLojaStr.includes('SITE')) origem = 'SITE';
-
-          return {
-            id: `bling_${pedido.id}`,
-            numero: pedido.numero,
-            numeroLoja: numeroLojaVirtualExtraido || pedido.numeroLoja,
-            dataCompra: pedido.data || new Date().toISOString(),
-            cliente: {
-              nome: pedido?.contato?.nome || 'Sem nome',
-              cpfCnpj: pedido?.contato?.numeroDocumento || '-',
-              email: pedido?.contato?.email,
-            },
-            origem: origem,
-            itens: (pedido?.itens || []).map((item: any) => ({
-              descricao: item.descricao,
-              sku: item.codigo,
-              quantidade: item.quantidade,
-              valor: item.valor,
-            })),
-            total: pedido.total || 0,
-            status: pedido.situacao?.descricao || 'Em aberto',
-            venda_origem: nomeLojaStr || canalStr || 'SITE',
-            id_pedido_loja: numeroLojaVirtualExtraido || pedido.numeroLoja || '',
-            jaImportado: false,
-          };
+        return {
+          id: `bling_${pedido.id}`,
+          numero: pedido.numero,
+          numeroLoja: numeroLojaOriginal,
+          dataCompra: pedido.data || new Date().toISOString(),
+          cliente: {
+            nome: pedido?.contato?.nome || 'Sem nome',
+            cpfCnpj: pedido?.contato?.numeroDocumento || '-',
+          },
+          origem,
+          itens: (pedido?.itens || []).map((item: any) => ({
+            descricao: item.descricao,
+            sku: item.codigo,
+            quantidade: item.quantidade,
+            valor: item.valor,
+          })),
+          total: pedido.total || 0,
+          status: pedido.situacao?.descricao || 'Em aberto',
+          venda_origem: pedido?.loja?.nome || 'N/A',
+          id_pedido_loja: numeroLojaOriginal,
+          codigoRastreamento: pedido?.transporte?.codigoRastreamento || '',
+          jaImportado: false,
+        };
       });
 
-      // Sort oldest to newest (ascending order by dataCompra)
-      pedidosSelecionadosFormatados.sort((a, b) => new Date(a.dataCompra).getTime() - new Date(b.dataCompra).getTime());
+      // Oldest to newest
+      formatados.sort((a, b) => new Date(a.dataCompra).getTime() - new Date(b.dataCompra).getTime());
 
       return {
-        pedidosDisponiveis: pedidosSelecionadosFormatados,
+        pedidosDisponiveis: formatados,
         total: todosOsPedidos.length,
         quantidadeDesejada,
         plataforma,
       };
     } catch (error: any) {
-      console.error(`❌ Erro ao buscar pedidos ${plataforma}:`, error.message);
+      console.error(`❌ Erro buscar ${plataforma}:`, error.message);
       throw error;
     }
   }
 
-  /**
-   * 📋 Solicitar importação manual de pedidos específicos
-   */
+  // A função processarImportacao agora usa o repositório ou DB Client p salvar os Vínculos exatos.
   static async solicitarImportacao(
     pedidoVendaIds: (string | number)[],
     usuarioSolicitante: string
   ): Promise<ImportacaoManual> {
-    try {
-      const importacao: ImportacaoManual = {
-        id: `import_${Date.now()}`,
-        pedidoVendaIds,
-        usuarioSolicitante,
-        dataSolicitacao: new Date().toISOString(),
-        status: 'pendente',
-      };
-
-      // Salvar solicitação no BD (opcional, para rastreamento)
-      await dbClient.from('import_requests').insert({
-        id: importacao.id,
-        pedido_ids: pedidoVendaIds,
-        usuario: usuarioSolicitante,
-        data_solicitacao: importacao.dataSolicitacao,
-        status: 'pendente',
-      }).catch(() => {
-        console.warn('⚠️ Não foi possível registrar solicitação no BD');
-      });
-
-      // Registrar na auditoria
-      await auditLogService.registrarImportacao(
-        `Solicitação de importação manual: ${pedidoVendaIds.length} pedido(s)`,
-        'sincronizacao',
-        'sucesso',
-        {
-          canal: 'BLING',
-          totalPedidos: pedidoVendaIds.length,
-          usuario: usuarioSolicitante,
-        },
-        usuarioSolicitante
-      );
-
-      return importacao;
-    } catch (error: any) {
-      console.error('❌ Erro ao solicitar importação:', error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * 🔄 Processar importação (APENAS quando usuário clica "Importar")
-   */
-  static async processarImportacao(
-    importacao: ImportacaoManual,
-    blingBulkLoaderService: any
-  ): Promise<ImportacaoManual> {
-    try {
-      console.log(`\n📥 Iniciando importação manual: ${importacao.id}`);
-      console.log(`   Pedidos: ${importacao.pedidoVendaIds.join(', ')}`);
-
-      // Atualizar status para "processando"
-      importacao.status = 'processando';
-
-      // Processar cada pedido
-      const resultados = {
-        importados: 0,
-        falhados: 0,
-        mensagem: '',
-      };
-
-      for (const pvId of importacao.pedidoVendaIds) {
-        try {
-          // Buscar pedido específico
-          const { pedidos } = await blingBulkLoaderService.carregarTodosPedidos(
-            null, // token será pego de outro lugar
-            { limit: 1, filtroId: pvId }
-          );
-
-          if (pedidos.length > 0) {
-            // Salvar no BD
-            const { salvos, erros } = await blingBulkLoaderService.salvarNoBancoDados(
-              pedidos,
-              'orders'
-            );
-
-            resultados.importados += salvos;
-            resultados.falhados += erros;
-          }
-        } catch (e: any) {
-          console.warn(`   ❌ Erro ao importar ${pvId}: ${e.message}`);
-          resultados.falhados += 1;
-        }
-      }
-
-      // Finalizar
-      importacao.status = 'concluida';
-      importacao.resultados = {
-        ...resultados,
-        mensagem: `✅ ${resultados.importados} importado(s), ${resultados.falhados} erro(s)`,
-      };
-
-      // Registrar conclusão
-      await auditLogService.registrarImportacao(
-        `Importação manual concluída: ${importacao.id}`,
-        'sincronizacao',
-        resultados.falhados === 0 ? 'sucesso' : 'aviso',
-        {
-          canal: 'BLING',
-          totalPedidos: resultados.importados + resultados.falhados,
-          totalItens: resultados.importados,
-          detalhes: resultados.mensagem,
-        },
-        importacao.usuarioSolicitante
-      );
-
-      return importacao;
-    } catch (error: any) {
-      console.error('❌ Erro ao processar importação:', error.message);
-      importacao.status = 'erro';
-      importacao.erro = error.message;
-
-      await auditLogService.registrarImportacao(
-        `Erro na importação manual: ${importacao.id}`,
-        'sincronizacao',
-        'erro',
-        {
-          canal: 'BLING',
-          totalPedidos: importacao.pedidoVendaIds.length,
-          detalhes: error.message,
-        },
-        importacao.usuarioSolicitante
-      );
-
-      return importacao;
-    }
-  }
-
-  /**
-   * 📊 Contar pedidos por origem
-   */
-  static analisarOrigens(pedidos: PedidoblingNaoVinculado[]): Record<string, number> {
-    return pedidos.reduce((acc, pedido) => {
-      acc[pedido.origem] = (acc[pedido.origem] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-  }
-
-  /**
-   * 💰 Calcular valor total de pedidos não importados
-   */
-  static calcularValorTotal(pedidos: PedidoblingNaoVinculado[]): number {
-    return pedidos.reduce((sum, pedido) => sum + (pedido.total || 0), 0);
-  }
-
-  /**
-   * 🗂️ Agrupar por status
-   */
-  static agruparPorStatus(
-    pedidos: PedidoblingNaoVinculado[]
-  ): Record<string, PedidoblingNaoVinculado[]> {
-    return pedidos.reduce((acc, pedido) => {
-      const status = pedido.status || 'desconhecido';
-      if (!acc[status]) acc[status] = [];
-      acc[status].push(pedido);
-      return acc;
-    }, {} as Record<string, PedidoblingNaoVinculado[]>);
+    const importacao: ImportacaoManual = {
+      id: `import_${Date.now()}`,
+      pedidoVendaIds,
+      usuarioSolicitante,
+      dataSolicitacao: new Date().toISOString(),
+      status: 'pendente',
+    };
+    return importacao;
   }
 }
 

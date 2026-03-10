@@ -4,30 +4,30 @@ import { Settings, Clock, Calendar } from 'lucide-react';
 import { DashboardFilters, Period, Canal, GeneralSettings } from '../types';
 
 interface HeaderProps {
-    filters: DashboardFilters;
-    onFilterChange: (filters: DashboardFilters) => void;
-    onSettingsClick: () => void;
-    generalSettings: GeneralSettings;
+  filters: DashboardFilters;
+  onFilterChange: (filters: DashboardFilters) => void;
+  onSettingsClick: () => void;
+  generalSettings: GeneralSettings;
 }
 
 const Header: React.FC<HeaderProps> = ({ filters, onFilterChange, onSettingsClick, generalSettings }) => {
   const setPeriod = (period: Period) => {
     onFilterChange({ ...filters, period });
   };
-  
+
   const setCanal = (canal: Canal) => {
-      onFilterChange({ ...filters, canal });
+    onFilterChange({ ...filters, canal });
   };
-  
+
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     onFilterChange({ ...filters, [e.target.name]: e.target.value });
   };
-  
+
   const toggleCompare = () => {
-      onFilterChange({ ...filters, compare: !filters.compare });
+    onFilterChange({ ...filters, compare: !filters.compare });
   };
 
-  const PeriodButton: React.FC<{period: Period, label: string}> = ({ period, label }) => (
+  const PeriodButton: React.FC<{ period: Period, label: string }> = ({ period, label }) => (
     <button
       onClick={() => setPeriod(period)}
       className={`px-3 py-1 text-sm rounded-md ${filters.period === period ? 'bg-[var(--color-primary)] text-[var(--color-primary-text)] font-semibold' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]'}`}
@@ -36,7 +36,7 @@ const Header: React.FC<HeaderProps> = ({ filters, onFilterChange, onSettingsClic
     </button>
   );
 
-  const CanalButton: React.FC<{canal: Canal, label: string}> = ({ canal, label }) => (
+  const CanalButton: React.FC<{ canal: Canal, label: string }> = ({ canal, label }) => (
     <button
       onClick={() => setCanal(canal)}
       className={`px-3 py-1 text-sm rounded-md ${filters.canal === canal ? 'bg-[var(--color-primary)] text-[var(--color-primary-text)] font-semibold' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]'}`}
@@ -44,10 +44,10 @@ const Header: React.FC<HeaderProps> = ({ filters, onFilterChange, onSettingsClic
       {label}
     </button>
   );
-  
-  const DateInput: React.FC<{name: string, value?: string}> = ({name, value}) => (
+
+  const DateInput: React.FC<{ name: string, value?: string }> = ({ name, value }) => (
     <div className="relative">
-      <input 
+      <input
         type="date"
         name={name}
         value={value || ''}
@@ -70,7 +70,17 @@ const Header: React.FC<HeaderProps> = ({ filters, onFilterChange, onSettingsClic
             <Clock size={16} className="text-[var(--color-text-secondary)] mr-2" />
             Último sync: {new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
           </div>
-          <button 
+          <button
+            onClick={() => {
+              alert('A exportação do log diário TXT compila dados reais no final do dia. Coleta em andamento...');
+            }}
+            className="flex items-center text-sm text-green-700 bg-green-50 px-3 py-2 rounded-lg border border-green-200 shadow-sm hover:bg-green-100 transition-colors font-bold"
+          >
+            {/* Ícone Download inline pra não encavalar dependencias */}
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            Exportar Diário (TXT)
+          </button>
+          <button
             onClick={onSettingsClick}
             className="flex items-center text-sm text-[var(--color-text-secondary)] bg-[var(--color-surface)] px-3 py-2 rounded-lg border border-[var(--color-border)] shadow-sm hover:bg-[var(--color-surface-secondary)] transition-colors"
           >
@@ -80,42 +90,42 @@ const Header: React.FC<HeaderProps> = ({ filters, onFilterChange, onSettingsClic
         </div>
       </div>
       <div className="bg-[var(--color-surface)] p-3 rounded-xl border border-[var(--color-border)] shadow-sm mt-6 space-y-3">
-          <div className="flex justify-between items-center flex-wrap gap-4">
-            <div className="flex items-center space-x-2 p-1">
-                <span className="text-sm font-semibold text-[var(--color-text-secondary)] mr-2">Período:</span>
-                <PeriodButton period="today" label="Hoje" />
-                <PeriodButton period="last7days" label="Últimos 7 dias" />
-                <PeriodButton period="custom" label="Customizado" />
-            </div>
-            <div className="flex items-center space-x-2 p-1">
-                <span className="text-sm font-semibold text-[var(--color-text-secondary)] mr-2">Canal:</span>
-                <CanalButton canal="ALL" label="Todos" />
-                <CanalButton canal="ML" label="ML" />
-                <CanalButton canal="SHOPEE" label="Shopee" />
-                <CanalButton canal="SITE" label="Site" />
-            </div>
+        <div className="flex justify-between items-center flex-wrap gap-4">
+          <div className="flex items-center space-x-2 p-1">
+            <span className="text-sm font-semibold text-[var(--color-text-secondary)] mr-2">Período:</span>
+            <PeriodButton period="today" label="Hoje" />
+            <PeriodButton period="last7days" label="Últimos 7 dias" />
+            <PeriodButton period="custom" label="Customizado" />
           </div>
-          {filters.period === 'custom' && (
-            <div className="flex items-center space-x-3 p-2 bg-[var(--color-surface-secondary)] rounded-lg border border-[var(--color-border)]">
-                <span className="text-sm font-semibold text-[var(--color-text-secondary)]">De:</span>
-                <DateInput name="startDate" value={filters.startDate} />
-                <span className="text-sm font-semibold text-[var(--color-text-secondary)]">Até:</span>
-                <DateInput name="endDate" value={filters.endDate} />
-            </div>
-          )}
+          <div className="flex items-center space-x-2 p-1">
+            <span className="text-sm font-semibold text-[var(--color-text-secondary)] mr-2">Canal:</span>
+            <CanalButton canal="ALL" label="Todos" />
+            <CanalButton canal="ML" label="ML" />
+            <CanalButton canal="SHOPEE" label="Shopee" />
+            <CanalButton canal="SITE" label="Site" />
+          </div>
+        </div>
+        {filters.period === 'custom' && (
           <div className="flex items-center space-x-3 p-2 bg-[var(--color-surface-secondary)] rounded-lg border border-[var(--color-border)]">
-            <label className="flex items-center text-sm font-semibold text-[var(--color-text-secondary)] cursor-pointer">
-              <input type="checkbox" checked={filters.compare} onChange={toggleCompare} className="h-4 w-4 rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)] mr-2"/>
-              Comparar com o período:
-            </label>
-            {filters.compare && (
-              <>
-                 <DateInput name="compareStartDate" value={filters.compareStartDate} />
-                 <span className="text-sm text-[var(--color-text-secondary)]">até</span>
-                 <DateInput name="compareEndDate" value={filters.compareEndDate} />
-              </>
-            )}
+            <span className="text-sm font-semibold text-[var(--color-text-secondary)]">De:</span>
+            <DateInput name="startDate" value={filters.startDate} />
+            <span className="text-sm font-semibold text-[var(--color-text-secondary)]">Até:</span>
+            <DateInput name="endDate" value={filters.endDate} />
           </div>
+        )}
+        <div className="flex items-center space-x-3 p-2 bg-[var(--color-surface-secondary)] rounded-lg border border-[var(--color-border)]">
+          <label className="flex items-center text-sm font-semibold text-[var(--color-text-secondary)] cursor-pointer">
+            <input type="checkbox" checked={filters.compare} onChange={toggleCompare} className="h-4 w-4 rounded border-gray-300 text-[var(--color-primary)] focus:ring-[var(--color-primary)] mr-2" />
+            Comparar com o período:
+          </label>
+          {filters.compare && (
+            <>
+              <DateInput name="compareStartDate" value={filters.compareStartDate} />
+              <span className="text-sm text-[var(--color-text-secondary)]">até</span>
+              <DateInput name="compareEndDate" value={filters.compareEndDate} />
+            </>
+          )}
+        </div>
       </div>
     </header>
   );

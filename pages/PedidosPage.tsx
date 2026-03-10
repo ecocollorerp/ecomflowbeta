@@ -20,7 +20,7 @@ const getOrderDate = (order: { data?: string; created_at?: string }, dateSource:
     // Fallback to sale date (order.data) or if source is explicitly sale_date
     const dStr = String(order.data || '');
     if (!dStr) return null;
-    
+
     if (dStr.includes('-')) {
         const [y, m, d] = dStr.split('-');
         return new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0);
@@ -46,13 +46,13 @@ const getShippingDate = (dateStr?: string): Date | null => {
 const getDisplayStatus = (order: OrderItem, scanHistory: ScanLogItem[], dateSource: 'sale_date' | 'import_date'): DisplayStatus => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+
     const orderDate = getOrderDate(order, dateSource);
-    
+
     if (!orderDate || isNaN(orderDate.getTime())) return order.status;
-    
+
     const compareDate = new Date(orderDate);
-    compareDate.setHours(0,0,0,0);
+    compareDate.setHours(0, 0, 0, 0);
 
     if (order.status === 'BIPADO') {
         const scan = scanHistory.find(s => s.displayKey === order.orderId || s.displayKey === order.tracking);
@@ -80,7 +80,7 @@ const RegisteredReturnsTable: React.FC<{ returns: ReturnItem[], title?: string, 
             <table className="min-w-full bg-white dark:bg-gray-800 text-sm">
                 <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">
                     <tr>
-                        {['Data', 'Rastreio', 'Nome do Cliente', 'Registrado por'].map(h => 
+                        {['Data', 'Rastreio', 'Nome do Cliente', 'Registrado por'].map(h =>
                             <th key={h} className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">{h}</th>
                         )}
                         {onRemove && <th className="py-2 px-3 text-center font-semibold text-gray-500 dark:text-gray-400">Ações</th>}
@@ -139,7 +139,7 @@ type GroupedOrder = {
     isGroup: true;
     groupKey: string;
     items: OrderItem[];
-    id: string; 
+    id: string;
     orderId: string;
     tracking: string;
     data: string;
@@ -149,6 +149,9 @@ type GroupedOrder = {
     customer_name?: string;
     customer_cpf_cnpj?: string;
     data_prevista_envio?: string;
+    vinculado_bling?: boolean;
+    etiqueta_gerada?: boolean;
+    lote_id?: string;
 };
 
 const TabButton: React.FC<{ tab: Tab, activeTab: Tab, label: string, icon: React.ReactNode, onClick: (tab: Tab) => void }> = ({ tab, activeTab, label, icon, onClick }) => (
@@ -162,18 +165,20 @@ const TabButton: React.FC<{ tab: Tab, activeTab: Tab, label: string, icon: React
 
 const PedidosPage: React.FC<PedidosPageProps> = (props) => {
     const { allOrders, scanHistory, returns, onLogError, onLogReturn, currentUser, onDeleteOrders, onBulkCancelBipagem, onUpdateStatus, onRemoveReturn, onSolveOrders, generalSettings, users, skuLinks, stockItems } = props;
-    
+
     const [activeTab, setActiveTab] = useState<Tab>('consultar');
-    const [filters, setFilters] = useState({ 
-        search: '', 
-        canal: 'ALL' as Canal, 
+    const [filters, setFilters] = useState({
+        search: '',
+        canal: 'ALL' as Canal,
         status: 'ALL' as DisplayStatus | 'ALL',
         startDate: '',
         endDate: '',
         shippingDateStart: '',
         shippingDateEnd: '',
+        vinculadoBling: false,
+        etiquetaGerada: false,
     });
-    
+
     // Configuração local de fonte de data, iniciando com a global mas permitindo override
     const [dateSourceMode, setDateSourceMode] = useState<'sale_date' | 'import_date'>(generalSettings.dateSource || 'sale_date');
 
@@ -183,9 +188,9 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
     const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
     const [sortConfig, setSortConfig] = useState<{ key: SortKey, direction: 'asc' | 'desc' }>({ key: 'data', direction: 'desc' });
     const [isSelectionMenuOpen, setIsSelectionMenuOpen] = useState(false);
-    
+
     // Modal states
-    const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean, title: string, message: React.ReactNode, onConfirm: () => void }>({ isOpen: false, title: '', message: '', onConfirm: () => {} });
+    const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean, title: string, message: React.ReactNode, onConfirm: () => void }>({ isOpen: false, title: '', message: '', onConfirm: () => { } });
     const [errorModal, setErrorModal] = useState<{ isOpen: boolean, order: OrderItem | null }>({ isOpen: false, order: null });
     const [solutionModal, setSolutionModal] = useState<{ isOpen: boolean, orders: OrderItem[] }>({ isOpen: false, orders: [] });
     const [isActionLoading, setIsActionLoading] = useState(false);
@@ -216,7 +221,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
 
     const augmentedAndFilteredOrders = useMemo(() => {
         const searchLower = filters.search.toLowerCase();
-        
+
         const grouped = new Map<string, OrderItem[]>();
         allOrders.forEach(order => {
             const key = order.orderId || order.tracking;
@@ -235,11 +240,16 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                     ? 'PARCIALMENTE BIPADO'
                     : getDisplayStatus(first, scanHistory, dateSourceMode);
                 const bipadoPor = scanMap.get(first.orderId) || scanMap.get(first.tracking);
-                displayList.push({ 
-                    isGroup: true, groupKey, items, id: first.id, orderId: first.orderId, tracking: first.tracking, 
-                    data: first.data, created_at: first.created_at, status: first.status, canal: first.canal, 
-                    customer_name: first.customer_name, customer_cpf_cnpj: first.customer_cpf_cnpj, 
+                const vinculado_bling = items.some(i => i.vinculado_bling);
+                const etiqueta_gerada = items.some(i => i.etiqueta_gerada);
+                const lote_id = items.find(i => i.lote_id)?.lote_id;
+
+                displayList.push({
+                    isGroup: true, groupKey, items, id: first.id, orderId: first.orderId, tracking: first.tracking,
+                    data: first.data, created_at: first.created_at, status: first.status, canal: first.canal,
+                    customer_name: first.customer_name, customer_cpf_cnpj: first.customer_cpf_cnpj,
                     data_prevista_envio: first.data_prevista_envio, displayStatus, bipadoPor,
+                    vinculado_bling, etiqueta_gerada, lote_id,
                     bipProgress: { done: bipados, total: items.length }
                 });
             } else {
@@ -260,7 +270,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                 o.customer_cpf_cnpj?.toLowerCase().includes(searchLower) ||
                 ('isGroup' in o ? o.items.some(i => i.sku.toLowerCase().includes(searchLower)) : o.sku.toLowerCase().includes(searchLower))
             )) return false;
-            
+
             // Filtro de Data (Venda ou Importação)
             if (filters.startDate || filters.endDate) {
                 const orderDate = getOrderDate(o, dateSourceMode);
@@ -290,10 +300,15 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                     if (shippingDate > endShip) return false;
                 }
             }
-            
+
+            // Filtro por vínculo Bling
+            if (filters.vinculadoBling && !(o as any).vinculado_bling) return false;
+            // Filtro por etiqueta gerada
+            if (filters.etiquetaGerada && !(o as any).etiqueta_gerada) return false;
+
             return true;
         });
-        
+
         // Sorting
         filtered.sort((a, b) => {
             let aVal, bVal;
@@ -322,7 +337,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
     useEffect(() => {
         setPageInput(currentPage.toString());
     }, [currentPage]);
-    
+
     const handlePageInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setPageInput(e.target.value);
     };
@@ -354,10 +369,10 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
         const isSorted = sortConfig.key === sortKey;
         const Icon = sortConfig.direction === 'asc' ? ArrowUp : ArrowDown;
         return <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">
-            <button onClick={() => requestSort(sortKey)} className="flex items-center gap-1 hover:text-blue-600 dark:text-blue-400">{label}{isSorted && <Icon size={14}/>}</button>
+            <button onClick={() => requestSort(sortKey)} className="flex items-center gap-1 hover:text-blue-600 dark:text-blue-400">{label}{isSorted && <Icon size={14} />}</button>
         </th>;
     };
-    
+
     // ... Selection and Action Handlers (same as before) ...
     // --- Selection Handlers ---
     const handleSelect = (item: AugmentedOrder, isSelected: boolean) => {
@@ -371,7 +386,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
             return newSet;
         });
     };
-    
+
     const handleSelectAllOnPage = (e: React.ChangeEvent<HTMLInputElement>) => {
         const allPageIds = paginatedOrders.flatMap(o => 'isGroup' in o ? o.items.map(i => i.id) : o.id);
         if (e.target.checked) {
@@ -393,7 +408,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
         setSelectedIds(new Set());
         setIsSelectionMenuOpen(false);
     };
-    
+
     // --- Action Handlers ---
     const createConfirmAction = (title: string, message: React.ReactNode, action: () => Promise<any>) => {
         setConfirmModal({
@@ -405,18 +420,18 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                 await action();
                 setSelectedIds(new Set());
                 setIsActionLoading(false);
-                setConfirmModal({ isOpen: false, title: '', message: '', onConfirm: () => {} });
+                setConfirmModal({ isOpen: false, title: '', message: '', onConfirm: () => { } });
             }
         });
     };
-    
+
     const handleBulkDelete = () => createConfirmAction(`Excluir ${selectedIds.size} Pedidos`, `Tem certeza que deseja excluir permanentemente ${selectedIds.size} pedido(s) selecionado(s)? Esta ação é irreversível.`, () => onDeleteOrders(Array.from(selectedIds)));
-    
+
     const handleCancelBips = () => {
         const selectedOrders = allOrders.filter(o => selectedIds.has(o.id));
         if (selectedOrders.some(o => o.status !== 'BIPADO')) {
-             alert("Apenas pedidos com status 'BIPADO' podem ter a bipagem cancelada.");
-             return;
+            alert("Apenas pedidos com status 'BIPADO' podem ter a bipagem cancelada.");
+            return;
         }
         const identifiers = selectedOrders.map(o => o.orderId || o.tracking);
         const scanIdsToCancel = scanHistory.filter(s => identifiers.includes(s.displayKey)).map(s => s.id);
@@ -427,21 +442,21 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
     const handleUpdateSelectedStatus = (newStatus: OrderStatusValue) => {
         if (selectedIds.size === 0) return;
         let ordersToUpdate = allOrders.filter(o => selectedIds.has(o.id));
-        
+
         if (newStatus === 'SOLUCIONADO') {
             ordersToUpdate = ordersToUpdate.filter(o => o.status === 'ERRO');
-            if(ordersToUpdate.length === 0) {
+            if (ordersToUpdate.length === 0) {
                 alert("A ação 'Solucionar' só pode ser aplicada a pedidos com status 'ERRO'.");
                 return;
             }
         }
-        
+
         if (newStatus === 'BIPADO') { // For 'Regularizar Atraso'
-             ordersToUpdate = ordersToUpdate.filter(o => getDisplayStatus(o, scanHistory, dateSourceMode) === 'ATRASADO');
-             if(ordersToUpdate.length === 0) {
-                 alert("Apenas pedidos 'ATRASADOS' podem ser regularizados.");
-                 return;
-             }
+            ordersToUpdate = ordersToUpdate.filter(o => getDisplayStatus(o, scanHistory, dateSourceMode) === 'ATRASADO');
+            if (ordersToUpdate.length === 0) {
+                alert("Apenas pedidos 'ATRASADOS' podem ser regularizados.");
+                return;
+            }
         }
 
         if (newStatus === 'ERRO') {
@@ -464,7 +479,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
         setSelectedIds(new Set());
         return true;
     };
-    
+
     const handleConfirmSolution = async (details: any) => {
         setIsActionLoading(true);
         const success = await onSolveOrders(solutionModal.orders.map(o => o.id), details);
@@ -475,7 +490,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
         }
         return success;
     };
-    
+
     const handleRemoveReturnAction = (item: ReturnItem) => createConfirmAction('Remover Devolução', `Tem certeza que deseja remover a devolução do rastreio ${item.tracking}? O status do pedido original será revertido para NORMAL.`, () => onRemoveReturn(item.id));
 
     // --- Devolution Tab ---
@@ -483,13 +498,13 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
     const [returnCustomer, setReturnCustomer] = useState('');
     const [isLoggingReturn, setIsLoggingReturn] = useState(false);
     const [devolutionFilters, setDevolutionFilters] = useState({ startDate: '', endDate: '', canal: 'ALL' as Canal });
-    
+
     const handleLogReturnSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if(!returnTracking) return;
-        
+        if (!returnTracking) return;
+
         const orderToReturn = allOrders.find(o => o.tracking === returnTracking);
-        if(!orderToReturn || orderToReturn.status !== 'BIPADO') {
+        if (!orderToReturn || orderToReturn.status !== 'BIPADO') {
             alert("Devoluções só podem ser registradas para pedidos com status 'BIPADO'.");
             return;
         }
@@ -502,12 +517,12 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
         }
         setIsLoggingReturn(false);
     };
-    
+
     const filteredReturns = useMemo(() => {
         return returns.filter(r => {
             const order = allOrders.find(o => o.tracking === r.tracking);
             if (devolutionFilters.canal !== 'ALL' && order?.canal !== devolutionFilters.canal) return false;
-            
+
             const returnDate = new Date(r.loggedAt);
             if (devolutionFilters.startDate && returnDate < new Date(devolutionFilters.startDate + 'T00:00:00')) return false;
             if (devolutionFilters.endDate && returnDate > new Date(devolutionFilters.endDate + 'T23:59:59')) return false;
@@ -535,7 +550,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
             })
             .slice(0, 100);
     }, [scanHistory, allOrders, conferenciaFilters]);
-    
+
     const isConsultarTab = activeTab === 'consultar';
     const areSomeSelected = selectedIds.size > 0;
     const selectedOrdersForActions = allOrders.filter(o => selectedIds.has(o.id));
@@ -555,33 +570,33 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-50 flex-shrink-0">Gerenciamento de Pedidos</h1>
                 <div className="flex bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-1">
-                    <button 
+                    <button
                         onClick={() => setDateSourceMode('sale_date')}
                         className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-md transition-all ${dateSourceMode === 'sale_date' ? 'bg-blue-100 text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}
                     >
-                        <Calendar size={14}/>
+                        <Calendar size={14} />
                         Data da Venda (Planilha)
                     </button>
-                    <button 
+                    <button
                         onClick={() => setDateSourceMode('import_date')}
                         className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-md transition-all ${dateSourceMode === 'import_date' ? 'bg-blue-100 text-blue-700 shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}
                     >
-                        <RefreshCw size={14}/>
+                        <RefreshCw size={14} />
                         Data de Importação
                     </button>
                 </div>
             </div>
 
             <div className="flex-grow flex flex-col bg-white dark:bg-gray-800 p-4 sm:p-6 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
-                <div className="border-b border-gray-200 dark:border-gray-700 flex-shrink-0"><div className="flex -mb-px flex-wrap"><TabButton tab="consultar" activeTab={activeTab} label="Consultar Pedidos" icon={<ShoppingCart size={16}/>} onClick={setActiveTab} /><TabButton tab="conferencia" activeTab={activeTab} label="Conferência Pós-Bipagem" icon={<Send size={16}/>} onClick={setActiveTab} /><TabButton tab="devolucao" activeTab={activeTab} label={`Devoluções (${returns.length})`} icon={<Undo size={16}/>} onClick={setActiveTab} /></div></div>
+                <div className="border-b border-gray-200 dark:border-gray-700 flex-shrink-0"><div className="flex -mb-px flex-wrap"><TabButton tab="consultar" activeTab={activeTab} label="Consultar Pedidos" icon={<ShoppingCart size={16} />} onClick={setActiveTab} /><TabButton tab="conferencia" activeTab={activeTab} label="Conferência Pós-Bipagem" icon={<Send size={16} />} onClick={setActiveTab} /><TabButton tab="devolucao" activeTab={activeTab} label={`Devoluções (${returns.length})`} icon={<Undo size={16} />} onClick={setActiveTab} /></div></div>
 
                 <div className="mt-6 flex-1 flex flex-col min-h-0">
                     {activeTab === 'consultar' && (
-                         <div className="flex flex-col flex-1">
+                        <div className="flex flex-col flex-1">
                             {/* ... Filters ... */}
                             <div className="flex-shrink-0 flex flex-wrap gap-4 justify-between items-center mb-4">
                                 <div className="flex flex-wrap gap-4 items-center">
-                                    <div className="relative flex-grow min-w-[250px]"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" /><input type="text" placeholder="Buscar..." value={filters.search} onChange={e => handleFilterChange('search', e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md"/></div>
+                                    <div className="relative flex-grow min-w-[250px]"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" /><input type="text" placeholder="Buscar..." value={filters.search} onChange={e => handleFilterChange('search', e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md" /></div>
                                     <select value={filters.canal} onChange={e => handleFilterChange('canal', e.target.value)} className="p-2 text-sm border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800">
                                         {PLATFORM_SELECT_OPTIONS.map(option => (
                                             <option key={option.value} value={option.value}>{option.label}</option>
@@ -591,7 +606,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                         <option value="ALL">Todos Status</option>
                                         {[...ORDER_STATUS_VALUES, 'ATRASADO', 'PARCIALMENTE BIPADO'].map(status => <option key={status} value={status}>{status}</option>)}
                                     </select>
-                                    
+
                                     {/* DATA DA VENDA / IMPORTACAO */}
                                     <div className="flex items-center gap-2 p-1 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-md">
                                         <label htmlFor="startDate" className="text-sm font-medium text-gray-500 dark:text-gray-400 pl-1">De:</label>
@@ -599,7 +614,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                         <label htmlFor="endDate" className="text-sm font-medium text-gray-500 dark:text-gray-400">Até:</label>
                                         <input id="endDate" type="date" value={filters.endDate} onChange={e => handleFilterChange('endDate', e.target.value)} className="p-1.5 border border-gray-200 dark:border-gray-700 rounded-md text-sm bg-white dark:bg-gray-800" />
                                         {(filters.startDate || filters.endDate) && (
-                                            <button onClick={() => setFilters(p => ({...p, startDate: '', endDate: ''}))} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600">
+                                            <button onClick={() => setFilters(p => ({ ...p, startDate: '', endDate: '' }))} className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600">
                                                 <X size={16} />
                                             </button>
                                         )}
@@ -608,23 +623,46 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                     {/* FILTRO DE ENVIO PREVISTO (APENAS SHOPEE) */}
                                     {filters.canal === 'SHOPEE' && (
                                         <div className="flex items-center gap-2 p-1 bg-orange-50 border border-orange-200 rounded-md">
-                                            <Truck size={14} className="text-orange-500 ml-1"/>
+                                            <Truck size={14} className="text-orange-500 ml-1" />
                                             <label htmlFor="shipStart" className="text-sm font-bold text-orange-700 pl-1">Prev. Envio:</label>
                                             <input id="shipStart" type="date" value={filters.shippingDateStart} onChange={e => handleFilterChange('shippingDateStart', e.target.value)} className="p-1.5 border border-orange-200 rounded-md text-sm bg-white" />
                                             <span className="text-xs text-orange-400">até</span>
                                             <input id="shipEnd" type="date" value={filters.shippingDateEnd} onChange={e => handleFilterChange('shippingDateEnd', e.target.value)} className="p-1.5 border border-orange-200 rounded-md text-sm bg-white" />
-                                             {(filters.shippingDateStart || filters.shippingDateEnd) && (
-                                                <button onClick={() => setFilters(p => ({...p, shippingDateStart: '', shippingDateEnd: ''}))} className="p-1.5 text-orange-400 hover:text-red-600">
+                                            {(filters.shippingDateStart || filters.shippingDateEnd) && (
+                                                <button onClick={() => setFilters(p => ({ ...p, shippingDateStart: '', shippingDateEnd: '' }))} className="p-1.5 text-orange-400 hover:text-red-600">
                                                     <X size={16} />
                                                 </button>
                                             )}
                                         </div>
                                     )}
+                                    {/* BADGES FILTRO: BLING VINCULADO / ETIQUETA GERADA */}
+                                    <div className="flex items-center gap-1.5">
+                                        <button
+                                            onClick={() => setFilters(p => ({ ...p, vinculadoBling: !p.vinculadoBling }))}
+                                            className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg border transition-all ${filters.vinculadoBling
+                                                ? 'bg-indigo-600 text-white border-indigo-600 shadow-md'
+                                                : 'bg-white text-indigo-600 border-indigo-300 dark:bg-gray-800 dark:border-indigo-500 hover:bg-indigo-50'
+                                                }`}
+                                            title="Filtrar apenas pedidos vinculados ao Bling"
+                                        >
+                                            🔗 Bling
+                                        </button>
+                                        <button
+                                            onClick={() => setFilters(p => ({ ...p, etiquetaGerada: !p.etiquetaGerada }))}
+                                            className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg border transition-all ${filters.etiquetaGerada
+                                                ? 'bg-green-600 text-white border-green-600 shadow-md'
+                                                : 'bg-white text-green-600 border-green-300 dark:bg-gray-800 dark:border-green-500 hover:bg-green-50'
+                                                }`}
+                                            title="Filtrar apenas pedidos com etiqueta gerada"
+                                        >
+                                            🏷️ Etiqueta
+                                        </button>
+                                    </div>
                                 </div>
                                 {/* ... Pagination Controls ... */}
                                 <div className="flex items-center gap-2">
                                     <label htmlFor="items-per-page-top" className="text-sm font-medium text-gray-500 dark:text-gray-400">Exibir:</label>
-                                    <select 
+                                    <select
                                         id="items-per-page-top"
                                         value={itemsPerPage}
                                         onChange={(e) => {
@@ -643,8 +681,8 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                         <ChevronLeft size={16} />
                                     </button>
                                     <form onSubmit={handlePageInputSubmit} className="flex items-center gap-1 text-sm">
-                                        <input 
-                                            type="number" 
+                                        <input
+                                            type="number"
                                             value={pageInput}
                                             onChange={handlePageInputChange}
                                             onBlur={() => setPageInput(currentPage.toString())} // Revert on blur if not submitted
@@ -657,17 +695,17 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                     </button>
                                 </div>
                             </div>
-                             {selectedIds.size > 0 && (
+                            {selectedIds.size > 0 && (
                                 <div className="flex-shrink-0 flex gap-2 flex-wrap mb-4 p-2 bg-blue-50 border border-blue-200 rounded-lg">
                                     <span className="font-semibold text-blue-800 text-sm p-2">{selectedIds.size} selecionado(s)</span>
-                                    <button onClick={() => handleUpdateSelectedStatus('ERRO')} className="flex items-center gap-1 text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 p-2 rounded-md hover:brightness-95 border border-red-200 dark:border-red-700"><AlertTriangle size={14}/> Marcar Erro</button>
-                                    <button onClick={() => handleUpdateSelectedStatus('SOLUCIONADO')} disabled={!canSolve} className="flex items-center gap-1 text-sm text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/30 p-2 rounded-md hover:brightness-95 border border-green-200 dark:border-green-700 disabled:opacity-50"><CheckCircle size={14}/> Solucionar</button>
-                                    <button onClick={handleCancelBips} disabled={!canCancelBip} className="flex items-center gap-1 text-sm text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-900/30 p-2 rounded-md hover:brightness-95 border border-yellow-200 dark:border-yellow-700 disabled:opacity-50"><Undo size={14}/> Cancelar Bip</button>
+                                    <button onClick={() => handleUpdateSelectedStatus('ERRO')} className="flex items-center gap-1 text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 p-2 rounded-md hover:brightness-95 border border-red-200 dark:border-red-700"><AlertTriangle size={14} /> Marcar Erro</button>
+                                    <button onClick={() => handleUpdateSelectedStatus('SOLUCIONADO')} disabled={!canSolve} className="flex items-center gap-1 text-sm text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/30 p-2 rounded-md hover:brightness-95 border border-green-200 dark:border-green-700 disabled:opacity-50"><CheckCircle size={14} /> Solucionar</button>
+                                    <button onClick={handleCancelBips} disabled={!canCancelBip} className="flex items-center gap-1 text-sm text-yellow-700 dark:text-yellow-300 bg-yellow-50 dark:bg-yellow-900/30 p-2 rounded-md hover:brightness-95 border border-yellow-200 dark:border-yellow-700 disabled:opacity-50"><Undo size={14} /> Cancelar Bip</button>
                                     <button onClick={() => handleUpdateSelectedStatus('BIPADO')} disabled={!canRegularize} className="flex items-center gap-1 text-sm text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/20 p-2 rounded-md hover:brightness-95 disabled:opacity-50">Regularizar Atraso</button>
-                                    <button onClick={handleBulkDelete} className="flex items-center gap-1 text-sm text-gray-900 dark:text-gray-50 bg-gray-50 dark:bg-gray-700 p-2 rounded-md hover:bg-gray-200 dark:bg-gray-600"><Trash2 size={14}/> Excluir</button>
+                                    <button onClick={handleBulkDelete} className="flex items-center gap-1 text-sm text-gray-900 dark:text-gray-50 bg-gray-50 dark:bg-gray-700 p-2 rounded-md hover:bg-gray-200 dark:bg-gray-600"><Trash2 size={14} /> Excluir</button>
                                 </div>
                             )}
-                            
+
                             {/* Mobile Card View */}
                             <div className="md:hidden flex-grow overflow-auto space-y-3">
                                 {paginatedOrders.map(item => (
@@ -689,7 +727,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                         <tr>
                                             <th className="py-2 px-3 w-12 text-center relative">
                                                 <div className="flex items-center justify-center">
-                                                    <input type="checkbox" onChange={handleSelectAllOnPage} checked={paginatedOrders.length > 0 && paginatedOrders.every(o => 'isGroup' in o ? o.items.every(i => selectedIds.has(i.id)) : selectedIds.has(o.id))} className="h-4 w-4 rounded border-gray-200 dark:border-gray-700 text-blue-600 dark:text-blue-400 focus:ring-blue-500"/>
+                                                    <input type="checkbox" onChange={handleSelectAllOnPage} checked={paginatedOrders.length > 0 && paginatedOrders.every(o => 'isGroup' in o ? o.items.every(i => selectedIds.has(i.id)) : selectedIds.has(o.id))} className="h-4 w-4 rounded border-gray-200 dark:border-gray-700 text-blue-600 dark:text-blue-400 focus:ring-blue-500" />
                                                     <button onClick={() => setIsSelectionMenuOpen(prev => !prev)} className="ml-1 p-0.5 rounded-full hover:bg-gray-200 dark:bg-gray-600"><ChevronDown size={14} /></button>
                                                 </div>
                                                 {isSelectionMenuOpen && (
@@ -700,9 +738,9 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                                 )}
                                             </th>
                                             <th className="py-2 px-3 w-8"></th>
-                                            <SortableHeader label={dateSourceMode === 'sale_date' ? "Data Venda" : "Data Import."} sortKey="data"/>
+                                            <SortableHeader label={dateSourceMode === 'sale_date' ? "Data Venda" : "Data Import."} sortKey="data" />
                                             <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">Canal</th>
-                                            <SortableHeader label="Cliente" sortKey="customer_name"/>
+                                            <SortableHeader label="Cliente" sortKey="customer_name" />
                                             {isConsultarTab && generalSettings.pedidos.displayCustomerIdentifier && <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">CPF/CNPJ</th>}
                                             <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">Pedido Loja Virtual</th>
                                             <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">N° Bling</th>
@@ -710,9 +748,11 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                             <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">SKU / Produto Vinculado</th>
                                             <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">Qtd</th>
                                             <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">Cor</th>
-                                            <SortableHeader label="Status" sortKey="status"/>
+                                            <SortableHeader label="Status" sortKey="status" />
                                             <th className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">Bipagem</th>
-                                            <SortableHeader label="Bipado por" sortKey="bipadoPor"/>
+                                            <SortableHeader label="Bipado por" sortKey="bipadoPor" />
+                                            <th className="py-2 px-3 text-center font-semibold text-gray-500 dark:text-gray-400">🔗 Bling</th>
+                                            <th className="py-2 px-3 text-center font-semibold text-gray-500 dark:text-gray-400">🏷️ Etiqueta</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -720,17 +760,17 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                             const isGroup = 'isGroup' in item;
                                             const isSelected = isGroup ? item.items.every(i => selectedIds.has(i.id)) : selectedIds.has(item.id);
                                             const isExpanded = isGroup && expandedGroups.has(item.groupKey);
-                                            
-                                            const displayDate = dateSourceMode === 'import_date' && item.created_at 
-                                                ? new Date(item.created_at).toLocaleDateString('pt-BR') 
+
+                                            const displayDate = dateSourceMode === 'import_date' && item.created_at
+                                                ? new Date(item.created_at).toLocaleDateString('pt-BR')
                                                 : item.data;
-                                            
+
                                             const linkedProduct = !isGroup ? getLinkedProductName((item as OrderItem).sku) : null;
 
                                             return <React.Fragment key={item.id}>
                                                 <tr className={isSelected ? 'bg-blue-50 dark:bg-blue-900/20' : ''}>
                                                     <td className="py-2 px-3 text-center"><input type="checkbox" checked={isSelected} onChange={(e) => handleSelect(item, e.target.checked)} className="h-4 w-4 rounded border-gray-200 dark:border-gray-700 text-blue-600 dark:text-blue-400 focus:ring-blue-500" /></td>
-                                                    <td className="py-2 px-3 text-center">{isGroup && <button onClick={() => setExpandedGroups(p => {const n=new Set(p); n.has(item.groupKey)?n.delete(item.groupKey):n.add(item.groupKey); return n;})}>{isExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}</button>}</td>
+                                                    <td className="py-2 px-3 text-center">{isGroup && <button onClick={() => setExpandedGroups(p => { const n = new Set(p); n.has(item.groupKey) ? n.delete(item.groupKey) : n.add(item.groupKey); return n; })}>{isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button>}</td>
                                                     <td className="py-2 px-3">{displayDate}</td>
                                                     <td className="py-2 px-3">{item.canal}</td>
                                                     <td className="py-2 px-3">{item.customer_name || '-'}</td>
@@ -742,7 +782,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                                         {isGroup ? `Múltiplos (${item.items.length})` : (
                                                             <div>
                                                                 <div className="font-bold text-slate-800">{(item as OrderItem).sku}</div>
-                                                                {linkedProduct && <div className="text-[10px] text-green-600 flex items-center gap-1"><LinkIcon size={10}/> {linkedProduct}</div>}
+                                                                {linkedProduct && <div className="text-[10px] text-green-600 flex items-center gap-1"><LinkIcon size={10} /> {linkedProduct}</div>}
                                                             </div>
                                                         )}
                                                     </td>
@@ -758,13 +798,12 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                                                 {item.bipProgress.total > 1 && (
                                                                     <div className="w-full h-1.5 bg-gray-200 rounded-full">
                                                                         <div
-                                                                            className={`h-full rounded-full transition-all ${
-                                                                                item.bipProgress.done === item.bipProgress.total
-                                                                                    ? 'bg-green-500'
-                                                                                    : item.bipProgress.done > 0
+                                                                            className={`h-full rounded-full transition-all ${item.bipProgress.done === item.bipProgress.total
+                                                                                ? 'bg-green-500'
+                                                                                : item.bipProgress.done > 0
                                                                                     ? 'bg-amber-400'
                                                                                     : 'bg-gray-300'
-                                                                            }`}
+                                                                                }`}
                                                                             style={{ width: `${(item.bipProgress.done / item.bipProgress.total) * 100}%` }}
                                                                         />
                                                                     </div>
@@ -773,6 +812,20 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                                         )}
                                                     </td>
                                                     <td className="py-2 px-3">{item.bipadoPor || '-'}</td>
+                                                    {/* Badge Bling vinculado */}
+                                                    <td className="py-2 px-3 text-center">
+                                                        {(item as any).vinculado_bling
+                                                            ? <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">🔗 Vinculado</span>
+                                                            : <span className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-400">—</span>
+                                                        }
+                                                    </td>
+                                                    {/* Badge Etiqueta gerada */}
+                                                    <td className="py-2 px-3 text-center">
+                                                        {(item as any).etiqueta_gerada
+                                                            ? <span className="inline-flex items-center gap-1 text-[10px] font-black px-2 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-200">🏷️ Gerada</span>
+                                                            : <span className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-100 text-gray-400">—</span>
+                                                        }
+                                                    </td>
                                                 </tr>
                                                 {isExpanded && isGroup && item.items.map(subItem => {
                                                     const subLinked = getLinkedProductName(subItem.sku);
@@ -781,7 +834,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                                             <td colSpan={isConsultarTab && generalSettings.pedidos.displayCustomerIdentifier ? 7 : 6}></td>
                                                             <td className="py-1 px-3 pl-8">
                                                                 <div className="font-bold text-slate-700">{subItem.sku}</div>
-                                                                {subLinked && <div className="text-[10px] text-green-600 flex items-center gap-1"><LinkIcon size={10}/> {subLinked}</div>}
+                                                                {subLinked && <div className="text-[10px] text-green-600 flex items-center gap-1"><LinkIcon size={10} /> {subLinked}</div>}
                                                             </td>
                                                             <td className="py-1 px-3 text-center font-bold">{subItem.qty_final}</td>
                                                             <td className="py-1 px-3">{subItem.color}</td>
@@ -797,7 +850,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                             <div className="flex-shrink-0">
                                 <Pagination currentPage={currentPage} totalItems={augmentedAndFilteredOrders.length} itemsPerPage={itemsPerPage} onPageChange={setCurrentPage} onItemsPerPageChange={setItemsPerPage} />
                             </div>
-                         </div>
+                        </div>
                     )}
                     {activeTab === 'conferencia' && (
                         // ... (rest of the file remains same) ...
@@ -805,56 +858,56 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                             <div className="flex flex-wrap gap-4 justify-between items-center mb-4">
                                 <div className="flex flex-wrap gap-4 items-center">
                                     <h3 className="text-lg font-bold text-gray-900 dark:text-gray-50">Últimos Pedidos Bipados</h3>
-                                    <div className="relative"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" /><input type="text" placeholder="Buscar SKU/Cor..." value={conferenciaFilters.search} onChange={e => setConferenciaFilters(p => ({...p, search: e.target.value}))} className="w-full pl-9 pr-3 py-2 text-sm border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md"/></div>
-                                    <select value={conferenciaFilters.operatorId} onChange={e => setConferenciaFilters(p => ({...p, operatorId: e.target.value}))} className="p-2 text-sm border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md">
+                                    <div className="relative"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" /><input type="text" placeholder="Buscar SKU/Cor..." value={conferenciaFilters.search} onChange={e => setConferenciaFilters(p => ({ ...p, search: e.target.value }))} className="w-full pl-9 pr-3 py-2 text-sm border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md" /></div>
+                                    <select value={conferenciaFilters.operatorId} onChange={e => setConferenciaFilters(p => ({ ...p, operatorId: e.target.value }))} className="p-2 text-sm border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md">
                                         <option value="ALL">Todos Operadores</option>
                                         {users.filter(u => Array.isArray(u.setor) && u.setor.includes('EMBALAGEM')).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                                     </select>
                                 </div>
                             </div>
-                             <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
-                                 <table className="min-w-full bg-white dark:bg-gray-800 text-sm">
-                                     <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0"><tr>{['Horário Bip', 'Operador', 'Pedido', 'Itens', 'Ações'].map(h => <th key={h} className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">{h}</th>)}</tr></thead>
-                                     <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                                         {conferenciaScans.map(({ scan, order }) => (<tr key={scan.id}>
-                                             <td className="py-2 px-3">{scan.time && !isNaN(scan.time.getTime()) ? scan.time.toLocaleString('pt-BR') : 'Data inválida'}</td>
-                                             <td className="py-2 px-3">{scan.user}</td>
-                                             <td className="py-2 px-3 font-mono">{order!.orderId || order!.tracking}</td>
-                                             <td className="py-2 px-3">{order!.sku} ({order!.qty_final} un) - {order!.color}</td>
-                                             <td className="py-2 px-3"><button onClick={() => setErrorModal({ isOpen: true, order })} className="flex items-center gap-1 text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 p-1 rounded-md hover:brightness-95 border border-red-200 dark:border-red-700"><AlertTriangle size={14}/> Lançar Erro</button></td>
-                                         </tr>))}
+                            <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                                <table className="min-w-full bg-white dark:bg-gray-800 text-sm">
+                                    <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0"><tr>{['Horário Bip', 'Operador', 'Pedido', 'Itens', 'Ações'].map(h => <th key={h} className="py-2 px-3 text-left font-semibold text-gray-500 dark:text-gray-400">{h}</th>)}</tr></thead>
+                                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                        {conferenciaScans.map(({ scan, order }) => (<tr key={scan.id}>
+                                            <td className="py-2 px-3">{scan.time && !isNaN(scan.time.getTime()) ? scan.time.toLocaleString('pt-BR') : 'Data inválida'}</td>
+                                            <td className="py-2 px-3">{scan.user}</td>
+                                            <td className="py-2 px-3 font-mono">{order!.orderId || order!.tracking}</td>
+                                            <td className="py-2 px-3">{order!.sku} ({order!.qty_final} un) - {order!.color}</td>
+                                            <td className="py-2 px-3"><button onClick={() => setErrorModal({ isOpen: true, order })} className="flex items-center gap-1 text-sm text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/30 p-1 rounded-md hover:brightness-95 border border-red-200 dark:border-red-700"><AlertTriangle size={14} /> Lançar Erro</button></td>
+                                        </tr>))}
                                         {conferenciaScans.length === 0 && <tr><td colSpan={5} className="text-center py-8 text-gray-500 dark:text-gray-400">Nenhuma bipagem encontrada para os filtros.</td></tr>}
-                                     </tbody>
-                                 </table>
-                             </div>
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     )}
                     {activeTab === 'devolucao' && (
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                           <div className="md:col-span-1">
+                            <div className="md:col-span-1">
                                 <h3 className="text-lg font-bold text-gray-900 dark:text-gray-50 mb-4">Registrar Nova Devolução</h3>
                                 <form onSubmit={handleLogReturnSubmit} className="space-y-4 p-4 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-lg">
-                                    <div><label className="text-sm font-medium">Código de Rastreio</label><input type="text" value={returnTracking} onChange={e => setReturnTracking(e.target.value)} className="w-full mt-1 p-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md" required/></div>
-                                    <div><label className="text-sm font-medium">Nome do Cliente (Opcional)</label><input type="text" value={returnCustomer} onChange={e => setReturnCustomer(e.target.value)} className="w-full mt-1 p-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md"/></div>
-                                    <button type="submit" disabled={isLoggingReturn} className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-blue-600 text-white font-semibold rounded-lg disabled:opacity-50">{isLoggingReturn ? <Loader2 className="animate-spin" size={16}/> : <PlusCircle size={16}/>} Registrar</button>
+                                    <div><label className="text-sm font-medium">Código de Rastreio</label><input type="text" value={returnTracking} onChange={e => setReturnTracking(e.target.value)} className="w-full mt-1 p-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md" required /></div>
+                                    <div><label className="text-sm font-medium">Nome do Cliente (Opcional)</label><input type="text" value={returnCustomer} onChange={e => setReturnCustomer(e.target.value)} className="w-full mt-1 p-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md" /></div>
+                                    <button type="submit" disabled={isLoggingReturn} className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-blue-600 text-white font-semibold rounded-lg disabled:opacity-50">{isLoggingReturn ? <Loader2 className="animate-spin" size={16} /> : <PlusCircle size={16} />} Registrar</button>
                                 </form>
-                           </div>
-                           <div className="md:col-span-2">
+                            </div>
+                            <div className="md:col-span-2">
                                 <div className="flex flex-wrap gap-4 items-center mb-4">
-                                    <input type="date" value={devolutionFilters.startDate} onChange={e => setDevolutionFilters(p => ({...p, startDate: e.target.value}))} className="p-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md text-sm" />
-                                    <input type="date" value={devolutionFilters.endDate} onChange={e => setDevolutionFilters(p => ({...p, endDate: e.target.value}))} className="p-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md text-sm" />
-                                    <select value={devolutionFilters.canal} onChange={e => setDevolutionFilters(p => ({...p, canal: e.target.value as Canal}))} className="p-2 text-sm border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md">
+                                    <input type="date" value={devolutionFilters.startDate} onChange={e => setDevolutionFilters(p => ({ ...p, startDate: e.target.value }))} className="p-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md text-sm" />
+                                    <input type="date" value={devolutionFilters.endDate} onChange={e => setDevolutionFilters(p => ({ ...p, endDate: e.target.value }))} className="p-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md text-sm" />
+                                    <select value={devolutionFilters.canal} onChange={e => setDevolutionFilters(p => ({ ...p, canal: e.target.value as Canal }))} className="p-2 text-sm border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md">
                                         <option value="ALL">Todos Canais</option><option value="ML">Mercado Livre</option><option value="SHOPEE">Shopee</option>
                                     </select>
                                 </div>
                                 <RegisteredReturnsTable returns={filteredReturns} onRemove={handleRemoveReturnAction} />
-                           </div>
+                            </div>
                         </div>
                     )}
                 </div>
             </div>
-            
-            <ConfirmActionModal isOpen={confirmModal.isOpen} onClose={() => setConfirmModal(p => ({...p, isOpen: false}))} onConfirm={confirmModal.onConfirm} title={confirmModal.title} message={confirmModal.message} isConfirming={isActionLoading} />
+
+            <ConfirmActionModal isOpen={confirmModal.isOpen} onClose={() => setConfirmModal(p => ({ ...p, isOpen: false }))} onConfirm={confirmModal.onConfirm} title={confirmModal.title} message={confirmModal.message} isConfirming={isActionLoading} />
             <LogErrorModal isOpen={errorModal.isOpen} onClose={() => setErrorModal({ isOpen: false, order: null })} order={errorModal.order} onConfirm={handleConfirmLogError} errorReasons={generalSettings.pedidos.errorReasons} />
             <SolutionModal isOpen={solutionModal.isOpen} onClose={() => setSolutionModal({ isOpen: false, orders: [] })} orders={solutionModal.orders} onConfirm={handleConfirmSolution as any} resolutionTypes={generalSettings.pedidos.resolutionTypes} currentUser={currentUser} />
         </div>
@@ -886,7 +939,7 @@ const OrderCard: React.FC<{ item: AugmentedOrder; isSelected: boolean; onSelect:
         <div className={`p-3 rounded-lg border ${isSelected ? 'bg-blue-50 border-blue-300' : 'bg-gray-50 dark:bg-gray-700 border-gray-200 dark:border-gray-700'}`}>
             <div className="flex justify-between items-start">
                 <div className="flex items-start gap-3">
-                    <input type="checkbox" checked={isSelected} onChange={e => onSelect(e.target.checked)} className="h-5 w-5 mt-1"/>
+                    <input type="checkbox" checked={isSelected} onChange={e => onSelect(e.target.checked)} className="h-5 w-5 mt-1" />
                     <div>
                         <p className="font-bold text-gray-900 dark:text-gray-50">{item.customer_name || 'Cliente não informado'}</p>
                         <p className="text-xs text-gray-500 dark:text-gray-400 font-mono">{item.orderId}</p>
@@ -914,7 +967,7 @@ const OrderCard: React.FC<{ item: AugmentedOrder; isSelected: boolean; onSelect:
                 ) : (
                     <p><strong>Itens:</strong> {item.items.length} SKUs, {item.items.reduce((acc, i) => acc + i.qty_final, 0)} unidades</p>
                 )}
-                
+
                 {isExpanded && isGroup && (
                     <div className="pl-4 mt-2 space-y-1 border-l-2">
                         {item.items.map(sub => (
@@ -925,7 +978,7 @@ const OrderCard: React.FC<{ item: AugmentedOrder; isSelected: boolean; onSelect:
                         ))}
                     </div>
                 )}
-                 <div>
+                <div>
                     <p><strong>Data:</strong> {item.data}</p>
                     {item.bipadoPor && <p><strong>Bipado por:</strong> {item.bipadoPor}</p>}
                 </div>

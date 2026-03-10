@@ -56,9 +56,10 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
   const [isCarregandoPedidos, setIsCarregandoPedidos] = useState(false);
   const [pedidosSelecionados, setPedidosSelecionados] = useState<Set<string>>(new Set());
   const [isGerandoNfe, setIsGerandoNfe] = useState(false);
+  const [isGerandoEmitindo, setIsGerandoEmitindo] = useState(false);
   const [filtroTexto, setFiltroTexto] = useState('');
   const [apenasComEtiqueta, setApenasComEtiqueta] = useState(false);
-  // Canal de exibição separada dentro do resultado
+  const [quantidadeDesejada, setQuantidadeDesejada] = useState<number>(200); // Mudar de 100 pra qtd flex
   const [canalFiltro, setCanalFiltro] = useState<'TODOS' | 'ML' | 'SHOPEE' | 'SITE'>('TODOS');
 
   // Quando a plataforma muda, limpa lista e busca automaticamente
@@ -70,8 +71,7 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
       setCanalFiltro('TODOS');
       buscarPedidosEmAberto();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [plataformaSelecionada, apenasComEtiqueta]);
+  }, [plataformaSelecionada, apenasComEtiqueta, quantidadeDesejada]);
 
   // Buscar pedidos em aberto por plataforma
   const buscarPedidosEmAberto = async () => {
@@ -85,8 +85,8 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
       const resultado = await ImportacaoControllerService.buscarPedidosEmAbertoPorPlataforma(
         token,
         plataformaSelecionada,
-        { 
-          quantidadeDesejada: 9999,
+        {
+          quantidadeDesejada: quantidadeDesejada, // Utiliza o seletor da UI
           apenasComEtiqueta: plataformaSelecionada === 'MERCADO_LIVRE' && apenasComEtiqueta
         }
       );
@@ -147,12 +147,34 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
 
       const data = await response.json();
 
-      if (data.success) {
+      if (data.success || data.ok > 0) {
+        // --- NOVO: Gravar Lote no LocalStorage ---
+        try {
+          const novoLote = {
+            id: `LOTE-${Date.now()}`,
+            data: new Date().toISOString(),
+            tipo: 'GERACAO_APENAS',
+            total: data.total,
+            ok: data.ok,
+            fail: data.fail,
+            nfes: data.resultados?.filter((r: any) => r.success).map((r: any) => ({
+              pedidoVendaId: r.pedidoVendaId,
+              nfeId: r.nfe?.id,
+              nfeNumero: r.nfe?.numero
+            })) || []
+          };
+          const lotesAnteriores = JSON.parse(localStorage.getItem('nfe_lotes_diarios') || '[]');
+          localStorage.setItem('nfe_lotes_diarios', JSON.stringify([novoLote, ...lotesAnteriores]));
+        } catch (e) {
+          console.error('Erro ao salvar lote no local storage', e);
+        }
+        // -----------------------------------------
+
         addToast?.(`✅ ${data.ok}/${data.total} NF-e(s) gerada(s) com sucesso!`, 'success');
-        
+
         // Limpar seleção após sucesso
         setPedidosSelecionados(new Set());
-        
+
         // Opcional: recarregar lista de pedidos
         buscarPedidosEmAberto();
       } else {
@@ -163,6 +185,63 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
       addToast?.(`❌ Erro ao gerar NF-e: ${error.message}`, 'error');
     } finally {
       setIsGerandoNfe(false);
+    }
+  };
+
+  // Gerar + Emitir NF-e automaticamente
+  const gerarEEmitirNfe = async () => {
+    if (pedidosSelecionados.size === 0) {
+      addToast?.('❌ Selecione pelo menos um pedido', 'error');
+      return;
+    }
+    setIsGerandoEmitindo(true);
+    try {
+      const response = await fetch('/api/bling/nfe/gerar-emitir-lote', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          pedidoVendaIds: Array.from(pedidosSelecionados),
+          emitirAutomaticamente: true,
+        })
+      });
+      const data = await response.json();
+      if (data.success || data.ok > 0) {
+        // --- NOVO: Gravar Lote no LocalStorage ---
+        try {
+          const novoLote = {
+            id: `LOTE-${Date.now()}`,
+            data: new Date().toISOString(),
+            tipo: 'GERACAO_EMISSAO',
+            total: data.total,
+            ok: data.ok,
+            fail: data.fail,
+            nfes: data.resultados?.filter((r: any) => r.success).map((r: any) => ({
+              pedidoVendaId: r.pedidoVendaId,
+              nfeId: r.nfe?.id,
+              nfeNumero: r.nfe?.numero
+            })) || []
+          };
+          const lotesAnteriores = JSON.parse(localStorage.getItem('nfe_lotes_diarios') || '[]');
+          localStorage.setItem('nfe_lotes_diarios', JSON.stringify([novoLote, ...lotesAnteriores]));
+        } catch (e) {
+          console.error('Erro ao salvar lote no local storage', e);
+        }
+        // -----------------------------------------
+
+        addToast?.(`✅ ${data.ok}/${data.total} NF-e(s) gerada(s) e emitida(s) com sucesso!`, 'success');
+        setPedidosSelecionados(new Set());
+        buscarPedidosEmAberto();
+      } else {
+        addToast?.(`❌ ${data.fail}/${data.total} NF-e(s) falharam. Veja o console.`, 'error');
+        console.error('Erros Gerar+Emitir:', data.resultados);
+      }
+    } catch (error: any) {
+      addToast?.(`❌ Erro: ${error.message}`, 'error');
+    } finally {
+      setIsGerandoEmitindo(false);
     }
   };
 
@@ -222,11 +301,10 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <button
                 onClick={() => setPlataformaSelecionada('MERCADO_LIVRE')}
-                className={`p-4 rounded-lg border-2 transition ${
-                  plataformaSelecionada === 'MERCADO_LIVRE'
-                    ? 'border-yellow-500 bg-yellow-50'
-                    : 'border-gray-200 hover:border-yellow-300'
-                }`}
+                className={`p-4 rounded-lg border-2 transition ${plataformaSelecionada === 'MERCADO_LIVRE'
+                  ? 'border-yellow-500 bg-yellow-50'
+                  : 'border-gray-200 hover:border-yellow-300'
+                  }`}
               >
                 <div className="flex items-center gap-3">
                   <Package size={24} className="text-yellow-600" />
@@ -239,11 +317,10 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
 
               <button
                 onClick={() => setPlataformaSelecionada('SHOPEE')}
-                className={`p-4 rounded-lg border-2 transition ${
-                  plataformaSelecionada === 'SHOPEE'
-                    ? 'border-red-500 bg-red-50'
-                    : 'border-gray-200 hover:border-red-300'
-                }`}
+                className={`p-4 rounded-lg border-2 transition ${plataformaSelecionada === 'SHOPEE'
+                  ? 'border-red-500 bg-red-50'
+                  : 'border-gray-200 hover:border-red-300'
+                  }`}
               >
                 <div className="flex items-center gap-3">
                   <ShoppingCart size={24} className="text-red-600" />
@@ -256,11 +333,10 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
 
               <button
                 onClick={() => setPlataformaSelecionada('TODOS')}
-                className={`p-4 rounded-lg border-2 transition ${
-                  plataformaSelecionada === 'TODOS'
-                    ? 'border-blue-500 bg-blue-50'
-                    : 'border-gray-200 hover:border-blue-300'
-                }`}
+                className={`p-4 rounded-lg border-2 transition ${plataformaSelecionada === 'TODOS'
+                  ? 'border-blue-500 bg-blue-50'
+                  : 'border-gray-200 hover:border-blue-300'
+                  }`}
               >
                 <div className="flex items-center gap-3">
                   <Package size={24} className="text-blue-600" />
@@ -281,19 +357,36 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                   <h3 className="text-lg font-bold text-gray-900">
                     Pedidos de {plataformaSelecionada === 'MERCADO_LIVRE' ? getPlatformLabel('ML').displayName : (plataformaSelecionada === 'SHOPEE' ? getPlatformLabel('SHOPEE').displayName : 'Todas as Plataformas')}
                   </h3>
-                  
-                  {/* Checkbox para filtrar por etiqueta disponível no MercadoLivre */}
-                  {plataformaSelecionada === 'MERCADO_LIVRE' && (
-                    <label className="flex items-center gap-2 mt-2 text-sm cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={apenasComEtiqueta}
-                        onChange={(e) => setApenasComEtiqueta(e.target.checked)}
-                        className="w-4 h-4 rounded"
-                      />
-                      <span className="text-gray-700">Apenas pedidos com etiqueta disponível</span>
+
+                  <div className="flex flex-wrap items-center gap-4 mt-2">
+                    {/* Checkbox para filtrar por etiqueta disponível no MercadoLivre */}
+                    {plataformaSelecionada === 'MERCADO_LIVRE' && (
+                      <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={apenasComEtiqueta}
+                          onChange={(e) => setApenasComEtiqueta(e.target.checked)}
+                          className="w-4 h-4 rounded"
+                        />
+                        <span className="text-gray-700">Apenas pedidos com etiqueta</span>
+                      </label>
+                    )}
+
+                    <label className="flex items-center gap-2 text-sm">
+                      <span className="text-gray-700 font-medium">Buscar até:</span>
+                      <select
+                        value={quantidadeDesejada}
+                        onChange={(e) => setQuantidadeDesejada(Number(e.target.value))}
+                        className="border border-gray-300 rounded p-1 text-sm bg-gray-50 text-gray-800"
+                      >
+                        <option value={50}>50 Pedidos</option>
+                        <option value={100}>100 Pedidos</option>
+                        <option value={200}>200 Pedidos</option>
+                        <option value={500}>500 Pedidos</option>
+                        <option value={1000}>1000 Pedidos</option>
+                      </select>
                     </label>
-                  )}
+                  </div>
                 </div>
                 <button
                   onClick={buscarPedidosEmAberto}
@@ -346,27 +439,55 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                     <p className="text-sm text-gray-600">
                       {pedidosFiltrados.length} de {pedidosEmAberto.length} pedidos
                     </p>
-                    <button
-                      onClick={gerarNfeParaSelecionados}
-                      disabled={pedidosSelecionados.size === 0 || isGerandoNfe}
-                      className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
-                    >
-                      {isGerandoNfe ? (
-                        <Loader2 size={16} className="animate-spin" />
-                      ) : (
-                        <Truck size={16} />
-                      )}
-                      Gerar NF-e ({pedidosSelecionados.size})
-                    </button>
+                    {/* Selecionar Todos */}
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-1 text-xs font-bold text-gray-500 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={pedidosFiltrados.length > 0 && pedidosFiltrados.every(p => pedidosSelecionados.has(p.id))}
+                          onChange={e => {
+                            const next = new Set(pedidosSelecionados);
+                            if (e.target.checked) pedidosFiltrados.forEach(p => next.add(p.id));
+                            else pedidosFiltrados.forEach(p => next.delete(p.id));
+                            setPedidosSelecionados(next);
+                          }}
+                          className="w-4 h-4 rounded"
+                        />
+                        Todos
+                      </label>
+                      <button
+                        onClick={gerarNfeParaSelecionados}
+                        disabled={pedidosSelecionados.size === 0 || isGerandoNfe || isGerandoEmitindo}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white text-xs font-black rounded-xl hover:bg-green-700 disabled:opacity-50 uppercase tracking-wide"
+                      >
+                        {isGerandoNfe ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <Truck size={14} />
+                        )}
+                        Gerar NF-e ({pedidosSelecionados.size})
+                      </button>
+                      <button
+                        onClick={gerarEEmitirNfe}
+                        disabled={pedidosSelecionados.size === 0 || isGerandoNfe || isGerandoEmitindo}
+                        className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 text-white text-xs font-black rounded-xl hover:bg-indigo-700 disabled:opacity-50 uppercase tracking-wide"
+                      >
+                        {isGerandoEmitindo ? (
+                          <Loader2 size={14} className="animate-spin" />
+                        ) : (
+                          <CheckCircle size={14} />
+                        )}
+                        Gerar e Emitir ({pedidosSelecionados.size})
+                      </button>
+                    </div>
                   </div>
 
                   <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
                     {pedidosFiltrados.map((pedido) => (
                       <div
                         key={pedido.id}
-                        className={`p-4 border-b border-gray-100 hover:bg-gray-50 ${
-                          pedidosSelecionados.has(pedido.id) ? 'bg-blue-50' : ''
-                        }`}
+                        className={`p-4 border-b border-gray-100 hover:bg-gray-50 ${pedidosSelecionados.has(pedido.id) ? 'bg-blue-50' : ''
+                          }`}
                       >
                         <div className="flex items-center gap-3">
                           <input
@@ -393,9 +514,18 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                                   </span>
                                 )}
                               </p>
-                              <p className="text-sm text-gray-500">
-                                {new Date(pedido.dataCompra).toLocaleDateString('pt-BR')}
-                              </p>
+                              <div className="flex items-center gap-2">
+                                {/* Badge canal */}
+                                {(() => {
+                                  const c = detectarCanal(pedido);
+                                  const badgeCls = c === 'ML' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' : c === 'SHOPEE' ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-blue-100 text-blue-700 border-blue-200';
+                                  const badgeLbl = c === 'ML' ? '🛡️ ML' : c === 'SHOPEE' ? '🛡️ Shopee' : '🌐 Site';
+                                  return <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border ${badgeCls}`}>{badgeLbl}</span>;
+                                })()}
+                                <p className="text-sm text-gray-500">
+                                  {new Date(pedido.dataCompra).toLocaleDateString('pt-BR')}
+                                </p>
+                              </div>
                             </div>
                             <p className="text-sm text-gray-600">
                               Cliente: {pedido.cliente.nome}

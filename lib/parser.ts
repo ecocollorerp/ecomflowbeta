@@ -9,10 +9,10 @@ const safeUpper = (val: any) => String(val || '').trim().toUpperCase();
 // Helper para normalizar datas
 const normalizeDate = (rawDate: any): string => {
     if (!rawDate) return '';
-    
+
     if (rawDate instanceof Date) {
         const userTimezoneOffset = rawDate.getTimezoneOffset() * 60000;
-        const dateAdjusted = new Date(rawDate.getTime() - userTimezoneOffset); 
+        const dateAdjusted = new Date(rawDate.getTime() - userTimezoneOffset);
         const year = dateAdjusted.getFullYear();
         const month = String(dateAdjusted.getMonth() + 1).padStart(2, '0');
         const day = String(dateAdjusted.getDate()).padStart(2, '0');
@@ -24,23 +24,23 @@ const normalizeDate = (rawDate: any): string => {
     if (dateStr.includes(' ')) {
         dateStr = dateStr.split(' ')[0];
     }
-    
+
     // Formatos DD/MM/YYYY ou DD-MM-YYYY
     const dmyMatch = dateStr.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
     if (dmyMatch) {
         return `${dmyMatch[3]}-${dmyMatch[2].padStart(2, '0')}-${dmyMatch[1].padStart(2, '0')}`;
     }
-    
+
     // Formatos YYYY-MM-DD
     const ymdMatch = dateStr.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/);
     if (ymdMatch) {
         return `${ymdMatch[1]}-${ymdMatch[2].padStart(2, '0')}-${ymdMatch[3].padStart(2, '0')}`;
     }
-    
+
     // Tenta parse nativo
     const parsed = new Date(dateStr);
     if (!isNaN(parsed.getTime())) return parsed.toISOString().split('T')[0];
-    
+
     return '';
 };
 
@@ -104,7 +104,7 @@ export const extractShippingDates = (
 
     // OBTEM A CONFIGURAÇÃO ESPECÍFICA DO CANAL
     mappingToUse = settings.importer[detectedChannel.toLowerCase() as 'ml' | 'shopee' | 'site'];
-    
+
     // Se não tiver coluna de data de envio configurada, tenta usar data de venda ou retorna vazio
     // Prioriza dateShipping (ex: Coluna H da Shopee)
     const dateCol = mappingToUse.dateShipping || mappingToUse.date;
@@ -127,16 +127,16 @@ export const extractShippingDates = (
 
 
 export const parseExcelFile = (
-    fileBuffer: ArrayBuffer, 
-    fileName: string, 
-    allExistingOrders: OrderItem[], 
-    settings: GeneralSettings, 
-    options: { 
-        importCpf: boolean; 
+    fileBuffer: ArrayBuffer,
+    fileName: string,
+    allExistingOrders: OrderItem[],
+    settings: GeneralSettings,
+    options: {
+        importCpf: boolean;
         importName: boolean;
         allowedShippingDates?: string[]; // Array of YYYY-MM-DD strings
     },
-    forcedCanal?: Canal | 'AUTO' 
+    forcedCanal?: Canal | 'AUTO'
 ): ProcessedData => {
     // 1. Ler o arquivo bruto
     const workbook = XLSX.read(fileBuffer, { type: 'array', cellDates: true });
@@ -145,7 +145,7 @@ export const parseExcelFile = (
 
     // 2. Converter para Array de Arrays para "escanear" o cabeçalho
     const rawData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
-    
+
     let canalDetectado: Canal | null = null;
     let headerRowIndex = -1;
     let mappingToUse: ColumnMapping | null = null;
@@ -190,7 +190,7 @@ export const parseExcelFile = (
         headerRowIndex = bestMatch.rowIndex;
         canalDetectado = bestMatch.channel;
         if (canalDetectado) {
-            mappingToUse = settings.importer[canalDetectado.toLowerCase() as 'ml'|'shopee'|'site'];
+            mappingToUse = settings.importer[canalDetectado.toLowerCase() as 'ml' | 'shopee' | 'site'];
         }
     }
 
@@ -198,11 +198,11 @@ export const parseExcelFile = (
     if (!mappingToUse || headerRowIndex === -1) {
         if (forcedCanal && forcedCanal !== 'AUTO') {
             canalDetectado = forcedCanal;
-            mappingToUse = settings.importer[forcedCanal.toLowerCase() as 'ml'|'shopee'|'site'];
+            mappingToUse = settings.importer[forcedCanal.toLowerCase() as 'ml' | 'shopee' | 'site'];
             const isML = forcedCanal === 'ML';
             headerRowIndex = (isML && rawData.length > 5 && Array.isArray(rawData[5])) ? 5 : 0;
         } else {
-             throw new Error(`Não foi possível detectar o formato da planilha automaticamente.`);
+            throw new Error(`Não foi possível detectar o formato da planilha automaticamente.`);
         }
     }
 
@@ -218,7 +218,7 @@ export const parseExcelFile = (
         const hasComma = str.includes(',');
         const hasDot = str.includes('.');
         if (hasComma && hasDot) {
-            if (str.indexOf('.') < str.indexOf(',')) { str = str.replace(/\./g, '').replace(',', '.'); } 
+            if (str.indexOf('.') < str.indexOf(',')) { str = str.replace(/\./g, '').replace(',', '.'); }
             else { str = str.replace(/,/g, ''); }
         } else if (hasComma) { str = str.replace(',', '.'); }
         str = str.replace(/[^0-9.-]/g, '');
@@ -232,17 +232,17 @@ export const parseExcelFile = (
 
     const statusColumnName = mappingToUse!.statusColumn;
     const acceptedStatusValues = (mappingToUse!.acceptedStatusValues || []).map(v => v.trim().toLowerCase());
-    
+
     // Set for O(1) lookup
     const allowedDatesSet = options.allowedShippingDates ? new Set(options.allowedShippingDates) : null;
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
-        
+
         // --- FILTRO DE DATA ---
         const dataEnvioStr = normalizeDate(row[mappingToUse!.dateShipping]);
         const dataVendaStr = normalizeDate(row[mappingToUse!.date]);
-        
+
         // Data principal para filtro é a de envio, fallback para venda se não houver envio
         const dateToCheck = dataEnvioStr || dataVendaStr;
 
@@ -268,7 +268,7 @@ export const parseExcelFile = (
 
         const orderId = safeUpper(row[mappingToUse!.orderId]);
         const sku = safeUpper(row[mappingToUse!.sku]);
-        
+
         if (!orderId || !sku) continue;
 
         const qty_raw = Number(row[mappingToUse!.qty] || 0);
@@ -283,7 +283,7 @@ export const parseExcelFile = (
 
         const customerShipping = mappingToUse!.shippingPaidByCustomer ? Math.abs(cleanMoney(row[mappingToUse!.shippingPaidByCustomer])) : 0;
         const sellerShipping = mappingToUse!.shippingFee ? Math.abs(cleanMoney(row[mappingToUse!.shippingFee])) : 0;
-        
+
         const fees = (mappingToUse!.fees || []).reduce((sum, f) => {
             const val = Math.abs(cleanMoney(row[f]));
             return sum + (isNaN(val) ? 0 : val);
@@ -302,7 +302,7 @@ export const parseExcelFile = (
 
         const calculatedNet = calculatedProduct - fees - sellerShipping;
         const mult = getMultiplicadorFromSku(sku);
-        
+
         orders.push({
             id: `${canalDetectado}_${Date.now()}_${i}`,
             orderId,
@@ -313,17 +313,19 @@ export const parseExcelFile = (
             qty_final: Math.round(qty_raw * mult),
             color: classificarCor(sku),
             canal: canalDetectado!,
-            data: dataVendaStr, 
+            data: dataVendaStr,
             data_prevista_envio: dataEnvioStr || undefined,
             status: statusParaImportacao,
             error_reason: errorReason,
             customer_name: options.importName ? String(row[mappingToUse!.customerName] || '') : undefined,
             customer_cpf_cnpj: options.importCpf ? String(row[mappingToUse!.customerCpf] || '') : undefined,
-            
+            venda_origem: canalDetectado!,
+            id_pedido_loja: orderId,
+
             price_total: calculatedTotal,
             price_gross: calculatedProduct,
             price_net: calculatedNet,
-            
+
             platform_fees: fees,
             shipping_fee: sellerShipping,
             shipping_paid_by_customer: customerShipping,
@@ -344,28 +346,32 @@ export const parseExcelFile = (
         skuAggregation.get(skuKey)!.push(order);
     });
 
-    // Gerar lista resumida (consolidado por SKU, somando quantidades)
-    const resumida: OrderItem[] = Array.from(skuAggregation.entries()).map(([sku, ordersList]) => {
+    // Gerar lista resumida (consolidado por SKU com distribuição de qtds)
+    const resumida: ResumidaItem[] = Array.from(skuAggregation.entries()).map(([sku, ordersList]) => {
         const totalQty = ordersList.reduce((sum, o) => sum + o.qty_final, 0);
-        const firstOrder = ordersList[0];
-        
+        const color = ordersList[0]?.color || '';
+
+        // Calcular distribuição: quantas vezes cada quantidade aparece
+        const distribution: { [qty: number]: number } = {};
+        ordersList.forEach(o => {
+            distribution[o.qty_final] = (distribution[o.qty_final] || 0) + 1;
+        });
+
         return {
-            ...firstOrder,
-            sku: sku,
-            qty_original: totalQty,
-            qty_final: totalQty,
-            // Manter informação de quantos pedidos foram consolidados
-            id: `${firstOrder.id}_consolidated_${ordersList.length}`
+            sku,
+            color,
+            distribution,
+            total_units: totalQty,
         };
     });
 
-    // Totais por cor (do resumo)
-    const totaisPorCor: OrderItem[] = [];
-    const corMap = new Map<string, OrderItem>();
-    resumida.forEach(order => {
+    // Totais por cor (baseado nos pedidos originais, não no resumo)
+    const totaisPorCor: any[] = [];
+    const corMap = new Map<string, { color: string; qty_final: number; qty_original: number; price_total: number; price_gross: number; price_net: number }>();
+    orders.forEach(order => {
         const cor = order.color || 'SEM_COR';
         if (!corMap.has(cor)) {
-            corMap.set(cor, { ...order });
+            corMap.set(cor, { color: cor, qty_final: order.qty_final, qty_original: order.qty_original, price_total: order.price_total, price_gross: order.price_gross, price_net: order.price_net });
         } else {
             const existing = corMap.get(cor)!;
             existing.qty_final += order.qty_final;

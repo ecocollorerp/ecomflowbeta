@@ -19,13 +19,13 @@ async function startServer() {
   // Load SSL certificates
   const certPath = path.join(__dirname, "cert.pem");
   const keyPath = path.join(__dirname, "key.pem");
-  
+
   if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
     console.error("❌ Certificados não encontrados!");
     console.error(`   Execute primeiro: python generate_cert.py`);
     process.exit(1);
   }
-  
+
   const cert = fs.readFileSync(certPath, "utf8");
   const key = fs.readFileSync(keyPath, "utf8");
 
@@ -168,13 +168,13 @@ async function startServer() {
   app.post("/api/bling/token", async (req, res) => {
     try {
       const { code, client_id, client_secret, redirect_uri, grant_type, refresh_token } = req.body;
-      
+
       // LOG DE DEBUG - Mostra exatamente o que está sendo enviado
       console.log('🔐 [BLING TOKEN REQUEST]');
       console.log(`   Grant Type: ${grant_type}`);
       console.log(`   Client ID: ${client_id?.substring(0, 10)}...`);
       console.log(`   Redirect URI: ${redirect_uri}`);
-      
+
       // Validações
       if (grant_type === 'authorization_code' && !code) {
         return res.status(400).json({ error: 'Code é obrigatório para authorization_code' });
@@ -185,7 +185,7 @@ async function startServer() {
 
       // Prepare URLSearchParams EXATAMENTE como o Bling espera
       const body = new URLSearchParams();
-      
+
       if (grant_type === 'authorization_code') {
         body.append('grant_type', 'authorization_code');
         body.append('code', code.trim()); // IMPORTANTE: trim para remover espaços
@@ -198,7 +198,7 @@ async function startServer() {
 
       // Autenticação Basic (client_id:client_secret em Base64)
       const credentials = Buffer.from(`${client_id}:${client_secret}`).toString('base64');
-      
+
       console.log(`   Body enviado: ${body.toString()}`);
       console.log(`   Auth Header: Basic ${credentials.substring(0, 20)}...`);
 
@@ -214,13 +214,13 @@ async function startServer() {
       });
 
       const data = await response.json();
-      
+
       if (response.ok) {
         console.log('✅ [BLING TOKEN SUCCESS] Token gerado com sucesso');
       } else {
         console.log('❌ [BLING TOKEN ERROR]', JSON.stringify(data));
       }
-      
+
       res.status(response.status).json(data);
     } catch (error: any) {
       console.error('❌ Bling Token Error:', error);
@@ -257,7 +257,7 @@ async function startServer() {
       const token = normalizeBearerToken(req.headers['authorization'] as string || '');
       if (!token) return res.status(401).json({ error: 'Token não fornecido' });
 
-      const dataInicio = String(req.query.dataInicio || new Date(Date.now() - 30*24*60*60*1000).toISOString().split('T')[0]);
+      const dataInicio = String(req.query.dataInicio || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
       const dataFim = String(req.query.dataFim || new Date().toISOString().split('T')[0]);
       const status = String(req.query.status || 'TODOS').toUpperCase();
       const canal = String(req.query.canal || 'ALL').toUpperCase();
@@ -369,19 +369,21 @@ async function startServer() {
       const flatItems: any[] = completeOrders.flatMap((order: any) =>
         order.itens.length > 0
           ? order.itens.map((item: any) => ({
-              ...item,
-              orderId: order.orderId,
-              blingId: order.blingId,
-              customer_name: order.customer_name,
-              data: order.data,
-              status: 'NOVO',
-              canal: order.canal,
-              total: order.total,
-              lote: null,
-            }))
-          : [{ id: order.id, orderId: order.orderId, blingId: order.blingId,
-               customer_name: order.customer_name, data: order.data, status: 'NOVO',
-               canal: order.canal, lote: null, sku: null, quantity: 0, total: order.total }]
+            ...item,
+            orderId: order.orderId,
+            blingId: order.blingId,
+            customer_name: order.customer_name,
+            data: order.data,
+            status: 'NOVO',
+            canal: order.canal,
+            total: order.total,
+            lote: null,
+          }))
+          : [{
+            id: order.id, orderId: order.orderId, blingId: order.blingId,
+            customer_name: order.customer_name, data: order.data, status: 'NOVO',
+            canal: order.canal, lote: null, sku: null, quantity: 0, total: order.total
+          }]
       );
 
       syncedOrdersStore = flatItems;
@@ -437,7 +439,7 @@ async function startServer() {
       const token = normalizeBearerToken(req.headers['authorization'] as string || '');
       if (!token) return res.status(401).json({ error: 'Token não fornecido' });
 
-      const dataInicio = String(req.query.dataInicio || new Date(Date.now() - 30*24*60*60*1000).toISOString().split('T')[0]);
+      const dataInicio = String(req.query.dataInicio || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
       const dataFim = String(req.query.dataFim || new Date().toISOString().split('T')[0]);
       const status = String(req.query.status || 'TODOS').toUpperCase();
 
@@ -508,7 +510,7 @@ async function startServer() {
           skippedRecords: 0
         }
       };
-      
+
       syncLogs.unshift(syncLog);
       if (syncLogs.length > 100) syncLogs.pop();
 
@@ -528,11 +530,11 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error('❌ [SYNC NOTAS FISCAIS ERROR]:', error);
-      res.status(500).json({ 
-        success: false, 
+      res.status(500).json({
+        success: false,
         status: 'ERROR',
         type: 'NOTAS_FISCAIS',
-        errorMessage: error.message 
+        errorMessage: error.message
       });
     }
   });
@@ -586,7 +588,7 @@ async function startServer() {
           skippedRecords: 0
         }
       };
-      
+
       syncLogs.unshift(syncLog);
       if (syncLogs.length > 100) syncLogs.pop();
 
@@ -607,11 +609,11 @@ async function startServer() {
       });
     } catch (error: any) {
       console.error('❌ [SYNC PRODUTOS ERROR]:', error);
-      res.status(500).json({ 
-        success: false, 
+      res.status(500).json({
+        success: false,
         status: 'ERROR',
         type: 'PRODUTOS',
-        errorMessage: error.message 
+        errorMessage: error.message
       });
     }
   });
@@ -662,7 +664,7 @@ async function startServer() {
           const pid = String(entry?.produto?.id || entry?.produtoId || '');
           if (!pid) continue;
           const cur = stockMap.get(pid) || { saldoFisico: 0, saldoVirtual: 0 };
-          cur.saldoFisico  += Number(entry?.saldoFisico  ?? entry?.saldoReal ?? 0);
+          cur.saldoFisico += Number(entry?.saldoFisico ?? entry?.saldoReal ?? 0);
           cur.saldoVirtual += Number(entry?.saldoVirtual ?? 0);
           stockMap.set(pid, cur);
         }
@@ -678,21 +680,21 @@ async function startServer() {
         .map((prod: any) => {
           const pid = String(prod.id || '');
           const fromMap = stockMap.get(pid);
-          const saldoFisico  = fromMap?.saldoFisico  ?? Number(prod?.estoque?.saldoReal    || prod?.estoque?.saldoFisico  || 0);
+          const saldoFisico = fromMap?.saldoFisico ?? Number(prod?.estoque?.saldoReal || prod?.estoque?.saldoFisico || 0);
           const saldoVirtual = fromMap?.saldoVirtual ?? Number(prod?.estoque?.saldoVirtual || 0);
           return {
-            id:            pid,
-            codigo:        String(prod.codigo || ''),
-            descricao:     prod.nome || '',
+            id: pid,
+            codigo: String(prod.codigo || ''),
+            descricao: prod.nome || '',
             saldoFisico,
             saldoVirtual,
-            estoqueReal:   saldoFisico,
+            estoqueReal: saldoFisico,
             estoqueVirtual: saldoVirtual,
-            unidade:       prod.unidade || 'UN',
-            preco:         Number(prod.preco || 0),
-            situacao:      prod.situacao || 'A',
-            source:        'BLING',
-            syncedAt:      Date.now(),
+            unidade: prod.unidade || 'UN',
+            preco: Number(prod.preco || 0),
+            situacao: prod.situacao || 'A',
+            source: 'BLING',
+            syncedAt: Date.now(),
           };
         });
 
@@ -742,7 +744,7 @@ async function startServer() {
       if (!produtoId || !operacao || quantidade == null) return res.status(400).json({ error: 'produtoId, operacao e quantidade são obrigatórios' });
 
       const payload: any = {
-        produto:    { id: Number(produtoId) },
+        produto: { id: Number(produtoId) },
         operacao,
         quantidade: Number(quantidade),
       };
@@ -771,7 +773,7 @@ async function startServer() {
       const token = normalizeBearerToken(req.headers['authorization'] as string || '');
       if (!token) return res.status(401).json({ error: 'Token não fornecido' });
 
-      const dataInicio = String(req.body?.dataInicio || new Date(Date.now() - 30*24*60*60*1000).toISOString().split('T')[0]);
+      const dataInicio = String(req.body?.dataInicio || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
       const dataFim = String(req.body?.dataFim || new Date().toISOString().split('T')[0]);
 
       console.log(`🔄 [SYNC COMPLETO] Sincronizando tudo: ${dataInicio} a ${dataFim}`);
@@ -880,7 +882,7 @@ async function startServer() {
   });
 
   // ADVANCED FILTERING - PHASE 2
-  
+
   // In-memory storage for lotes and filtered results
   let lotes: any[] = [];
   let filteredDataStore: any = {};
@@ -888,7 +890,7 @@ async function startServer() {
   app.post('/api/bling/filter', (req, res) => {
     try {
       const { dataType, filters } = req.body;
-      
+
       console.log(`🔍 [FILTER REQUEST] Type: ${dataType}`, filters);
 
       let results: any[] = [];
@@ -1120,7 +1122,7 @@ async function startServer() {
   app.get('/api/bling/lotes', (req, res) => {
     try {
       console.log(`📋 [GET LOTES] Total: ${lotes.length}`);
-      
+
       res.json({
         success: true,
         lotes: lotes.length > 0 ? lotes : [
@@ -1164,7 +1166,7 @@ async function startServer() {
   });
 
   // NFe & SEFAZ INTEGRATION - PHASE 3
-  
+
   // In-memory storage for NFes and configurations
   // Configuração de NFe (salva em Supabase também)
   let nfeConfig: any = {
@@ -1300,7 +1302,7 @@ async function startServer() {
 
       if (!resultado.sucesso) {
         console.error(`❌ [CERTIFICADO] ${resultado.erro}`);
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: resultado.erro,
           detalhes: 'Verifique a senha e o arquivo .pfx'
         });
@@ -1404,14 +1406,14 @@ async function startServer() {
       // Validar certificado
       const agora = Date.now();
       if (cert.dataValidade < agora) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: 'Certificado expirado',
           dataValidade: new Date(cert.dataValidade).toLocaleDateString('pt-BR')
         });
       }
 
       if (!cert.certificadoPem || !cert.chavePem) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: 'Certificado incompleto (PEM não disponível)'
         });
       }
@@ -1421,7 +1423,7 @@ async function startServer() {
       const assinatura = assinarXMLNFe(xmlNFe, cert.certificadoPem, cert.chavePem);
 
       if (!assinatura.sucesso) {
-        return res.status(400).json({ 
+        return res.status(400).json({
           error: assinatura.erro
         });
       }
@@ -1490,14 +1492,14 @@ async function startServer() {
         status: (resultadoSefaz.sucesso ? 'AUTORIZADA' : 'REJEITADA') as any,
         chaveAcesso: resultadoSefaz.chaveAcesso || `35${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}${String(new Date().getDate()).padStart(2, '0')}123456000195550010${String(nfe.numero).padStart(8, '0')}12345678`,
         sefazEnvio: {
-        nfeId,
-        dataEnvio: Date.now(),
-        versaoPadrao: nfeConfig.versaoPadrao || '4.00',
-        ambiente,
-        statusSefaz: resultadoSefaz.codigo,
-        protocoloAutorizacao: resultadoSefaz.protocolo || '000000000000000',
-        dataAutorizacao: Date.now(),
-        erroSefaz: resultadoSefaz.mensagem
+          nfeId,
+          dataEnvio: Date.now(),
+          versaoPadrao: nfeConfig.versaoPadrao || '4.00',
+          ambiente,
+          statusSefaz: resultadoSefaz.codigo,
+          protocoloAutorizacao: resultadoSefaz.protocolo || '000000000000000',
+          dataAutorizacao: Date.now(),
+          erroSefaz: resultadoSefaz.mensagem
         },
         tentativasEnvio: (nfe.tentativasEnvio || 0) + 1,
         erroDetalhes: resultadoSefaz.sucesso ? null : resultadoSefaz.mensagem
@@ -1514,7 +1516,7 @@ async function startServer() {
         success: resultadoSefaz.sucesso,
         nfe: updateResult.nfe,
         sefazResponse: resultadoSefaz,
-        message: resultadoSefaz.sucesso 
+        message: resultadoSefaz.sucesso
           ? `✅ NFe autorizada pela SEFAZ (${resultadoSefaz.codigo})`
           : `⚠️ NFe rejeitada: ${resultadoSefaz.mensagem}`
       });
@@ -1669,7 +1671,7 @@ async function startServer() {
       }
 
       const xmlContent = nfe.xmlAssinado || nfe.xmlOriginal || '<NFeVazia />';
-      
+
       res.setHeader('Content-Type', 'application/xml');
       res.setHeader('Content-Disposition', `attachment; filename="nfe-${nfe.numero}.xml"`);
       res.send(xmlContent);
@@ -1698,7 +1700,7 @@ async function startServer() {
     try {
       const novasConfig = req.body;
       nfeConfig = { ...nfeConfig, ...novasConfig };
-      
+
       console.log(`⚙️ [ATUALIZAR CONFIG NFe]`);
 
       res.json({
@@ -1740,7 +1742,7 @@ async function startServer() {
 
       // Mock: Simular resposta do Bling
       const chaveAcesso = `35${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}${String(new Date().getDate()).padStart(2, '0')}${nfeConfig.cnpj || '00000000000000'}${String(nfe.numero).padStart(8, '0')}12345678`;
-      
+
       let statusFinal: any = 'ENVIADA';
       const sefazEnvio = {
         nfeId,
@@ -1778,7 +1780,7 @@ async function startServer() {
       res.json({
         success: statusFinal === 'AUTORIZADA',
         nfe: updateResult.nfe,
-        message: statusFinal === 'AUTORIZADA' 
+        message: statusFinal === 'AUTORIZADA'
           ? `✅ NFe autorizada via Bling/SEFAZ`
           : `⚠️ NFe rejeitada pela Bling: ${erroDetalhes}`
       });
@@ -1842,14 +1844,14 @@ async function startServer() {
       // ─── Passo 0: Buscar detalhes do pedido para extrair número da loja virtual ──
       console.log(`📋 [NFe] Buscando detalhes do pedido ${blingOrderId}...`);
       const pedidoResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(blingOrderId)}`, { headers: readH });
-      
+
       if (!pedidoResp.ok) {
         return res.status(pedidoResp.status).json({ success: false, error: 'Erro ao buscar detalhes do pedido' });
       }
-      
+
       const pedidoData = await pedidoResp.json();
       const pedido = pedidoData?.data;
-      
+
       // 🔍 Extrair número da loja virtual e canal
       let numeroLojaVirtual = pedido?.numeroLoja;
       const canalRaw = pedido?.loja?.nome || pedido?.loja?.descricao || pedido?.origem?.nome || pedido?.origem || '';
@@ -1863,7 +1865,7 @@ async function startServer() {
         JSON.stringify(pedido?.informacoesAdicionais || {}),
         JSON.stringify(pedido?.dadosAdicionais || {})
       ].filter(Boolean);
-      
+
       if (!numeroLojaVirtual) {
         for (const campo of camposTexto) {
           if (typeof campo === 'string') {
@@ -1875,19 +1877,19 @@ async function startServer() {
           }
         }
       }
-      
+
       // Atualizar observações do pedido com o número da loja virtual e plataforma
       const infoAdicional = `Pedido: ${numeroLojaVirtual || 'N/A'} | Plataforma: ${canalDetectado}`;
       const observacoesAtuais = pedido?.observacoes || '';
-      
+
       // Verifica se a info já está lá para evitar duplicação em caso de re-tentativa
       if (!observacoesAtuais.includes(infoAdicional)) {
-        const novasObservacoes = observacoesAtuais 
+        const novasObservacoes = observacoesAtuais
           ? `${observacoesAtuais}\n${infoAdicional}`
           : infoAdicional;
-          
+
         console.log(`📝 [NFe] Atualizando observações do pedido: ${infoAdicional}`);
-        
+
         await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(blingOrderId)}`, {
           method: 'PUT',
           headers,
@@ -1959,12 +1961,12 @@ async function startServer() {
     try {
       const { blingOrderIds, emitir = false } = req.body as { blingOrderIds: (string | number)[]; emitir?: boolean };
       const rawAuth = req.headers.authorization || '';
-      
+
       if (!rawAuth) return res.status(401).json({ error: 'Token do Bling obrigatório' });
       if (!blingOrderIds || !Array.isArray(blingOrderIds)) return res.status(400).json({ error: 'blingOrderIds deve ser um array' });
 
       console.log(`🚀 [NFe BATCH] Iniciando para ${blingOrderIds.length} pedidos...`);
-      
+
       const results: any[] = [];
       const CONCURRENCY = 1; // Processar um por um para ser seguro com rate limits
       const DELAY = 1000;   // 1s entre cada pedido no lote
@@ -1978,29 +1980,29 @@ async function startServer() {
           // Mas como o server pode estar em portas variadas, o ideal é refatorar a lógica acima into a function.
           // No entanto, por brevidade nesta edição direta, vamos replicar a lógica básica ou usar fetch no localhost se soubermos a porta.
           // Melhor: Refatorar agora para uma função reutilizável.
-          
+
           // Nota: Como não quero bagunçar muito o server.ts com uma refatoração massiva agora, 
           // vou simular o comportamento chamando a lógica via fetch interno ou replicando.
           // Replicar é mais seguro dado o contexto de "scripts isolados".
-          
+
           console.log(`📦 [NFe BATCH] Processando pedido ${id}...`);
-          
+
           // (Lógica replicada ou simplificada para o batch)
           // Na prática, vamos usar o fetch do próprio node contra o localhost se possível, 
           // ou simplesmente replicar os passos: Buscar Pedido -> Atualizar Obs -> Gerar NFe -> Emitir.
-          
+
           // Para manter o código limpo e evitar duplicação massiva, vamos assumir que o sistema
           // pode chamar a si mesmo se soubermos o HOST. Se não, vamos extrair a lógica.
-          
+
           // EXTRAÇÃO DE LÓGICA (Simplificada):
           const headers = { Authorization: rawAuth, 'Content-Type': 'application/json', Accept: 'application/json' };
-          
+
           // 1. Detalhes
           const pedidoResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(id)}`, { headers });
           if (!pedidoResp.ok) throw new Error(`Erro ao buscar pedido ${id}`);
           const pedidoData = await pedidoResp.json();
           const pedido = pedidoData?.data;
-          
+
           // 2. Obs
           let numeroLojaVirtual = pedido?.numeroLoja;
           const canalRaw = pedido?.loja?.nome || pedido?.loja?.descricao || pedido?.origem?.nome || pedido?.origem || '';
@@ -2018,9 +2020,9 @@ async function startServer() {
           const gerarResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(id)}/gerar-nfe`, { method: 'POST', headers });
           const gerarData = await gerarResp.json();
           if (!gerarResp.ok) throw new Error(gerarData?.error?.description || gerarData?.message || `Erro ao gerar NFe do pedido ${id}`);
-          
+
           const nfId = Array.isArray(gerarData?.data) ? gerarData.data[0]?.id : gerarData?.data?.id;
-          
+
           // 4. Emitir
           if (emitir && nfId) {
             const emitResp = await fetch(`https://www.bling.com.br/Api/v3/nfe/${nfId}/enviar`, { method: 'POST', headers });
@@ -2033,7 +2035,7 @@ async function startServer() {
           console.error(`❌ [NFe BATCH] Erro no pedido ${id}:`, err.message);
           results.push({ blingOrderId: id, success: false, error: err.message });
         }
-        
+
         await new Promise(r => setTimeout(r, DELAY));
       }
 
@@ -2050,10 +2052,10 @@ async function startServer() {
   // ────────────────────────────────────────────────────────────────────────────
   app.post('/api/bling/nfe/gerar-lote', async (req, res) => {
     try {
-      const { pedidoVendaIds, salvar = false, vincular = false } = req.body as { 
-        pedidoVendaIds: (string | number)[]; 
-        salvar?: boolean; 
-        vincular?: boolean 
+      const { pedidoVendaIds, salvar = false, vincular = false } = req.body as {
+        pedidoVendaIds: (string | number)[];
+        salvar?: boolean;
+        vincular?: boolean
       };
       const rawAuth = req.headers.authorization || '';
       const token = rawAuth.startsWith('Bearer ') ? rawAuth : `Bearer ${rawAuth}`;
@@ -2076,18 +2078,18 @@ async function startServer() {
         const result = await blingLimiter.enqueue(async () => {
           try {
             const progressBar = `[${idx + 1}/${totalPedidos}]`;
-            
+
             // ─── Passo 0: Buscar detalhes do pedido para extrair número da loja virtual ──
             console.log(`${progressBar} 📋 Buscando detalhes do pedido ${pvId}...`);
             const pedidoResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(pvId)}`, {
               headers: { Authorization: token, Accept: 'application/json' },
             });
-            
+
             let numeroLojaVirtual = null;
             if (pedidoResp.ok) {
               const pedidoData = await pedidoResp.json();
               const pedido = pedidoData?.data;
-              
+
               // 🔍 Extrair número da loja virtual das informações adicionais
               const camposTexto = [
                 pedido?.observacoes,
@@ -2097,7 +2099,7 @@ async function startServer() {
                 JSON.stringify(pedido?.informacoesAdicionais || {}),
                 JSON.stringify(pedido?.dadosAdicionais || {})
               ].filter(Boolean);
-              
+
               for (const campo of camposTexto) {
                 if (typeof campo === 'string') {
                   const match = campo.match(/(?:Número\s+(?:loja\s+virtual|da\s+loja)|Order\s+ID|Pedido\s+original)\s*[:\-]?\s*([A-Za-z0-9\-_]+)/i);
@@ -2107,16 +2109,16 @@ async function startServer() {
                   }
                 }
               }
-              
+
               // Atualizar observações do pedido com o número da loja virtual se encontrado
               if (numeroLojaVirtual && numeroLojaVirtual !== pedido?.numeroLoja) {
                 const observacoesAtuais = pedido?.observacoes || '';
-                const novasObservacoes = observacoesAtuais 
+                const novasObservacoes = observacoesAtuais
                   ? `${observacoesAtuais}\nNúmero Loja Virtual: ${numeroLojaVirtual}`
                   : `Número Loja Virtual: ${numeroLojaVirtual}`;
-                  
+
                 console.log(`${progressBar} 📝 Atualizando observações do pedido com número da loja virtual: ${numeroLojaVirtual}`);
-                
+
                 const updateResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(pvId)}`, {
                   method: 'PUT',
                   headers,
@@ -2124,7 +2126,7 @@ async function startServer() {
                     observacoes: novasObservacoes
                   })
                 });
-                
+
                 if (!updateResp.ok) {
                   console.warn(`${progressBar} ⚠️ Não foi possível atualizar observações do pedido: ${updateResp.status}`);
                 } else {
@@ -2133,7 +2135,7 @@ async function startServer() {
                 }
               }
             }
-            
+
             // ─── Passo 1: Gerar NF-e via rota nativa do Bling ─────────────────────
             console.log(`${progressBar} 📄 Gerando NF-e para pedido ${pvId}`);
             const gerarResp = await fetch(
@@ -2152,7 +2154,7 @@ async function startServer() {
                 : [];
               const errDesc = blingErr?.description || blingErr?.message || gerarData?.message || `Bling retornou ${gerarResp.status}`;
               const fullMsg = fields.length > 0 ? `${errDesc} — ${fields.join('; ')}` : errDesc;
-              
+
               resultados.push({
                 pedidoVendaId: pvId,
                 success: false,
@@ -2266,6 +2268,77 @@ async function startServer() {
         details: 'Erro ao processar geração de NF-e em lote'
       });
     }
+  });
+
+  // ── Alias: Gerar e Emitir NF-e em lote (mesma lógica do gerar-lote com emissão garantida) ────
+  app.post('/api/bling/nfe/gerar-emitir-lote', async (req, res) => {
+    // Repassa para gerar-lote com emitirAutomaticamente = true
+    req.body.salvar = true;
+    req.body.vincular = true;
+    // Delegar internamente ao handler gerar-lote
+    const { pedidoVendaIds } = req.body as { pedidoVendaIds: (string | number)[] };
+    const rawAuth = req.headers.authorization || '';
+    const token = rawAuth.startsWith('Bearer ') ? rawAuth : `Bearer ${rawAuth}`;
+    if (!rawAuth) return res.status(401).json({ error: 'Token do Bling obrigatório' });
+    if (!Array.isArray(pedidoVendaIds) || pedidoVendaIds.length === 0) {
+      return res.status(400).json({ error: 'pedidoVendaIds[] obrigatório' });
+    }
+
+    const headers = { Authorization: token, 'Content-Type': 'application/json', Accept: 'application/json' };
+    const resultados: any[] = [];
+    const total = pedidoVendaIds.length;
+    console.log(`\n📄 [gerar-emitir-lote] Gerando+Emitindo ${total} NF-e(s)...`);
+
+    for (let idx = 0; idx < pedidoVendaIds.length; idx++) {
+      const pvId = pedidoVendaIds[idx];
+      try {
+        // Gerar NF-e
+        const gerarResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(pvId)}/gerar-nfe`, {
+          method: 'POST', headers,
+        });
+        let gerarData: any;
+        try { gerarData = await gerarResp.json(); } catch { gerarData = {}; }
+
+        if (!gerarResp.ok) {
+          const blingErr = gerarData?.error || {};
+          const errDesc = blingErr?.description || gerarData?.message || `Bling retornou ${gerarResp.status}`;
+          resultados.push({ pedidoVendaId: pvId, success: false, error: errDesc }); continue;
+        }
+
+        const nfesCriadas = Array.isArray(gerarData?.data) ? gerarData.data : (gerarData?.data ? [gerarData.data] : []);
+        const primeiraId = nfesCriadas[0]?.id;
+
+        if (!primeiraId) {
+          resultados.push({ pedidoVendaId: pvId, success: false, error: 'NF-e gerada mas sem ID retornado' }); continue;
+        }
+
+        // Emitir NF-e (enviar para SEFAZ)
+        const emitResp = await fetch(`https://www.bling.com.br/Api/v3/nfe/${primeiraId}/enviar`, {
+          method: 'POST', headers,
+        });
+        let emitData: any;
+        try { emitData = await emitResp.json(); } catch { emitData = {}; }
+
+        const emitida = emitResp.ok;
+        if (emitida) {
+          console.log(`[${idx + 1}/${total}] ✅ NF-e ${primeiraId} gerada e emitida!`);
+        } else {
+          console.warn(`[${idx + 1}/${total}] ⚠️ NF-e ${primeiraId} gerada mas não emitida:`, emitData);
+        }
+
+        resultados.push({
+          pedidoVendaId: pvId, success: true,
+          nfe: { ...nfesCriadas[0], ...emitData?.data }, emitida
+        });
+      } catch (e: any) {
+        resultados.push({ pedidoVendaId: pvId, success: false, error: e.message });
+      }
+    }
+
+    const ok = resultados.filter(r => r.success).length;
+    const fail = resultados.filter(r => !r.success).length;
+    console.log(`\n✅ [gerar-emitir-lote] ${ok}/${total} OK, ${fail} falha(s)\n`);
+    res.json({ success: fail === 0, total, ok, fail, resultados });
   });
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -2440,7 +2513,7 @@ async function startServer() {
       while (this.queue.length > 0) {
         const now = Date.now();
         const timeSinceLastRequest = now - this.lastRequest;
-        
+
         if (timeSinceLastRequest < this.minDelay) {
           await new Promise(r => setTimeout(r, this.minDelay - timeSinceLastRequest));
         }
@@ -2567,7 +2640,7 @@ async function startServer() {
         const result = await blingLimiter.enqueue(async () => {
           try {
             const progressBar = `[${idx + 1}/${totalPedidos}]`;
-            
+
             // Busca detalhes do pedido para obter info de transporte
             const pvResp = await blingFetchRetry(
               `https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(pvId)}`,
@@ -2695,9 +2768,9 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
       const method = req.method;
       const apiKey = req.headers['authorization'] || '';
       const query = new URLSearchParams(req.query as any).toString();
-      
+
       const url = `https://www.bling.com.br/Api/v3${endpoint}${query ? `?${query}` : ''}`;
-      
+
       const response = await fetch(url, {
         method: method,
         headers: {
@@ -2725,10 +2798,10 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
       const token = normalizeBearerToken(req.headers['authorization'] as string || '');
       if (!token) return res.status(401).json({ error: 'Token não fornecido' });
 
-      const dataInicio   = String(req.query.dataInicio || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
-      const dataFim      = String(req.query.dataFim    || new Date().toISOString().split('T')[0]);
+      const dataInicio = String(req.query.dataInicio || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+      const dataFim = String(req.query.dataFim || new Date().toISOString().split('T')[0]);
       const situacoesRaw = String(req.query.situacoes || '6');
-      const situacaoIds  = situacoesRaw.split(',').map((s: string) => s.trim()).filter(Boolean);
+      const situacaoIds = situacoesRaw.split(',').map((s: string) => s.trim()).filter(Boolean);
 
       console.log(`🛒 [VENDAS BUSCAR] ${dataInicio} → ${dataFim} | situações: ${situacaoIds.join(',')}`);
 
@@ -2756,7 +2829,7 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
 
         if (pageOrders.length < 100) continuar = false;
         else pagina++;
-        
+
         // Segurança: máximo 50 páginas (5000 pedidos) para cobrir grandes volumes de "Em Aberto"
         if (pagina > 50) continuar = false;
       }
@@ -2805,55 +2878,55 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
         const endEntrega = order?.enderecoEntrega || order?.transporte?.enderecoEntrega || null;
 
         return {
-          id:               `venda-${order.id}`,
-          orderId:          String(order?.numeroLoja || order?.numero || order?.id || ''),
-          blingId:          String(order?.id || ''),
-          blingNumero:      String(order?.numero || ''),
-          customer_name:    order?.contato?.nome || 'Não informado',
+          id: `venda-${order.id}`,
+          orderId: String(order?.numeroLoja || order?.numero || order?.id || ''),
+          blingId: String(order?.id || ''),
+          blingNumero: String(order?.numero || ''),
+          customer_name: order?.contato?.nome || 'Não informado',
           customer_cpf_cnpj: order?.contato?.numeroDocumento || order?.contato?.cpf || order?.contato?.cnpj || '',
-          customer_email:   order?.contato?.email || '',
-          customer_tel:     order?.contato?.telefone || order?.contato?.celular || '',
-          data:             String(order?.data || '').split('T')[0],
-          dataPrevista:     String(order?.dataPrevista || '').split('T')[0],
-          status:           String(order?.situacao?.descricao || order?.situacao?.valor || 'Em aberto'),
-          situacaoId:       Number(order?.situacao?.id || 0),
-          canal:            detectedCanal,
-          canalRaw:         String(canalRaw),
-          lojaId:           Number(order?.loja?.id || 0),
-          loja:             order?.loja?.nome || order?.loja?.descricao || '',
-          total:            Number(order?.total || 0),
-          price_total:      Number(order?.total || 0),
-          frete:            Number(order?.frete || 0),
-          desconto:         Number(order?.desconto?.valor || 0),
-          rastreamento:     order?.transporte?.codigoRastreamento || '',
-          transportador:    order?.transporte?.transportador?.nome || '',
-          tipoFrete:        order?.transporte?.tipoFrete || '',
-          observacoes:      order?.observacoes || '',
+          customer_email: order?.contato?.email || '',
+          customer_tel: order?.contato?.telefone || order?.contato?.celular || '',
+          data: String(order?.data || '').split('T')[0],
+          dataPrevista: String(order?.dataPrevista || '').split('T')[0],
+          status: String(order?.situacao?.descricao || order?.situacao?.valor || 'Em aberto'),
+          situacaoId: Number(order?.situacao?.id || 0),
+          canal: detectedCanal,
+          canalRaw: String(canalRaw),
+          lojaId: Number(order?.loja?.id || 0),
+          loja: order?.loja?.nome || order?.loja?.descricao || '',
+          total: Number(order?.total || 0),
+          price_total: Number(order?.total || 0),
+          frete: Number(order?.frete || 0),
+          desconto: Number(order?.desconto?.valor || 0),
+          rastreamento: order?.transporte?.codigoRastreamento || '',
+          transportador: order?.transporte?.transportador?.nome || '',
+          tipoFrete: order?.transporte?.tipoFrete || '',
+          observacoes: order?.observacoes || '',
           observacoesInternas: order?.observacoesInternas || '',
-          enderecoEntrega:  endEntrega ? {
-            nome:         endEntrega?.nome || order?.contato?.nome || '',
-            logradouro:   endEntrega?.endereco || endEntrega?.logradouro || '',
-            numero:       endEntrega?.numero || '',
-            complemento:  endEntrega?.complemento || '',
-            bairro:       endEntrega?.bairro || '',
-            cidade:       endEntrega?.municipio?.nome || endEntrega?.cidade || '',
-            uf:           endEntrega?.municipio?.uf || endEntrega?.uf || '',
-            cep:          endEntrega?.cep || '',
-            pais:         endEntrega?.pais || 'BR',
+          enderecoEntrega: endEntrega ? {
+            nome: endEntrega?.nome || order?.contato?.nome || '',
+            logradouro: endEntrega?.endereco || endEntrega?.logradouro || '',
+            numero: endEntrega?.numero || '',
+            complemento: endEntrega?.complemento || '',
+            bairro: endEntrega?.bairro || '',
+            cidade: endEntrega?.municipio?.nome || endEntrega?.cidade || '',
+            uf: endEntrega?.municipio?.uf || endEntrega?.uf || '',
+            cep: endEntrega?.cep || '',
+            pais: endEntrega?.pais || 'BR',
           } : null,
           pagamentos: parcelas.map((p: any) => ({
-            forma:     p?.formaPagamento?.descricao || p?.forma || p?.tipo || 'Não informado',
-            valor:     Number(p?.valor || 0),
-            parcelas:  Number(p?.numeroParcelas || p?.parcelas || 1),
+            forma: p?.formaPagamento?.descricao || p?.forma || p?.tipo || 'Não informado',
+            valor: Number(p?.valor || 0),
+            parcelas: Number(p?.numeroParcelas || p?.parcelas || 1),
           })),
           itens: items.map((item: any) => ({
-            sku:           String(item?.codigo || item?.codigoProduto || '').trim(),
-            descricao:     item?.descricao || item?.nome || '',
-            quantidade:    Number(item?.quantidade || 0),
+            sku: String(item?.codigo || item?.codigoProduto || '').trim(),
+            descricao: item?.descricao || item?.nome || '',
+            quantidade: Number(item?.quantidade || 0),
             valorUnitario: Number(item?.valor || item?.valorUnitario || 0),
-            subtotal:      Number(item?.quantidade || 0) * Number(item?.valor || 0),
-            unidade:       item?.unidade || 'UN',
-            produtoId:     String(item?.produto?.id || item?.idProduto || ''),
+            subtotal: Number(item?.quantidade || 0) * Number(item?.valor || 0),
+            unidade: item?.unidade || 'UN',
+            produtoId: String(item?.produto?.id || item?.idProduto || ''),
           })),
           itensCount: items.length,
         };
@@ -2877,9 +2950,9 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
 
       const body = new URLSearchParams();
       body.append('grant_type', grant_type || 'authorization_code');
-      if (code)          body.append('code', code);
+      if (code) body.append('code', code);
       if (refresh_token) body.append('refresh_token', refresh_token);
-      if (redirect_uri)  body.append('redirect_uri', redirect_uri);
+      if (redirect_uri) body.append('redirect_uri', redirect_uri);
       body.append('client_id', client_id);
       body.append('client_secret', client_secret);
 
@@ -2922,9 +2995,9 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
       const token = normalizeBearerToken(req.headers['authorization'] as string || '');
       if (!token) return res.status(401).json({ error: 'Token não fornecido' });
 
-      const sellerId  = String(req.query.sellerId || '');
-      const dataInicio = String(req.query.dataInicio || new Date(Date.now() - 30*24*60*60*1000).toISOString().split('T')[0]);
-      const dataFim   = String(req.query.dataFim   || new Date().toISOString().split('T')[0]);
+      const sellerId = String(req.query.sellerId || '');
+      const dataInicio = String(req.query.dataInicio || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+      const dataFim = String(req.query.dataFim || new Date().toISOString().split('T')[0]);
 
       if (!sellerId) return res.status(400).json({ error: 'sellerId é obrigatório' });
 
@@ -2939,7 +3012,7 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
 
       while (hasMore && page < MAX_PAGES) {
         const dateFrom = `${dataInicio}T00:00:00.000-03:00`;
-        const dateTo   = `${dataFim}T23:59:59.000-03:00`;
+        const dateTo = `${dataFim}T23:59:59.000-03:00`;
         const url = `https://api.mercadolibre.com/orders/search?seller=${sellerId}&order.date_created.from=${encodeURIComponent(dateFrom)}&order.date_created.to=${encodeURIComponent(dateTo)}&sort=date_desc&offset=${offset}&limit=${limit}`;
 
         const resp = await fetch(url, { headers: { 'Authorization': token, 'Accept': 'application/json' } });
@@ -3066,8 +3139,8 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
 
       const { createHmac } = await import('crypto');
 
-      const timeFrom = dataInicio ? Math.floor(new Date(`${dataInicio}T00:00:00`).getTime() / 1000) : Math.floor((Date.now() - 30*24*60*60*1000) / 1000);
-      const timeTo   = dataFim   ? Math.floor(new Date(`${dataFim}T23:59:59`).getTime()   / 1000) : Math.floor(Date.now() / 1000);
+      const timeFrom = dataInicio ? Math.floor(new Date(`${dataInicio}T00:00:00`).getTime() / 1000) : Math.floor((Date.now() - 30 * 24 * 60 * 60 * 1000) / 1000);
+      const timeTo = dataFim ? Math.floor(new Date(`${dataFim}T23:59:59`).getTime() / 1000) : Math.floor(Date.now() / 1000);
 
       // ── Passo 1: Coletar order_sn via paginação cursor — chunks de 15 dias ──
       // A Shopee limita get_order_list a no máximo 15 dias por chamada.
@@ -3165,7 +3238,7 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
           const detailList = detailData?.response?.order_list || [];
           allOrders.push(...detailList);
           batchCount++;
-          
+
           console.log(`📦 Shopee: Lote ${batchCount} processado (${allOrders.length}/${allSnList.length} pedidos)`);
         } catch (err) {
           console.warn(`⚠️  Shopee: Erro no lote ${batchCount + 1}:`, err, 'continuando...');
@@ -3242,16 +3315,16 @@ ${rastreamento ? `^BY3,3,100\n^FO100,470^BCN,100,Y,N,N\n^FD${rastreamento}^FS` :
     // Serve static files in production
     const distPath = path.resolve(__dirname, "dist");
     if (fs.existsSync(distPath)) {
-        app.use(express.static(distPath));
-        
-        app.get("*", (req, res) => {
-            if (req.path.startsWith('/api')) {
-                return res.status(404).json({ error: 'Not Found' });
-            }
-            res.sendFile(path.join(distPath, "index.html"));
-        });
+      app.use(express.static(distPath));
+
+      app.get("*", (req, res) => {
+        if (req.path.startsWith('/api')) {
+          return res.status(404).json({ error: 'Not Found' });
+        }
+        res.sendFile(path.join(distPath, "index.html"));
+      });
     } else {
-        console.error("Dist folder not found. Run 'npm run build' first.");
+      console.error("Dist folder not found. Run 'npm run build' first.");
     }
   }
 

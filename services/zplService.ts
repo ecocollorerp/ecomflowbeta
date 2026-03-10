@@ -26,30 +26,30 @@ export const consolidateSkusByMasterProduct = (
             product: itemMap.get(s.sku.toUpperCase())
         }));
     }
-    
+
     // Criar mapa de vinculações para lookup rápido
     const skuLinkMap = new Map(
         skuLinks.map(link => [link.importedSku.toUpperCase(), link.masterProductSku.toUpperCase()])
     );
-    
+
     // Criar mapa de itens de estoque
     const itemMap = new Map(
         stockItems?.map(item => [item.code.toUpperCase(), item]) ?? []
     );
-    
+
     // Consolidar SKUs por produto principal
     const consolidated = new Map<string, { sku: string; qty: number; product?: StockItem }>();
-    
+
     for (const { sku, qty } of skus) {
         const normalizedSku = sku.toUpperCase();
-        
+
         // Verificar se é uma SKU vinculada
         const masterSku = skuLinkMap.get(normalizedSku);
         const finalSku = masterSku || normalizedSku;
-        
+
         // Buscar informações do produto
         const product = itemMap.get(finalSku);
-        
+
         // Consolidar quantidade
         if (consolidated.has(finalSku)) {
             const existing = consolidated.get(finalSku)!;
@@ -62,7 +62,7 @@ export const consolidateSkusByMasterProduct = (
             });
         }
     }
-    
+
     return Array.from(consolidated.values());
 };
 
@@ -102,13 +102,13 @@ export const extractFields = async (zplPage: string, patterns: ZplSettings['rege
                 const qty = parseInt(qtyMatches[i][1], 10);
                 if (sku && !isNaN(qty)) skus.push({ sku, qty });
             }
-        } catch (e) {}
+        } catch (e) { }
     }
 
     try {
         const orderIdMatch = zplPage.match(new RegExp(patterns.orderId, 'i'));
         if (orderIdMatch && orderIdMatch[1]) orderId = orderIdMatch[1].trim();
-    } catch (e) {}
+    } catch (e) { }
 
     return { orderId, skus };
 };
@@ -130,7 +130,7 @@ export async function* processZplStream(
         yield { type: 'progress', message: 'Analisando ZPL...' };
         const rawPages = splitZpl(zplInput);
         const { pairedZpl, extractedData } = await filterAndPairZplPages(rawPages, settings.regex, allOrders);
-        
+
         const warnings: string[] = [];
         const hasMlWithoutProperDanfe = Array.from(extractedData.values()).some(
             data => data.isMercadoLivre && !data.hasDanfe && !data.containsDanfeInLabel
@@ -142,7 +142,7 @@ export async function* processZplStream(
         const printedStatus = pairedZpl.map(pageZpl => printedPageHashes.has(simpleHash(pageZpl)));
 
         yield { type: 'start', zplPages: pairedZpl, extractedData, warnings, hasMlWithoutDanfe: hasMlWithoutProperDanfe, printedStatus };
-        
+
         const chunkSize = generalSettings.etiquetas.renderChunkSize || 3; // Padrão mais seguro se não definido
         const delayMs = generalSettings.etiquetas.apiRequestDelay_ms || 1200; // Padrão mais seguro se não definido
 
@@ -185,22 +185,23 @@ export async function* processZplStream(
  * Gera etiqueta ZPL para DANFE (Documento Auxiliar NF-e)
  */
 export const gerarEtiquetaDANFE = (opcoes: {
-  nfeNumero: string;
-  nfeChave: string;
-  cliente: string;
-  endereco: string;
-  cidade: string;
-  uf: string;
-  cep: string;
-  peso?: number;
-  valor?: number;
+    nfeNumero: string;
+    nfeChave: string;
+    cliente: string;
+    endereco: string;
+    cidade: string;
+    uf: string;
+    cep: string;
+    peso?: number;
+    valor?: number;
+    skus?: string;
 }): string => {
-  const { nfeNumero, nfeChave, cliente, endereco, cidade, uf, cep, peso, valor } = opcoes;
+    const { nfeNumero, nfeChave, cliente, endereco, cidade, uf, cep, peso, valor, skus } = opcoes;
 
-  const nfeClean = nfeNumero.replace(/\D/g, '');
-  const cepClean = cep.replace(/\D/g, '');
+    const nfeClean = nfeNumero.replace(/\D/g, '');
+    const cepClean = cep.replace(/\D/g, '');
 
-  return `^XA
+    return `^XA
 ^MMT
 ^PW812
 ^LL406
@@ -220,6 +221,7 @@ ${peso ? `^FO20,185^A0N,16,16^FDPeso: ${peso.toFixed(2)}kg^FS` : ''}
 ${valor ? `^FO500,185^A0N,16,16^FDValor: R$ ${(valor / 100).toFixed(2)}^FS` : ''}
 
 ^FO20,320^A0N,14,14^FDData: ${new Date().toLocaleDateString('pt-BR')}^FS
+${skus ? `^FO20,350^A0B,28,28^FDSKU: ${skus}^FS` : ''}
 
 ^XZ`;
 };
@@ -228,16 +230,16 @@ ${valor ? `^FO500,185^A0N,16,16^FDValor: R$ ${(valor / 100).toFixed(2)}^FS` : ''
  * Gera etiqueta com código de barras para rastreamento
  */
 export const gerarEtiquetaRastreamento = (opcoes: {
-  codigo: string;
-  destinatario: string;
-  endereco: string;
-  cidade: string;
-  uf: string;
-  cep: string;
+    codigo: string;
+    destinatario: string;
+    endereco: string;
+    cidade: string;
+    uf: string;
+    cep: string;
 }): string => {
-  const { codigo, destinatario, endereco, cidade, uf, cep } = opcoes;
+    const { codigo, destinatario, endereco, cidade, uf, cep } = opcoes;
 
-  return `^XA
+    return `^XA
 ^MMT
 ^PW812
 ^LL406

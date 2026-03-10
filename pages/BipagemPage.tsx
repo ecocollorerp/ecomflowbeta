@@ -2,10 +2,10 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ScanLogItem, ScanResult, User, StockItem, OrderItem, UiSettings, SkuLink, StockDeductionMode } from '../types';
 import { playSound } from '../lib/sound';
-import { 
-    QrCode, X, Check, CheckCheck, History, User as UserIcon, 
-    ScanLine, AlertCircle, Trash2, ShieldCheck, 
-    RefreshCw, Loader2, ChevronDown, ChevronRight, Undo, 
+import {
+    QrCode, X, Check, CheckCheck, History, User as UserIcon,
+    ScanLine, AlertCircle, Trash2, ShieldCheck,
+    RefreshCw, Loader2, ChevronDown, ChevronRight, Undo,
     Cloud, AlertTriangle, Search, StopCircle, Package, Factory
 } from 'lucide-react';
 import ConfirmActionModal from '../components/ConfirmActionModal';
@@ -33,20 +33,20 @@ interface BipagemPageProps {
 }
 
 const BipagemPage: React.FC<BipagemPageProps> = (props) => {
-    const { 
-        onNewScan, scanHistory, onBulkCancelBipagem, 
-        onHardDeleteScanLog, onBulkHardDeleteScanLog, users, 
-        uiSettings, currentUser, onSyncPending, addToast 
+    const {
+        onNewScan, scanHistory, onBulkCancelBipagem,
+        onHardDeleteScanLog, onBulkHardDeleteScanLog, users,
+        uiSettings, currentUser, onSyncPending, addToast
     } = props;
-    
+
     const [manualInput, setManualInput] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
     const [deductionMode, setDeductionMode] = useState<StockDeductionMode>('STOCK');
-    
+
     // Feedback Overlays
     const [scanResult, setScanResult] = useState<ScanResult | null>(null);
-    
+
     // Selection and Modals
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
@@ -77,7 +77,7 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
             // Verifica se é uma tecla imprimível (comprimento 1) ou Enter
             if (e.key.length === 1 || e.key === 'Enter') {
                 inputRef.current?.focus();
-                
+
                 // Se for um caractere, adiciona manualmente ao estado porque o 'focus' pode acontecer depois do evento de tecla
                 if (e.key.length === 1) {
                     setManualInput(prev => prev + e.key.toUpperCase());
@@ -97,7 +97,7 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
 
     const handleProcessScan = async (code: string) => {
         if (!code.trim() || isProcessing) return;
-        
+
         setIsProcessing(true);
         const result = await onNewScan(code, undefined, deductionMode);
         setIsProcessing(false);
@@ -119,7 +119,7 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
             if (uiSettings.soundOnError) playSound('error');
             overlayTimeout.current = setTimeout(() => setScanResult(null), 4000); // 4s Red
         }
-        
+
         // Garante o foco de volta após processar
         setTimeout(() => inputRef.current?.focus(), 100);
     };
@@ -172,17 +172,16 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
         <div className="space-y-6 relative min-h-full">
             {/* Full Screen Feedback Overlays */}
             {scanResult && (
-                <div 
-                    className={`fixed inset-0 z-[100] flex flex-col items-center justify-center p-6 animate-in fade-in zoom-in duration-200 ${
-                        scanResult.groupComplete ? 'bg-gradient-to-br from-yellow-400 via-amber-400 to-orange-500' :
-                        scanResult.status === 'OK' ? 'bg-emerald-600' : 
-                        scanResult.status === 'DUPLICATE' ? 'bg-amber-500' : 
-                        'bg-red-600'
-                    }`}
+                <div
+                    className={`fixed inset-0 z-[100] flex flex-col items-center justify-center p-6 animate-in fade-in zoom-in duration-200 ${scanResult.groupComplete ? 'bg-gradient-to-br from-yellow-400 via-amber-400 to-orange-500' :
+                            scanResult.status === 'OK' ? 'bg-emerald-600' :
+                                scanResult.status === 'DUPLICATE' ? 'bg-amber-500' :
+                                    'bg-red-600'
+                        }`}
                     onClick={closeOverlay}
                 >
                     <div className="bg-white/10 backdrop-blur-sm p-8 rounded-[3rem] shadow-2xl flex flex-col items-center gap-6 max-w-2xl w-full border-4 border-white/30 text-white text-center">
-                        
+
                         {/* Icon */}
                         <div className="p-6 bg-white rounded-full shadow-lg">
                             {scanResult.groupComplete && <ShieldCheck size={80} className="text-amber-500" />}
@@ -215,7 +214,7 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
                                 <span className="text-sm font-bold uppercase opacity-70">Código Lido</span>
                                 <span className="text-3xl font-mono font-black">{scanResult.input_code}</span>
                             </div>
-                            
+
                             {scanResult.first_scan && (
                                 <div className="text-left bg-black/20 p-3 rounded-lg mt-4">
                                     <p className="text-xs font-bold uppercase text-amber-200 mb-1">Primeira bipagem:</p>
@@ -248,27 +247,27 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
                         </div>
                         <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter mb-2">Central de Bipagem</h2>
                         <p className="text-slate-500 font-bold uppercase text-[10px] tracking-widest mb-8">
-                            <span className="bg-green-100 text-green-700 px-2 py-1 rounded border border-green-200 mr-1">ATIVO</span> 
+                            <span className="bg-green-100 text-green-700 px-2 py-1 rounded border border-green-200 mr-1">ATIVO</span>
                             Pode bipar diretamente sem clicar na caixa
                         </p>
-                        
+
                         <div className="flex bg-slate-100 p-1 rounded-xl mb-6 w-full max-w-md">
-                            <button 
-                                onClick={() => setDeductionMode('STOCK')} 
+                            <button
+                                onClick={() => setDeductionMode('STOCK')}
                                 className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg text-xs font-black uppercase transition-all ${deductionMode === 'STOCK' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                             >
-                                <Package size={16}/> Estoque Pronta Entrega
+                                <Package size={16} /> Estoque Pronta Entrega
                             </button>
-                            <button 
-                                onClick={() => setDeductionMode('PRODUCTION')} 
+                            <button
+                                onClick={() => setDeductionMode('PRODUCTION')}
                                 className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-lg text-xs font-black uppercase transition-all ${deductionMode === 'PRODUCTION' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
                             >
-                                <Factory size={16}/> Produção Diária
+                                <Factory size={16} /> Produção Diária
                             </button>
                         </div>
 
                         <form onSubmit={handleManualSubmit} className="w-full max-w-md relative">
-                            <input 
+                            <input
                                 ref={inputRef}
                                 type="text"
                                 value={manualInput}
@@ -276,6 +275,13 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
                                 placeholder="Escaneie ou digite o código..."
                                 className="w-full p-5 bg-slate-50 border-2 border-slate-100 rounded-2xl font-black text-xl text-center focus:border-blue-500 focus:bg-white transition-all outline-none placeholder:text-slate-300 shadow-sm"
                                 autoFocus
+                                onBlur={() => {
+                                    // Bipagem Agressiva: Força o foco a voltar quase instantaneamente se perdido
+                                    // A não ser que o overlay de confirmações modais (Cancel/Delete) esteja ativo
+                                    if (!isCancelModalOpen && !isHardDeleteModalOpen) {
+                                        setTimeout(() => inputRef.current?.focus(), 100);
+                                    }
+                                }}
                             />
                             {isProcessing && (
                                 <div className="absolute right-4 top-1/2 -translate-y-1/2">
@@ -283,13 +289,13 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
                                 </div>
                             )}
                         </form>
-                        
+
                         <div className="mt-8 flex gap-4 flex-wrap justify-center">
                             <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-700 rounded-full border border-emerald-100 text-xs font-black uppercase">
-                                <ShieldCheck size={14}/> Scanner Online
+                                <ShieldCheck size={14} /> Scanner Online
                             </div>
                             <button onClick={handleSync} disabled={isSyncing} className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-full border border-blue-100 text-xs font-black uppercase hover:bg-blue-100 transition-all disabled:opacity-50">
-                                {isSyncing ? <Loader2 size={14} className="animate-spin"/> : <RefreshCw size={14}/>} Sincronizar Pendentes
+                                {isSyncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} Sincronizar Pendentes
                             </button>
                         </div>
                     </div>
@@ -319,8 +325,8 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
                                 <thead className="bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest">
                                     <tr>
                                         <th className="px-6 py-4 text-center w-12">
-                                            <input 
-                                                type="checkbox" 
+                                            <input
+                                                type="checkbox"
                                                 onChange={(e) => {
                                                     if (e.target.checked) setSelectedIds(new Set(recentScans.map(s => s.id)));
                                                     else setSelectedIds(new Set());
@@ -340,8 +346,8 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
                                     {recentScans.map(scan => (
                                         <tr key={scan.id} className={`${selectedIds.has(scan.id) ? 'bg-blue-50/50' : 'hover:bg-slate-50/50'} transition-colors cursor-pointer`} onClick={() => handleToggleSelect(scan.id)}>
                                             <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
-                                                <input 
-                                                    type="checkbox" 
+                                                <input
+                                                    type="checkbox"
                                                     checked={selectedIds.has(scan.id)}
                                                     onChange={() => handleToggleSelect(scan.id)}
                                                     className="rounded-md border-gray-300 text-blue-600"
@@ -391,18 +397,18 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
                             <p className="font-black text-slate-700 text-lg uppercase">{currentUser.name}</p>
                         </div>
                         <div className="space-y-2">
-                             <div className="flex justify-between text-xs font-bold text-slate-500 uppercase">
+                            <div className="flex justify-between text-xs font-bold text-slate-500 uppercase">
                                 <span>Bipagens Hoje</span>
                                 <span className="text-slate-800">{scanHistory.length}</span>
-                             </div>
-                             <div className="flex justify-between text-xs font-bold text-slate-500 uppercase">
+                            </div>
+                            <div className="flex justify-between text-xs font-bold text-slate-500 uppercase">
                                 <span>Sucesso</span>
                                 <span className="text-emerald-600">{scanHistory.filter(s => s.status === 'OK' || s.synced).length}</span>
-                             </div>
-                             <div className="flex justify-between text-xs font-bold text-slate-500 uppercase">
+                            </div>
+                            <div className="flex justify-between text-xs font-bold text-slate-500 uppercase">
                                 <span>Duplicados</span>
                                 <span className="text-orange-600">{scanHistory.filter(s => s.status === 'DUPLICATE').length}</span>
-                             </div>
+                            </div>
                         </div>
                     </div>
 
@@ -430,21 +436,21 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
             </div>
 
             {/* Modals */}
-            <ConfirmActionModal 
-                isOpen={isCancelModalOpen} 
-                onClose={() => setIsCancelModalOpen(false)} 
-                onConfirm={handleBulkCancel} 
-                title="Reverter Bipagens" 
+            <ConfirmActionModal
+                isOpen={isCancelModalOpen}
+                onClose={() => setIsCancelModalOpen(false)}
+                onConfirm={handleBulkCancel}
+                title="Reverter Bipagens"
                 message={<><p>Deseja reverter <strong>{selectedIds.size}</strong> bipagem(ns)?</p><p className="text-xs opacity-70">Isso retornará os pedidos para "NORMAL" e devolverá os insumos ao estoque.</p></>}
                 confirmButtonText="Sim, Reverter"
                 isConfirming={isActionLoading}
             />
 
-            <ConfirmActionModal 
-                isOpen={isHardDeleteModalOpen} 
-                onClose={() => setIsHardDeleteModalOpen(false)} 
-                onConfirm={handleBulkDelete} 
-                title="Excluir Registros" 
+            <ConfirmActionModal
+                isOpen={isHardDeleteModalOpen}
+                onClose={() => setIsHardDeleteModalOpen(false)}
+                onConfirm={handleBulkDelete}
+                title="Excluir Registros"
                 message={<><p>Deseja excluir permanentemente <strong>{selectedIds.size}</strong> registro(s) de log?</p><p className="text-red-500 font-bold uppercase text-[10px] mt-2">Atenção: Isso NÃO reverte o estoque nem o status do pedido!</p></>}
                 confirmButtonText="Sim, Excluir"
                 isConfirming={isActionLoading}

@@ -1,14 +1,14 @@
 
 import React, { useState, useMemo, useEffect, useCallback, useRef, startTransition } from 'react';
 import Sidebar from './components/Sidebar';
-import GlobalHeader from './components/GlobalHeader'; 
+import GlobalHeader from './components/GlobalHeader';
 import { ImporterPage } from './pages/ImporterPage';
 import DashboardPage from './pages/DashboardPage';
 import BipagemPage from './pages/BipagemPage';
 import EstoquePage from './pages/EstoquePage';
 import RelatoriosPage from './pages/RelatoriosPage';
 import EtiquetasPage from './pages/EtiquetasPage';
-import FinancePage from './pages/FinancePage'; 
+import FinancePage from './pages/FinancePage';
 import ConfiguracoesPage from './pages/ConfiguracoesPage';
 import { ConfiguracoesGeraisPage } from './pages/ConfiguracoesGeraisPage';
 import { PesagemPage } from './pages/PesagemPage';
@@ -31,10 +31,10 @@ import ConfirmActionModal from './components/ConfirmActionModal';
 import { BulkLinkSKUsModal } from './components/BulkLinkSKUsModal';
 import EditProductModal from './components/EditProductModal';
 
-import { 
-    ProcessedData, StockItem, StockMovement, ProdutoCombinado, 
+import {
+    ProcessedData, StockItem, StockMovement, ProdutoCombinado,
     WeighingBatch, GrindingBatch, OrderItem, ScanLogItem, User, WeighingType,
-    ZplSettings, ExtractedZplData, 
+    ZplSettings, ExtractedZplData,
     ActivityType, GeneralSettings, defaultGeneralSettings,
     UserRole,
     UserSetor,
@@ -86,135 +86,155 @@ const safeNewDate = (dateInput: any): Date => {
 }
 
 const App: React.FC = () => {
-  useEffect(() => {
-    initPostHog();
+    useEffect(() => {
+        initPostHog();
 
-    // OAuth Popup Handler
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    
-    if (code && window.opener) {
-        console.log("OAuth callback detected in popup. Sending message to opener...");
-        window.opener.postMessage({ type: 'BLING_AUTH_CODE', code }, '*');
-        window.close();
-        return; // Stop execution in popup
-    }
-  }, []);
-  const [appStatus, setAppStatus] = useState<AppStatus>('initializing');
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [setupDetails, setSetupDetails] = useState<any | null>(null);
-  
-  const [currentPage, _setCurrentPage] = useState('dashboard');
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const [adminNotices, setAdminNotices] = useState<AdminNotice[]>([]);
-  const [isAutoBipagemActive, setIsAutoBipagemActive] = useState(false);
-  
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [processedData, setProcessedData] = useState<ProcessedData | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [importError, setImportError] = useState<string | null>(null);
+        // OAuth Popup Handler
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
 
-  const [allOrders, setAllOrders] = useState<OrderItem[]>([]);
-  const [returns, setReturns] = useState<ReturnItem[]>([]);
-  const [skuLinks, setSkuLinks] = useState<SkuLink[]>([]);
-  const [importHistory, setImportHistory] = useState<ImportHistoryItem[]>([]);
-  const [historyItemToDelete, setHistoryItemToDelete] = useState<ImportHistoryItem | null>(null);
-  const [isDeleteHistoryModalOpen, setIsDeleteModalOpen] = useState(false);
-  const [isDeletingHistory, setIsDeletingHistory] = useState(false);
-
-  const [scanHistory, setScanHistory] = useState<ScanLogItem[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
-
-  const [stockItems, setStockItems] = useState<StockItem[]>([]);
-  const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
-  const [produtosCombinados, setProdutosCombinados] = useState<ProdutoCombinado[]>([]);
-  const [weighingBatches, setWeighingBatches] = useState<WeighingBatch[]>([]);
-  const [grindingBatches, setGrindingBatches] = useState<GrindingBatch[]>([]);
-  const [packGroups, setPackGroups] = useState<StockPackGroup[]>([]);
-
-  // 🔗 States para Seleção Múltipla de SKUs na Importação
-  const [isBulkLinkSKUsModalOpen, setIsBulkLinkSKUsModalOpen] = useState(false);
-  const [importedSkusForBulkLink, setImportedSkusForBulkLink] = useState<Array<{ sku: string; name: string; price?: number }>>([]);
-
-  // ✏️ State para edição de Produto
-  const [isEditProductModalOpen, setIsEditProductModalOpen] = useState(false);
-  const [productToEdit, setProductToEdit] = useState<StockItem | null>(null);
-
-  const [productionPlans, setProductionPlans] = useState<ProductionPlan[]>([]);
-  const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
-  
-  const [biData, setBiData] = useState<BiDataItem[]>([]);
-
-  const [generalSettings, setGeneralSettings] = useState<GeneralSettings>(defaultGeneralSettings);
-  const [etiquetasSettings, setEtiquetasSettings] = useState<ZplSettings>(defaultZplSettings);
-  const [uiSettings, setUiSettings] = useState<UiSettings>({
-    baseTheme: 'light',
-    accentColor: 'indigo',
-    customAccentColor: '#4f46e5',
-    fontSize: 16,
-    soundOnSuccess: true,
-    soundOnDuplicate: true,
-    soundOnError: true,
-  });
-
-  const [etiquetasState, setEtiquetasState] = useState<EtiquetasState>({
-    zplInput: '',
-    includeDanfe: true,
-    zplPages: [],
-    previews: [],
-    extractedData: new Map(),
-    printedIndices: new Set(),
-    warnings: []
-  });
-  const [isProcessingLabels, setIsProcessingLabels] = useState(false);
-  const [labelProgressMessage, setLabelProgressMessage] = useState('');
-  const [labelProcessingProgress, setLabelProcessingProgress] = useState(0);
-
-  const [etiquetasHistory, setEtiquetasHistory] = useState<EtiquetaHistoryItem[]>([]);
-  const [zplToSaveOnScan, setZplToSaveOnScan] = useState<Map<string, string>>(new Map());
-
-  const initialized = useRef(false);
-
-  useEffect(() => {
-    // 1. Verificar se há um callback de OAuth na URL (Bling)
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    
-    // Check if we are returning from Bling auth
-    if (code) {
-        console.log("Detectado retorno de autenticação Bling. Redirecionando para página de configuração...");
-        _setCurrentPage('bling');
-        // Do not process other logic if we have a code, let BlingPage handle it
-    } else {
-        // 2. Restaurar a última página acessada
-        const savedPage = localStorage.getItem('erp_current_page');
-        if (savedPage) {
-            _setCurrentPage(savedPage);
+        if (code && window.opener) {
+            console.log("OAuth callback detected in popup. Sending message to opener...");
+            window.opener.postMessage({ type: 'BLING_AUTH_CODE', code }, '*');
+            window.close();
+            return; // Stop execution in popup
         }
-    }
+    }, []);
+    const [appStatus, setAppStatus] = useState<AppStatus>('initializing');
+    const [currentUser, setCurrentUser] = useState<User | null>(null);
+    const [setupDetails, setSetupDetails] = useState<any | null>(null);
 
-    try {
-        const savedUser = localStorage.getItem('erp_current_user');
-        if (savedUser) {
-            const user: User = JSON.parse(savedUser);
-            setCurrentUser(user);
+    const [currentPage, _setCurrentPage] = useState('dashboard');
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+    const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+    const [toasts, setToasts] = useState<ToastMessage[]>([]);
+    const [adminNotices, setAdminNotices] = useState<AdminNotice[]>([]);
+    const [isAutoBipagemActive, setIsAutoBipagemActive] = useState(false);
+
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [processedData, setProcessedData] = useState<ProcessedData | null>(null);
+    const [isProcessing, setIsProcessing] = useState(false);
+    const [importError, setImportError] = useState<string | null>(null);
+
+    const [allOrders, setAllOrders] = useState<OrderItem[]>([]);
+    const [returns, setReturns] = useState<ReturnItem[]>([]);
+    const [skuLinks, setSkuLinks] = useState<SkuLink[]>([]);
+    const [importHistory, setImportHistory] = useState<ImportHistoryItem[]>([]);
+    const [historyItemToDelete, setHistoryItemToDelete] = useState<ImportHistoryItem | null>(null);
+    const [isDeleteHistoryModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [isDeletingHistory, setIsDeletingHistory] = useState(false);
+
+    const [scanHistory, setScanHistory] = useState<ScanLogItem[]>([]);
+    const [users, setUsers] = useState<User[]>([]);
+
+    const [stockItems, setStockItems] = useState<StockItem[]>([]);
+    const [stockMovements, setStockMovements] = useState<StockMovement[]>([]);
+    const [produtosCombinados, setProdutosCombinados] = useState<ProdutoCombinado[]>([]);
+    const [weighingBatches, setWeighingBatches] = useState<WeighingBatch[]>([]);
+    const [grindingBatches, setGrindingBatches] = useState<GrindingBatch[]>([]);
+    const [packGroups, setPackGroups] = useState<StockPackGroup[]>([]);
+
+    // 🔗 States para Seleção Múltipla de SKUs na Importação
+    const [isBulkLinkSKUsModalOpen, setIsBulkLinkSKUsModalOpen] = useState(false);
+    const [importedSkusForBulkLink, setImportedSkusForBulkLink] = useState<Array<{ sku: string; name: string; price?: number }>>([]);
+
+    // ✏️ State para edição de Produto
+    const [isEditProductModalOpen, setIsEditProductModalOpen] = useState(false);
+    const [productToEdit, setProductToEdit] = useState<StockItem | null>(null);
+
+    const [productionPlans, setProductionPlans] = useState<ProductionPlan[]>([]);
+    const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
+
+    const [biData, setBiData] = useState<BiDataItem[]>([]);
+
+    const [generalSettings, setGeneralSettings] = useState<GeneralSettings>(defaultGeneralSettings);
+    const [etiquetasSettings, setEtiquetasSettings] = useState<ZplSettings>(defaultZplSettings);
+    const [uiSettings, setUiSettings] = useState<UiSettings>({
+        baseTheme: 'light',
+        accentColor: 'indigo',
+        customAccentColor: '#4f46e5',
+        fontSize: 16,
+        soundOnSuccess: true,
+        soundOnDuplicate: true,
+        soundOnError: true,
+    });
+
+    const [etiquetasState, setEtiquetasState] = useState<EtiquetasState>({
+        zplInput: '',
+        includeDanfe: true,
+        zplPages: [],
+        previews: [],
+        extractedData: new Map(),
+        printedIndices: new Set(),
+        warnings: []
+    });
+    const [isProcessingLabels, setIsProcessingLabels] = useState(false);
+    const [labelProgressMessage, setLabelProgressMessage] = useState('');
+    const [labelProcessingProgress, setLabelProcessingProgress] = useState(0);
+
+    const [etiquetasHistory, setEtiquetasHistory] = useState<EtiquetaHistoryItem[]>([]);
+    const [zplToSaveOnScan, setZplToSaveOnScan] = useState<Map<string, string>>(new Map());
+
+    const initialized = useRef(false);
+
+    useEffect(() => {
+        // 1. Verificar se há um callback de OAuth na URL (Bling)
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+
+        // Check if we are returning from Bling auth
+        if (code) {
+            console.log("Detectado retorno de autenticação Bling. Redirecionando para página de configuração...");
+            _setCurrentPage('bling');
+            // Do not process other logic if we have a code, let BlingPage handle it
+        } else {
+            // 2. Restaurar a última página acessada
+            const savedPage = localStorage.getItem('erp_current_page');
+            if (savedPage) {
+                _setCurrentPage(savedPage);
+            }
         }
-    } catch (e) {
-        localStorage.removeItem('erp_current_user');
-    }
-  }, []);
 
-  const addToast = useCallback((message: string, type: ToastMessage['type']) => {
-    setToasts(prev => [...prev, { id: Date.now(), message, type }]);
-  }, []);
+        try {
+            const savedUserStr = localStorage.getItem('erp_current_user');
+            const loginTimeStr = localStorage.getItem('erp_login_time');
 
-  const removeToast = (id: number) => {
-    setToasts(prev => prev.filter(t => t.id !== id));
-  };
+            if (savedUserStr && loginTimeStr) {
+                const loginTime = parseInt(loginTimeStr, 10);
+                const agora = Date.now();
+                const hs8 = 8 * 60 * 60 * 1000; // 8 horas em ms
 
-  const setCurrentPage = (page: string) => {
+                // Verifica se a sessão local é mais antiga que 8 horas
+                if (agora - loginTime > hs8) {
+                    console.warn("Sessão expirada (max 8h). Forçando novo login...");
+                    localStorage.removeItem('erp_current_user');
+                    localStorage.removeItem('erp_login_time');
+                    setCurrentUser(null);
+                } else {
+                    const user: User = JSON.parse(savedUserStr);
+                    setCurrentUser(user);
+                }
+            } else if (savedUserStr) {
+                // Se tem o user guardado mas não tem carimbo de data (Sessão Fantasma anterior) - purgar!
+                console.warn("Sessão antiga sem timestamp detectada. Purgando para garantir revogabilidade.");
+                localStorage.removeItem('erp_current_user');
+                setCurrentUser(null);
+            }
+        } catch (e) {
+            localStorage.removeItem('erp_current_user');
+            localStorage.removeItem('erp_login_time');
+        }
+    }, []);
+
+    const addToast = useCallback((message: string, type: ToastMessage['type']) => {
+        setToasts(prev => [...prev, { id: Date.now(), message, type }]);
+    }, []);
+
+    const removeToast = (id: number) => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+    };
+
+    const setCurrentPage = (page: string) => {
         if (currentUser && !canAccessPage(currentUser, page)) {
             const fallbackPage = getFirstAccessiblePage(currentUser, 'dashboard');
             localStorage.setItem('erp_current_page', fallbackPage);
@@ -223,9 +243,9 @@ const App: React.FC = () => {
             return;
         }
 
-    localStorage.setItem('erp_current_page', page);
-    _setCurrentPage(page);
-  };
+        localStorage.setItem('erp_current_page', page);
+        _setCurrentPage(page);
+    };
 
     useEffect(() => {
         if (!currentUser) return;
@@ -243,25 +263,25 @@ const App: React.FC = () => {
             localStorage.setItem('erp_stockItems_backup_timestamp', new Date().toISOString());
         }
     }, [stockItems]);
-  
-  const lowStockItems = useMemo(() => stockItems.filter(i => {
-      const current = Number(i.current_qty);
-      const min = Number(i.min_qty);
-      return i.kind !== 'PRODUTO' && !isNaN(current) && !isNaN(min) && current <= min;
-  }), [stockItems]);
 
-  const lowStockCount = lowStockItems.length;
-  const bannerNotice = useMemo(() => adminNotices.find(n => n.type === 'banner'), [adminNotices]);
+    const lowStockItems = useMemo(() => stockItems.filter(i => {
+        const current = Number(i.current_qty);
+        const min = Number(i.min_qty);
+        return i.kind !== 'PRODUTO' && !isNaN(current) && !isNaN(min) && current <= min;
+    }), [stockItems]);
 
-  // IDs de pedidos importados que têm vínculo com o Bling (blingId definido)
-  const blingLinkedIds = useMemo(() => {
-    return new Set<string>(
-      allOrders
-        .filter(o => o.blingId)
-        .map(o => o.orderId)
-        .filter((id): id is string => Boolean(id))
-    );
-  }, [allOrders]);
+    const lowStockCount = lowStockItems.length;
+    const bannerNotice = useMemo(() => adminNotices.find(n => n.type === 'banner'), [adminNotices]);
+
+    // IDs de pedidos importados que têm vínculo com o Bling (blingId definido)
+    const blingLinkedIds = useMemo(() => {
+        return new Set<string>(
+            allOrders
+                .filter(o => o.blingId)
+                .map(o => o.orderId)
+                .filter((id): id is string => Boolean(id))
+        );
+    }, [allOrders]);
 
     const scannedCodeBuffer = useRef('');
     const lastKeyPressTime = useRef(0);
@@ -275,7 +295,7 @@ const App: React.FC = () => {
 
         const result = await resolveScan(dbClient, code, actingUser, 'WebApp', users, generalSettings.bipagem, zplToSaveOnScan);
 
-        if(result.scan?.id) {
+        if (result.scan?.id) {
             // Log UI Update
             const { data: newScanLog } = await dbClient.from('scan_logs').select('*').eq('id', result.scan.id).single();
             if (newScanLog) {
@@ -296,7 +316,7 @@ const App: React.FC = () => {
             // Stock Logic based on mode
             if (result.status === 'OK' && result.order_key && result.sku_key) {
                 await dbClient.from('orders').update({ status: 'BIPADO', canal: result.channel || undefined }).match({ order_id: result.order_key, sku: result.sku_key });
-                setAllOrders(prev => prev.map(o => o.orderId === result.order_key && o.sku === result.sku_key ? {...o, status: 'BIPADO', canal: result.channel || o.canal} : o));
+                setAllOrders(prev => prev.map(o => o.orderId === result.order_key && o.sku === result.sku_key ? { ...o, status: 'BIPADO', canal: result.channel || o.canal } : o));
 
                 // Verifica se o grupo completo foi bipado
                 const updatedOrders = allOrders.map(o =>
@@ -415,7 +435,7 @@ const App: React.FC = () => {
 
     const handleSaveUiSettings = async (newSettings: UiSettings) => {
         if (!currentUser) return;
-        
+
         setUiSettings(newSettings);
 
         const { data, error } = await dbClient
@@ -427,7 +447,7 @@ const App: React.FC = () => {
 
         if (error) {
             addToast('Erro ao salvar configurações de aparência.', 'error');
-            setUiSettings(uiSettings); 
+            setUiSettings(uiSettings);
         } else {
             addToast('Configurações salvas com sucesso!', 'success');
             setCurrentUser(prev => prev ? { ...prev, ui_settings: newSettings } : null);
@@ -438,14 +458,14 @@ const App: React.FC = () => {
         const newSettings = typeof settingsUpdater === 'function'
             ? settingsUpdater(generalSettings)
             : settingsUpdater;
-        
+
         if (!newSettings) {
             addToast('Erro ao salvar: configurações inválidas.', 'error');
             return;
         }
 
         setGeneralSettings(newSettings);
-        
+
         const { error } = await dbClient
             .from('app_settings')
             .upsert({ key: 'general', value: newSettings as any });
@@ -527,11 +547,11 @@ const App: React.FC = () => {
             console.log(`📥 [loadData] ============ INICIANDO CARREGAMENTO ============`);
             console.log(`👤 [loadData] Usuário: ${currentUser.name}`);
             console.log(`🔗 [loadData] URL Supabase: ${supabaseUrl}`);
-            
+
             // Using fetchAll to bypass 1000 row limit for critical tables
             const ordersData = await fetchAll('orders', { orderBy: 'created_at', ascending: false });
             const scanLogsData = await fetchAll('scan_logs', { orderBy: 'created_at', ascending: false });
-            
+
             console.log(`✅ [fetchAll] Orders carregados: ${ordersData?.length || 0} registros`);
             console.log(`✅ [fetchAll] Scan logs carregados: ${scanLogsData?.length || 0} registros`);
 
@@ -556,7 +576,7 @@ const App: React.FC = () => {
                 dbClient.from('vw_dados_analiticos').select('*'),
                 dbClient.from('stock_pack_groups').select('*'),
             ];
-            
+
             const tableNames = ['returns', 'skuLinks', 'users', 'stockItems', 'stockMovements', 'rawMaterials', 'weighingBatches', 'grindingBatches', 'productionPlans', 'shoppingList', 'settings', 'notwenes', 'importHistory', 'productionPlanItems', 'etiquetasHistory', 'biData', 'packGroups'];
 
             const results = await Promise.allSettled(queries);
@@ -581,15 +601,41 @@ const App: React.FC = () => {
                     console.error(`❌ [loadData] ${tableName} rejeitado:`, result.reason);
                 }
             });
-            
+
             // Set data from fetchAll
-            setAllOrders(ordersData.map((o: any) => ({ id: o.id, orderId: o.order_id, blingNumero: o.bling_numero || '', tracking: o.tracking, sku: o.sku, qty_original: Number(o.qty_original || 0), multiplicador: Number(o.multiplicador || 0), qty_final: Number(o.qty_final || 0), color: o.color, canal: o.canal, data: o.data, created_at: o.created_at, status: o.status, error_reason: o.error_reason, customer_name: o.customer_name, customer_cpf_cnpj: o.customer_cpf_cnpj, resolution_details: o.resolution_details, price_gross: o.price_gross, platform_fees: o.platform_fees, shipping_fee: o.shipping_fee, price_net: o.price_net, data_prevista_envio: o.data_prevista_envio })));
+            setAllOrders(ordersData.map((o: any) => ({
+                id: o.id,
+                orderId: o.order_id,
+                blingNumero: o.bling_numero || '',
+                tracking: o.tracking,
+                sku: o.sku,
+                qty_original: Number(o.qty_original || 0),
+                multiplicador: Number(o.multiplicador || 0),
+                qty_final: Number(o.qty_final || 0),
+                color: o.color,
+                canal: o.canal,
+                data: o.data,
+                created_at: o.created_at,
+                status: o.status,
+                error_reason: o.error_reason,
+                customer_name: o.customer_name,
+                customer_cpf_cnpj: o.customer_cpf_cnpj,
+                resolution_details: o.resolution_details,
+                price_gross: o.price_gross,
+                platform_fees: o.platform_fees,
+                shipping_fee: o.shipping_fee,
+                price_net: o.price_net,
+                data_prevista_envio: o.data_prevista_envio,
+                vinculado_bling: o.vinculado_bling || false,
+                etiqueta_gerada: o.etiqueta_gerada || false,
+                lote_id: o.lote_id || ''
+            })));
             setScanHistory(scanLogsData.map((s: any) => ({ id: s.id, time: safeNewDate(s.scanned_at), userId: s.user_id, user: s.user_name, device: s.device, displayKey: s.display_key, status: s.status, synced: s.synced, canal: s.canal })));
 
             if (dataMap.returns) setReturns(dataMap.returns.map((r: any) => ({ id: r.id, tracking: r.tracking, customer_name: r.customer_name, loggedById: r.logged_by_id, loggedBy: r.logged_by_name, loggedAt: safeNewDate(r.logged_at), order_id: r.order_id })));
             if (dataMap.skuLinks) setSkuLinks(dataMap.skuLinks.map((l: any) => ({ importedSku: l.imported_sku, masterProductSku: l.master_product_sku })));
             if (dataMap.users) setUsers(dataMap.users as User[]);
-            
+
             // 🛡️ PROTEÇÃO: Carregar product_boms + stock_items mesmo quando uma das tabelas vier vazia
             if (
                 (dataMap.stockItems && Array.isArray(dataMap.stockItems)) ||
@@ -634,6 +680,7 @@ const App: React.FC = () => {
                                 category: i.category || '',
                                 min_qty: Number(i.min_qty) || 0,
                                 expedition_items: i.expedition_items || [],
+                                is_volatile_infinite: false,
                             };
                         } catch (err) {
                             console.error('❌ Erro ao mapear insumo:', i, err);
@@ -641,10 +688,10 @@ const App: React.FC = () => {
                         }
                     }).filter((item: any) => item !== null);
 
-                    allStockItems = [...mappedStockItems, ...mappedRawMaterials].sort((a,b) => a.name.localeCompare(b.name));
+                    allStockItems = [...mappedStockItems, ...mappedRawMaterials].sort((a, b) => a.name.localeCompare(b.name));
                     console.log(`💾 [loadData] Combinados: ${mappedStockItems.length} product_boms + ${mappedRawMaterials.length} insumos = ${allStockItems.length} total`);
                 }
-                
+
                 if (allStockItems.length > 0) {
                     console.log(`💾 [loadData] Salvando ${allStockItems.length} itens no estoque (produtos + insumos)`);
                     setStockItems(allStockItems);
@@ -654,26 +701,26 @@ const App: React.FC = () => {
             } else {
                 console.warn(`⚠️ [loadData] product_boms e stock_items sem dados válidos da query.`);
             }
-            
+
             if (dataMap.packGroups) setPackGroups(dataMap.packGroups);
-            
+
             if (dataMap.stockMovements) setStockMovements(dataMap.stockMovements.map((m: any) => ({ id: m.id, stockItemCode: m.stock_item_code, stockItemName: m.stock_item_name, origin: m.origin, qty_delta: parseFloat(m.qty_delta) || 0, ref: m.ref, createdAt: safeNewDate(m.created_at), createdBy: m.created_by_name, fromWeighing: m.from_weighing, productSku: m.product_sku })));
             if (dataMap.weighingBatches) setWeighingBatches(dataMap.weighingBatches.map((wb: any) => ({ id: wb.id, stock_item_code: wb.stock_item_code, stock_item_name: wb.stock_item_name, initialQty: parseFloat(wb.initial_qty) || 0, used_qty: parseFloat(wb.used_qty) || 0, createdAt: safeNewDate(wb.created_at), userId: wb.created_by_id, createdBy: wb.created_by_name, weighingType: wb.weighing_type })));
-            
-            if (dataMap.grindingBatches) setGrindingBatches(dataMap.grindingBatches.map((gb: any) => ({ 
-                id: gb.id, 
-                sourceInsumoCode: gb.source_insumo_code, 
-                sourceInsumoName: gb.source_insumo_name, 
-                sourceQtyUsed: parseFloat(gb.source_qty_used) || 0, 
-                outputInsumoCode: gb.output_insumo_code, 
-                outputInsumoName: gb.output_insumo_name, 
-                outputQtyProduced: parseFloat(gb.output_qty_produced) || 0, 
-                createdAt: safeNewDate(gb.created_at), 
-                userId: gb.user_id, 
-                userName: gb.user_name, 
-                mode: gb.mode 
+
+            if (dataMap.grindingBatches) setGrindingBatches(dataMap.grindingBatches.map((gb: any) => ({
+                id: gb.id,
+                sourceInsumoCode: gb.source_insumo_code,
+                sourceInsumoName: gb.source_insumo_name,
+                sourceQtyUsed: parseFloat(gb.source_qty_used) || 0,
+                outputInsumoCode: gb.output_insumo_code,
+                outputInsumoName: gb.output_insumo_name,
+                outputQtyProduced: parseFloat(gb.output_qty_produced) || 0,
+                createdAt: safeNewDate(gb.created_at),
+                userId: gb.user_id,
+                userName: gb.user_name,
+                mode: gb.mode
             })));
-            
+
             const planItemsData = dataMap.productionPlanItems;
             const plansData = dataMap.productionPlans;
             if (plansData && planItemsData) {
@@ -723,9 +770,9 @@ const App: React.FC = () => {
             }
 
             if (currentUser.ui_settings) {
-                setUiSettings(s => ({...s, ...(currentUser.ui_settings as object)}));
+                setUiSettings(s => ({ ...s, ...(currentUser.ui_settings as object) }));
             }
-            
+
             console.log(`📊 [loadData] RESUMO FINAL:`);
             console.log(`   • product_boms (produtos): ${dataMap.stockItems?.length || '❌ 0 ou undefined'} registros`);
             console.log(`   • skuLinks: ${dataMap.skuLinks?.length || 0} registros`);
@@ -748,7 +795,7 @@ const App: React.FC = () => {
             setAppStatus('error');
         }
     }, [currentUser]);
-    
+
     const handleSaveEtiquetaHistory = useCallback(async (historyItem: Omit<EtiquetaHistoryItem, 'id' | 'created_at'>) => {
         const { data, error } = await dbClient.from('etiquetas_historico').insert(historyItem as any).select().single();
         if (!error) {
@@ -770,7 +817,7 @@ const App: React.FC = () => {
         const zplToProcess = etiquetasState.zplInput;
         const historyItem = etiquetasHistory.find(h => h.zpl_content === zplToProcess);
         const printedHashes = new Set<string>(historyItem?.page_hashes || []);
-        
+
         // Count errors for summary
         let errorCount = 0;
 
@@ -807,7 +854,7 @@ const App: React.FC = () => {
                                 previews: new Array(result.zplPages.length).fill('')
                             }));
                         });
-                        
+
                         const newPrintedIndices = new Set<number>();
                         if (result.printedStatus) {
                             result.printedStatus.forEach((isPrinted: boolean, index: number) => {
@@ -846,7 +893,7 @@ const App: React.FC = () => {
                         break;
                 }
             }
-            
+
             // Notify completion
             if (errorCount > 0) {
                 addToast(`Processamento concluído com ${errorCount} erros de renderização. Verifique as etiquetas.`, 'error');
@@ -871,17 +918,17 @@ const App: React.FC = () => {
         return error ? null : data.processed_data;
     }, []);
 
-  useEffect(() => {
-    const initializeApp = async () => {
-      try {
-        const { setupNeeded, error, details } = await verifyDatabaseSetup();
-        if (error) { setAppStatus('error'); return; }
-        if (setupNeeded) { setSetupDetails(details); setAppStatus('needs_setup'); } else { setAppStatus('ready'); }
-      } catch (e) { setAppStatus('error'); }
-    };
-    initializeApp();
-  }, []);
-  
+    useEffect(() => {
+        const initializeApp = async () => {
+            try {
+                const { setupNeeded, error, details } = await verifyDatabaseSetup();
+                if (error) { setAppStatus('error'); return; }
+                if (setupNeeded) { setSetupDetails(details); setAppStatus('needs_setup'); } else { setAppStatus('ready'); }
+            } catch (e) { setAppStatus('error'); }
+        };
+        initializeApp();
+    }, []);
+
     useEffect(() => {
         const root = document.documentElement;
         const effectiveTheme = uiSettings.baseTheme === 'system'
@@ -893,12 +940,12 @@ const App: React.FC = () => {
         root.classList.add(`accent-${uiSettings.accentColor}`);
     }, [uiSettings.baseTheme, uiSettings.accentColor, uiSettings.customAccentColor]);
 
-  useEffect(() => {
-    if (currentUser && !initialized.current) {
-        initialized.current = true;
-        loadData();
-    }
-  }, [currentUser, loadData]);
+    useEffect(() => {
+        if (currentUser && !initialized.current) {
+            initialized.current = true;
+            loadData();
+        }
+    }, [currentUser, loadData]);
 
     const handleSaveExpeditionItems = async (productCode: string, items: { stockItemCode: string; qty_per_pack: number }[]) => {
         // Nota: expedition_items é um conceito de stock_items (matérias-primas), não de product_boms
@@ -906,13 +953,13 @@ const App: React.FC = () => {
         console.warn('⚠️ [handleSaveExpeditionItems] Funcionalidade não disponível para product_boms');
         addToast('Funcionalidade em desenvolvimento', 'warning');
     };
-    
-  const handleSaveProdutoCombinado = useCallback(async (productSku: string, newBomItems: ProdutoCombinado['items']) => {
-      const payload = {
-        bom_composition: { items: newBomItems } as any,
-        updated_at: new Date().toISOString(),
-      };
-      const { error } = await dbClient.from('product_boms').update(payload).eq('code', productSku);
+
+    const handleSaveProdutoCombinado = useCallback(async (productSku: string, newBomItems: ProdutoCombinado['items']) => {
+        const payload = {
+            bom_composition: { items: newBomItems } as any,
+            updated_at: new Date().toISOString(),
+        };
+        const { error } = await dbClient.from('product_boms').update(payload).eq('code', productSku);
         if (!error) {
             setProdutosCombinados(prev => {
                 const existing = prev.find(b => b.productSku === productSku);
@@ -921,8 +968,8 @@ const App: React.FC = () => {
             addToast('Receita (BOM) salva!', 'success');
         }
     }, [addToast]);
-    
-  const handleAddNewItem = useCallback(async (item: Omit<StockItem, 'id'>): Promise<StockItem | null> => {
+
+    const handleAddNewItem = useCallback(async (item: Omit<StockItem, 'id'>): Promise<StockItem | null> => {
         try {
             // Validações básicas
             if (!item.name || !item.name.trim()) {
@@ -935,7 +982,7 @@ const App: React.FC = () => {
                 addToast('Código/SKU é obrigatório.', 'error');
                 return null;
             }
-            
+
             // Verificar se código já existe
             const existingItem = stockItems.find(i => i.code.toUpperCase() === item.code.trim().toUpperCase());
             if (existingItem) {
@@ -943,7 +990,7 @@ const App: React.FC = () => {
                 addToast(`Código "${item.code}" já existe no estoque.`, 'error');
                 return null;
             }
-            
+
             // Preparar o item para salvar - deixar ID ser gerado pelo banco
             let itemToSave: any = {
                 name: item.name.trim(),
@@ -973,35 +1020,35 @@ const App: React.FC = () => {
                 if (item.color) itemToSave.color = item.color;
                 console.log(`📥 [handleAddNewItem] Preparando PRODUTO:`, itemToSave);
             }
-            
+
             // Determinar tabela de destino based on kind
             const targetTable = (item.kind === 'INSUMO' || item.kind === 'PROCESSADO') ? 'stock_items' : 'product_boms';
             console.log(`📥 [handleAddNewItem] Salvando novo item (${item.kind}) em ${targetTable}`);
-            
+
             const { data, error } = await dbClient
                 .from(targetTable)
                 .insert(itemToSave as any)
                 .select()
                 .single();
-            
+
             if (error) {
                 console.error(`❌ [handleAddNewItem] Erro ao salvar em ${targetTable}:`, error.message);
                 addToast(`Erro ao criar item: ${error.message}`, 'error');
                 return null;
             }
-            
+
             if (!data) {
                 console.error('❌ [handleAddNewItem] Nenhum dado retornado');
                 addToast('Erro ao criar item: resposta vazia.', 'error');
                 return null;
             }
-            
+
             const newItem = { ...data, expedition_items: data.expedition_items || [] } as StockItem;
-            setStockItems(prev => [...prev, newItem].sort((a,b) => a.name.localeCompare(b.name)));
-            
+            setStockItems(prev => [...prev, newItem].sort((a, b) => a.name.localeCompare(b.name)));
+
             console.log(`✅ [handleAddNewItem] Item criado em ${targetTable} e adicionado ao estado local`);
             addToast('Item criado com sucesso!', 'success');
-            
+
             return newItem;
         } catch (err: any) {
             console.error('❌ [handleAddNewItem] Exceção:', err.message);
@@ -1024,7 +1071,7 @@ const App: React.FC = () => {
 
     const handleDeleteGrindingBatch = useCallback(async (batchId: string): Promise<boolean> => {
         const { error } = await dbClient.from('grinding_batches').delete().eq('id', batchId);
-        if(!error) { loadData(); addToast('Lote excluído.', 'success'); return true; }
+        if (!error) { loadData(); addToast('Lote excluído.', 'success'); return true; }
         return false;
     }, [addToast, loadData]);
 
@@ -1037,26 +1084,26 @@ const App: React.FC = () => {
         }
         return false;
     }, [addToast, loadData]);
-    
-  const handleUpdateUser = useCallback(async (user: User): Promise<boolean> => {
+
+    const handleUpdateUser = useCallback(async (user: User): Promise<boolean> => {
         const { id, ...updateData } = user;
         const { error } = await dbClient.from('users').update(updateData as any).eq('id', id);
         if (!error) {
             setUsers(prev => prev.map(u => u.id === id ? { ...u, ...updateData } : u));
-            if (currentUser?.id === id) setCurrentUser(prev => prev ? {...prev, ...updateData} : null);
+            if (currentUser?.id === id) setCurrentUser(prev => prev ? { ...prev, ...updateData } : null);
             addToast('Usuário atualizado!', 'success');
             return true;
         }
         return false;
     }, [addToast, currentUser]);
 
-  const handleCancelBipagem = useCallback(async (scanId: string) => {
+    const handleCancelBipagem = useCallback(async (scanId: string) => {
         if (!currentUser) return;
         const { error } = await dbClient.rpc('cancel_scan_id_and_revert_stock', { scan_id_to_cancel: scanId, user_name: currentUser.name });
         if (!error) { addToast('Bipagem cancelada!', 'success'); loadData(); }
     }, [currentUser, addToast, loadData]);
 
-  const handleBulkCancelBipagem = useCallback(async (scanIds: string[]) => {
+    const handleBulkCancelBipagem = useCallback(async (scanIds: string[]) => {
         if (!currentUser) return;
         for (const id of scanIds) await dbClient.rpc('cancel_scan_id_and_revert_stock', { scan_id_to_cancel: id, user_name: currentUser.name });
         addToast(`${scanIds.length} bipagens canceladas!`, 'success');
@@ -1073,7 +1120,7 @@ const App: React.FC = () => {
         if (!error) { addToast('Registros excluídos!', 'success'); loadData(); }
     }, [addToast, loadData]);
 
-  const handleAddNewUser = useCallback(async (name: string, setor: UserSetor[], role: UserRole, email?: string, password?: string): Promise<{ success: boolean; message?: string; }> => {
+    const handleAddNewUser = useCallback(async (name: string, setor: UserSetor[], role: UserRole, email?: string, password?: string): Promise<{ success: boolean; message?: string; }> => {
         const payload: any = { name, setor, role, email: email || null };
         if (password) payload.password = password;
         const { error } = await dbClient.from('users').insert(payload);
@@ -1082,99 +1129,99 @@ const App: React.FC = () => {
         return { success: true };
     }, [addToast, loadData]);
 
-  const handleSyncPending = useCallback(async () => {
-    addToast('Sincronizando...', 'info');
-    const { data: pendingScans } = await dbClient.from('scan_logs').select('*').eq('status', 'NOT_FOUND');
-    if (!pendingScans || pendingScans.length === 0) return;
-    for (const scan of pendingScans) {
-        const { data: orderData } = await dbClient.from('orders').select('*').or(`order_id.eq.${scan.display_key},tracking.eq.${scan.display_key}`).limit(1).single();
-        if (orderData && orderData.status === 'NORMAL') {
-            await dbClient.from('scan_logs').update({ status: 'OK', synced: true, canal: orderData.canal }).eq('id', scan.id);
-            await dbClient.from('orders').update({ status: 'BIPADO' }).eq('id', orderData.id);
+    const handleSyncPending = useCallback(async () => {
+        addToast('Sincronizando...', 'info');
+        const { data: pendingScans } = await dbClient.from('scan_logs').select('*').eq('status', 'NOT_FOUND');
+        if (!pendingScans || pendingScans.length === 0) return;
+        for (const scan of pendingScans) {
+            const { data: orderData } = await dbClient.from('orders').select('*').or(`order_id.eq.${scan.display_key},tracking.eq.${scan.display_key}`).limit(1).single();
+            if (orderData && orderData.status === 'NORMAL') {
+                await dbClient.from('scan_logs').update({ status: 'OK', synced: true, canal: orderData.canal }).eq('id', scan.id);
+                await dbClient.from('orders').update({ status: 'BIPADO' }).eq('id', orderData.id);
+            }
         }
-    }
-    loadData(); addToast('Sincronização concluída!', 'success');
-  }, [addToast, loadData]);
+        loadData(); addToast('Sincronização concluída!', 'success');
+    }, [addToast, loadData]);
 
-  const handleLogError = useCallback(async (orderIdentifier: string, reason: string): Promise<boolean> => {
+    const handleLogError = useCallback(async (orderIdentifier: string, reason: string): Promise<boolean> => {
         const { error } = await dbClient.from('orders').update({ status: 'ERRO', error_reason: reason }).or(`order_id.eq.${orderIdentifier},tracking.eq.${orderIdentifier}`);
-        if(!error) { loadData(); addToast('Falha registrada.', 'success'); return true; }
+        if (!error) { loadData(); addToast('Falha registrada.', 'success'); return true; }
         return false;
     }, [addToast, loadData]);
 
-  const handleLogReturn = useCallback(async (tracking: string, customerName: string): Promise<boolean> => {
-        if(!currentUser) return false;
+    const handleLogReturn = useCallback(async (tracking: string, customerName: string): Promise<boolean> => {
+        if (!currentUser) return false;
         const orderToReturn = allOrders.find(o => o.tracking === tracking);
         if (!orderToReturn) return false;
         const { error } = await dbClient.from('returns').insert({ tracking, customer_name: customerName, logged_by_id: currentUser.id, logged_by_name: currentUser.name, logged_at: new Date().toISOString(), order_id: orderToReturn.id });
-        if(!error) { await dbClient.from('orders').update({ status: 'DEVOLVIDO' }).eq('id', orderToReturn.id); loadData(); addToast('Devolução registrada.', 'success'); return true; }
+        if (!error) { await dbClient.from('orders').update({ status: 'DEVOLVIDO' }).eq('id', orderToReturn.id); loadData(); addToast('Devolução registrada.', 'success'); return true; }
         return false;
     }, [currentUser, allOrders, addToast, loadData]);
 
-  const handleDeleteOrders = useCallback(async (orderIds: string[]) => {
+    const handleDeleteOrders = useCallback(async (orderIds: string[]) => {
         if (orderIds.length === 0) return;
         const { error } = await dbClient.rpc('delete_orders', { order_ids: orderIds });
-        if(!error) { 
+        if (!error) {
             await loadData(); // Force reload to update UI
-            addToast(`${orderIds.length} pedidos excluídos.`, 'success'); 
+            addToast(`${orderIds.length} pedidos excluídos.`, 'success');
         } else {
             addToast(`Erro ao excluir pedidos: ${error.message}`, 'error');
             // Try to recover if RPC is missing (rare case but good fallback)
             if (error.code === '42883') { // Undefined function
-                 addToast('Função de exclusão não encontrada. Sincronize o banco nas configurações.', 'error');
+                addToast('Função de exclusão não encontrada. Sincronize o banco nas configurações.', 'error');
             }
         }
     }, [addToast, loadData]);
 
-  const handleUpdateStatus = useCallback(async (orderIds: string[], newStatus: OrderStatusValue): Promise<boolean> => {
+    const handleUpdateStatus = useCallback(async (orderIds: string[], newStatus: OrderStatusValue): Promise<boolean> => {
         const { error } = await dbClient.from('orders').update({ status: newStatus }).in('id', orderIds);
-        if(!error) { loadData(); addToast('Status atualizado.', 'success'); return true; }
+        if (!error) { loadData(); addToast('Status atualizado.', 'success'); return true; }
         return false;
     }, [addToast, loadData]);
 
-  const handleRemoveReturn = useCallback(async (returnId: string): Promise<boolean> => {
+    const handleRemoveReturn = useCallback(async (returnId: string): Promise<boolean> => {
         const returnItem = returns.find(r => r.id === returnId);
         if (!returnItem) return false;
         const { error } = await dbClient.from('returns').delete().eq('id', returnId);
-        if(!error) { await dbClient.from('orders').update({ status: 'NORMAL' }).eq('tracking', returnItem.tracking); loadData(); addToast('Devolução removida.', 'success'); return true; }
+        if (!error) { await dbClient.from('orders').update({ status: 'NORMAL' }).eq('tracking', returnItem.tracking); loadData(); addToast('Devolução removida.', 'success'); return true; }
         return false;
     }, [returns, addToast, loadData]);
 
-  const handleSolveOrders = useCallback(async (orderIds: string[], resolution: Omit<OrderResolutionDetails, 'resolved_by' | 'resolved_at'>): Promise<boolean> => {
-        if(!currentUser) return false;
+    const handleSolveOrders = useCallback(async (orderIds: string[], resolution: Omit<OrderResolutionDetails, 'resolved_by' | 'resolved_at'>): Promise<boolean> => {
+        if (!currentUser) return false;
         const resolution_details = { ...resolution, resolved_by: currentUser.name, resolved_at: new Date().toISOString() };
         const { error } = await dbClient.from('orders').update({ status: 'SOLUCIONADO', resolution_details: resolution_details as any }).in('id', orderIds);
-        if(!error) { loadData(); addToast('Solucionado.', 'success'); return true; }
+        if (!error) { loadData(); addToast('Solucionado.', 'success'); return true; }
         return false;
     }, [currentUser, addToast, loadData]);
 
-  const handleBackupData = useCallback(async () => {
+    const handleBackupData = useCallback(async () => {
         const stateToExport = { users, stockItems, stockMovements, boms: produtosCombinados, weighingBatches, allOrders, returns, scanHistory, skuLinks };
         exportStateToSql(stateToExport as any, SETUP_SQL_STRING);
     }, [users, stockItems, stockMovements, produtosCombinados, weighingBatches, allOrders, returns, scanHistory, skuLinks]);
 
-  const handleResetDatabase = useCallback(async (adminPassword: string): Promise<{ success: boolean; message?: string; }> => {
+    const handleResetDatabase = useCallback(async (adminPassword: string): Promise<{ success: boolean; message?: string; }> => {
         const loggedInUser = await loginUser(currentUser!.email!, adminPassword);
         if (!loggedInUser || loggedInUser.id !== currentUser!.id) return { success: false, message: 'Senha incorreta.' };
         const { success, message } = await resetDatabase();
-        if(success) await loadData();
+        if (success) await loadData();
         return { success, message };
     }, [currentUser, loadData]);
 
-  const handleClearScanHistory = useCallback(async (adminPassword: string): Promise<{ success: boolean; message?: string; }> => {
+    const handleClearScanHistory = useCallback(async (adminPassword: string): Promise<{ success: boolean; message?: string; }> => {
         if (currentUser?.role !== 'SUPER_ADMIN') return { success: false };
         const loggedInUser = await loginUser(currentUser.email!, adminPassword);
-         if (!loggedInUser || loggedInUser.id !== currentUser.id) return { success: false, message: 'Senha incorreta.' };
+        if (!loggedInUser || loggedInUser.id !== currentUser.id) return { success: false, message: 'Senha incorreta.' };
         const { error } = await dbClient.rpc('clear_scan_history');
         if (!error) { addToast('Histórico limpo.', 'success'); loadData(); return { success: true }; }
         return { success: false };
     }, [currentUser, addToast, loadData]);
 
-  const handleSaveProductionPlan = useCallback(async (plan: Omit<ProductionPlan, 'id' | 'createdAt' | 'createdBy'>): Promise<ProductionPlan | null> => {
+    const handleSaveProductionPlan = useCallback(async (plan: Omit<ProductionPlan, 'id' | 'createdAt' | 'createdBy'>): Promise<ProductionPlan | null> => {
         if (!currentUser) return null;
         const { data, error } = await dbClient.from('production_plans').insert({ ...plan, created_by: currentUser.name }).select().single();
-        if(!error) {
-            const planItemsToInsert = plan.items.map(item => ({...item, plan_id: data.id}));
+        if (!error) {
+            const planItemsToInsert = plan.items.map(item => ({ ...item, plan_id: data.id }));
             await dbClient.from('production_plan_items').insert(planItemsToInsert);
             loadData(); addToast('Plano salvo.', 'success');
             return { ...data, items: planItemsToInsert } as ProductionPlan;
@@ -1182,57 +1229,57 @@ const App: React.FC = () => {
         return null;
     }, [currentUser, addToast, loadData]);
 
-  const handleDeleteProductionPlan = useCallback(async (planId: string): Promise<boolean> => {
+    const handleDeleteProductionPlan = useCallback(async (planId: string): Promise<boolean> => {
         const { error } = await dbClient.from('production_plans').delete().eq('id', planId);
-        if(!error) { loadData(); addToast('Plano excluído.', 'success'); return true; }
+        if (!error) { loadData(); addToast('Plano excluído.', 'success'); return true; }
         return false;
     }, [addToast, loadData]);
 
-  const handleGenerateShoppingList = useCallback(async (list: ShoppingListItem[]) => {
+    const handleGenerateShoppingList = useCallback(async (list: ShoppingListItem[]) => {
         const itemsToUpsert = list.map(i => ({ stock_item_code: i.id, name: i.name, quantity: i.quantity, unit: i.unit, is_purchased: false }));
         const { error } = await dbClient.from('shopping_list_items').upsert(itemsToUpsert, { onConflict: 'stock_item_code' });
-        if(!error) { loadData(); addToast('Lista gerada.', 'success'); }
+        if (!error) { loadData(); addToast('Lista gerada.', 'success'); }
     }, [addToast, loadData]);
 
-  const handleClearShoppingList = useCallback(async () => {
+    const handleClearShoppingList = useCallback(async () => {
         await dbClient.from('shopping_list_items').delete().neq('stock_item_code', 'dummy');
         loadData();
     }, [loadData]);
 
-  const handleUpdateShoppingItem = useCallback(async (itemCode: string, isPurchased: boolean) => {
+    const handleUpdateShoppingItem = useCallback(async (itemCode: string, isPurchased: boolean) => {
         await dbClient.from('shopping_list_items').update({ is_purchased: isPurchased }).eq('stock_item_code', itemCode);
-        setShoppingList(prev => prev.map(i => i.id === itemCode ? {...i, is_purchased: isPurchased} : i));
+        setShoppingList(prev => prev.map(i => i.id === itemCode ? { ...i, is_purchased: isPurchased } : i));
     }, []);
 
-  const handleSetAttendance = useCallback(async (userId: string, record: any) => {
+    const handleSetAttendance = useCallback(async (userId: string, record: any) => {
         const user = users.find(u => u.id === userId);
-        if(!user) return;
+        if (!user) return;
         const otherRecords = user.attendance.filter(a => a.date !== record.date);
-        const newAttendance = [...otherRecords, record].sort((a,b) => b.date.localeCompare(a.date));
+        const newAttendance = [...otherRecords, record].sort((a, b) => b.date.localeCompare(a.date));
         await handleUpdateUser({ ...user, attendance: newAttendance });
     }, [users, handleUpdateUser]);
 
-  const handleUpdateAttendanceDetails = useCallback(async (userId: string, date: string, detail: any, time: any) => {
+    const handleUpdateAttendanceDetails = useCallback(async (userId: string, date: string, detail: any, time: any) => {
         const user = users.find(u => u.id === userId);
-        if(!user) return;
+        if (!user) return;
         const newAttendance = user.attendance.map(a => a.date === date ? { ...a, [detail]: time || undefined } : a);
         await handleUpdateUser({ ...user, attendance: newAttendance });
     }, [users, handleUpdateUser]);
 
-  const handleStockAdjustment = useCallback(async (stockItemCode: string, quantityDelta: number, ref: string): Promise<boolean> => {
+    const handleStockAdjustment = useCallback(async (stockItemCode: string, quantityDelta: number, ref: string): Promise<boolean> => {
         if (!currentUser) return false;
         const { error } = await dbClient.rpc('adjust_stock_quantity', { item_code: stockItemCode, quantity_delta: quantityDelta, origin_text: 'AJUSTE_MANUAL', ref_text: ref, user_name: currentUser.name });
-        if(!error) { loadData(); addToast('Ajustado!', 'success'); return true; }
+        if (!error) { loadData(); addToast('Ajustado!', 'success'); return true; }
         return false;
     }, [currentUser, addToast, loadData]);
 
-  const handleProductionRun = useCallback(async (itemCode: string, quantity: number, ref: string) => {
+    const handleProductionRun = useCallback(async (itemCode: string, quantity: number, ref: string) => {
         if (!currentUser) return;
         const { error } = await dbClient.rpc('record_production_run', { item_code: itemCode, quantity_to_produce: quantity, ref_text: ref, user_name: currentUser.name });
-        if(!error) { loadData(); addToast('Produção registrada.', 'success'); }
+        if (!error) { loadData(); addToast('Produção registrada.', 'success'); }
     }, [currentUser, addToast, loadData]);
 
-  const handleRegisterReadyStock = useCallback(async (itemCode: string, quantity: number, ref: string) => {
+    const handleRegisterReadyStock = useCallback(async (itemCode: string, quantity: number, ref: string) => {
         if (!currentUser) return;
         const { data, error } = await dbClient.rpc('register_ready_stock', {
             p_item_code: itemCode,
@@ -1257,7 +1304,7 @@ const App: React.FC = () => {
     const handleEditItem = useCallback(async (itemId: string, updates: any): Promise<boolean> => {
         try {
             console.log('📝 [handleEditItem] Atualizando item com dados:', updates);
-            
+
             // Encontrar o item para determinar a tabela correta
             const itemToEdit = stockItems.find(i => i.id === itemId);
             if (!itemToEdit) {
@@ -1269,32 +1316,32 @@ const App: React.FC = () => {
             // Determinar a tabela baseada no kind do item
             const targetTable = itemToEdit.kind === 'INSUMO' ? 'stock_items' : 'product_boms';
             console.log(`📝 [handleEditItem] Atualizando em ${targetTable}`);
-            
+
             // Filtrar apenas os campos que existem na tabela alvo
             const validFields = targetTable === 'stock_items'
                 ? ['code', 'name', 'description', 'kind', 'current_qty', 'reserved_qty', 'cost_price', 'sell_price', 'unit', 'category', 'status', 'min_qty', 'barcode', 'substitute_product_code', 'product_type']
                 : ['code', 'name', 'description', 'kind', 'current_qty', 'reserved_qty', 'ready_qty', 'is_ready', 'ready_location', 'ready_date', 'ready_batch_id', 'cost_price', 'sell_price', 'bling_id', 'bling_sku', 'unit', 'category', 'status', 'bom_composition', 'min_qty', 'is_volatile_infinite'];
-            
+
             const filteredUpdates: any = {};
             validFields.forEach(field => {
                 if (field in updates) {
                     filteredUpdates[field] = updates[field];
                 }
             });
-            
+
             // Campos inválidos serão ignorados
             const invalidFields = Object.keys(updates).filter(k => !validFields.includes(k));
             if (invalidFields.length > 0) {
                 console.warn(`⚠️ [handleEditItem] Campos inválidos ignorados: ${invalidFields.join(', ')}`);
             }
-            
+
             const { error } = await dbClient.from(targetTable).update(filteredUpdates).eq('id', itemId);
             if (error) {
                 console.error(`❌ [handleEditItem] Erro ao atualizar em ${targetTable}:`, error);
                 addToast(`Erro ao atualizar: ${error.message}`, 'error');
                 return false;
             }
-            
+
             console.log(`✅ [handleEditItem] Item atualizado com sucesso em ${targetTable}`);
             await loadData();
             addToast('Atualizado.', 'success');
@@ -1306,7 +1353,7 @@ const App: React.FC = () => {
         }
     }, [addToast, loadData, stockItems]);
 
-  const handleDeleteItem = useCallback(async (itemId: string): Promise<boolean> => {
+    const handleDeleteItem = useCallback(async (itemId: string): Promise<boolean> => {
         try {
             const itemToDelete = stockItems.find(item => item.id === itemId);
             if (!itemToDelete) {
@@ -1314,12 +1361,12 @@ const App: React.FC = () => {
                 addToast('Item não encontrado.', 'error');
                 return false;
             }
-            
+
             console.warn(`⚠️ [handleDeleteItem] DELETANDO item: ${itemToDelete.name} (${itemToDelete.code})`);
-            
+
             // Determinar a tabela baseada no kind do item
             const targetTable = itemToDelete.kind === 'INSUMO' ? 'stock_items' : 'product_boms';
-            
+
             // Deletar sku_links se for produto
             if (itemToDelete.kind === 'PRODUTO') {
                 console.log(`🔗 [handleDeleteItem] Deletando sku_links relacionados ao produto ${itemToDelete.code}`);
@@ -1328,7 +1375,7 @@ const App: React.FC = () => {
                     console.error('❌ [handleDeleteItem] Erro ao deletar sku_links:', skuError);
                 }
             }
-            
+
             // Deletar o item da tabela correta
             const { error } = await dbClient.from(targetTable).delete().eq('id', itemId);
             if (error) {
@@ -1336,7 +1383,7 @@ const App: React.FC = () => {
                 addToast(`Erro ao excluir: ${error.message}`, 'error');
                 return false;
             }
-            
+
             console.log(`✅ [handleDeleteItem] Item deletado com sucesso de ${targetTable}`);
             setStockItems(prev => prev.filter(i => i.id !== itemId));
             addToast('Excluído.', 'success');
@@ -1348,12 +1395,12 @@ const App: React.FC = () => {
         }
     }, [addToast, stockItems]);
 
-  const handleBulkDeleteItems = useCallback(async (itemIds: string[]): Promise<boolean> => {
+    const handleBulkDeleteItems = useCallback(async (itemIds: string[]): Promise<boolean> => {
         try {
             // Separar ids por tipo de tabela
             const productBomIds: string[] = [];
             const stockItemIds: string[] = [];
-            
+
             itemIds.forEach(itemId => {
                 const item = stockItems.find(i => i.id === itemId);
                 if (item) {
@@ -1364,9 +1411,9 @@ const App: React.FC = () => {
                     }
                 }
             });
-            
+
             console.log(`🗑️ [handleBulkDeleteItems] Deletando ${productBomIds.length} products + ${stockItemIds.length} insumos`);
-            
+
             // Deletar de product_boms
             if (productBomIds.length > 0) {
                 const { error: pbError } = await dbClient.from('product_boms').delete().in('id', productBomIds);
@@ -1377,7 +1424,7 @@ const App: React.FC = () => {
                 }
                 console.log(`✅ ${productBomIds.length} produtos deletados`);
             }
-            
+
             // Deletar de stock_items
             if (stockItemIds.length > 0) {
                 const { error: siError } = await dbClient.from('stock_items').delete().in('id', stockItemIds);
@@ -1388,7 +1435,7 @@ const App: React.FC = () => {
                 }
                 console.log(`✅ ${stockItemIds.length} insumos deletados`);
             }
-            
+
             loadData();
             addToast('Itens excluídos.', 'success');
             return true;
@@ -1399,10 +1446,10 @@ const App: React.FC = () => {
         }
     }, [stockItems, addToast, loadData]);
 
-  const handleConfirmImportFromXml = useCallback(async (payload: any) => {
+    const handleConfirmImportFromXml = useCallback(async (payload: any) => {
         if (!currentUser) return;
         const now = new Date().toISOString();
-        const newItemsToInsert = payload.itemsToCreate.map((item:any) => ({
+        const newItemsToInsert = payload.itemsToCreate.map((item: any) => ({
             code: item.code,
             name: item.name,
             kind: item.kind || 'PRODUTO',
@@ -1420,125 +1467,146 @@ const App: React.FC = () => {
         addToast('XML Importado!', 'success'); loadData();
     }, [currentUser, addToast, loadData]);
 
-  // 🔗 Bulk Link SKUs - Vincular múltiplos SKUs a um produto existente
-  const handleBulkLinkSKUsToExisting = useCallback(async (selectedSkus: string[], targetProductId: string) => {
-    try {
-      console.log(`🔗 [BulkLink] Vinculando ${selectedSkus.length} SKUs ao produto ${targetProductId}`);
-      
+    // 🔗 Bulk Link SKUs - Vincular múltiplos SKUs a um produto existente
+    const handleBulkLinkSKUsToExisting = useCallback(async (selectedSkus: string[], targetProductId: string) => {
+        try {
+            console.log(`🔗 [BulkLink] Vinculando ${selectedSkus.length} SKUs ao produto ${targetProductId}`);
+
             const skuLinksToInsert = selectedSkus.map(sku => ({
-        imported_sku: sku,
-        master_product_sku: targetProductId,
-      }));
+                imported_sku: sku,
+                master_product_sku: targetProductId,
+            }));
 
-      const { error } = await dbClient.from('sku_links').insert(skuLinksToInsert);
-      
-      if (error) {
-        console.error('❌ Erro ao vincular SKUs:', error);
-        addToast(`Erro ao vincular SKUs: ${error.message}`, 'error');
-        return;
-      }
+            const { error } = await dbClient.from('sku_links').insert(skuLinksToInsert);
 
-      console.log(`✅ [BulkLink] ${selectedSkus.length} SKUs vinculados com sucesso`);
-      addToast(`✅ ${selectedSkus.length} SKU(s) vinculado(s) com sucesso!`, 'success');
-      await loadData();
-    } catch (err) {
-      console.error('❌ Erro na bulk link:', err);
-      addToast('Erro ao vincular SKUs', 'error');
-    }
-  }, [addToast, loadData]);
+            if (error) {
+                console.error('❌ Erro ao vincular SKUs:', error);
+                addToast(`Erro ao vincular SKUs: ${error.message}`, 'error');
+                return;
+            }
 
-  // 🔗 Bulk Link SKUs - Criar novo produto e vincular múltiplos SKUs
-  const handleBulkLinkSKUsCreateNew = useCallback(async (selectedSkus: string[], newProductData: { name: string; code: string }) => {
-    if (!currentUser) return;
-    
-    try {
-      console.log(`🔗 [BulkLink-New] Criando novo produto "${newProductData.name}" e vinculando ${selectedSkus.length} SKUs`);
-      
-      // 1. Criar novo produto
-      const newProduct = {
-        code: newProductData.code,
-        name: newProductData.name,
-        kind: 'PRODUTO' as const,
-        unit: 'un',
-        current_qty: 0,
-        reserved_qty: 0,
-        ready_qty: 0,
-        min_qty: 0,
-        sell_price: 0,
-        cost_price: 0,
-        category: 'Importado',
-        status: 'ATIVO',
-      };
+            console.log(`✅ [BulkLink] ${selectedSkus.length} SKUs vinculados com sucesso`);
+            addToast(`✅ ${selectedSkus.length} SKU(s) vinculado(s) com sucesso!`, 'success');
+            await loadData();
+        } catch (err) {
+            console.error('❌ Erro na bulk link:', err);
+            addToast('Erro ao vincular SKUs', 'error');
+        }
+    }, [addToast, loadData]);
 
-      const { data: insertedProduct, error: insertError } = await dbClient
-        .from('product_boms')
-        .insert([newProduct])
-        .select('*')
-        .single();
+    // 🔗 Bulk Link SKUs - Criar novo produto e vincular múltiplos SKUs
+    const handleBulkLinkSKUsCreateNew = useCallback(async (selectedSkus: string[], newProductData: { name: string; code: string }) => {
+        if (!currentUser) return;
 
-      if (insertError) {
-        console.error('❌ Erro ao criar produto:', insertError);
-        addToast(`Erro ao criar produto: ${insertError.message}`, 'error');
-        return;
-      }
+        try {
+            console.log(`🔗 [BulkLink-New] Criando novo produto "${newProductData.name}" e vinculando ${selectedSkus.length} SKUs`);
 
-    const productCode = newProductData.code;
-    console.log(`✅ Produto criado: ${productCode}`);
+            // 1. Criar novo produto
+            const newProduct = {
+                code: newProductData.code,
+                name: newProductData.name,
+                kind: 'PRODUTO' as const,
+                unit: 'un',
+                current_qty: 0,
+                reserved_qty: 0,
+                ready_qty: 0,
+                min_qty: 0,
+                sell_price: 0,
+                cost_price: 0,
+                category: 'Importado',
+                status: 'ATIVO',
+            };
 
-      // 2. Vincular SKUs ao novo produto
+            const { data: insertedProduct, error: insertError } = await dbClient
+                .from('product_boms')
+                .insert([newProduct])
+                .select('*')
+                .single();
+
+            if (insertError) {
+                console.error('❌ Erro ao criar produto:', insertError);
+                addToast(`Erro ao criar produto: ${insertError.message}`, 'error');
+                return;
+            }
+
+            const productCode = newProductData.code;
+            console.log(`✅ Produto criado: ${productCode}`);
+
+            // 2. Vincular SKUs ao novo produto
             const skuLinksToInsert = selectedSkus.map(sku => ({
-        imported_sku: sku,
+                imported_sku: sku,
                 master_product_sku: productCode,
-      }));
+            }));
 
-      const { error: linkError } = await dbClient.from('sku_links').insert(skuLinksToInsert);
+            const { error: linkError } = await dbClient.from('sku_links').insert(skuLinksToInsert);
 
-      if (linkError) {
-        console.error('❌ Erro ao vincular SKUs:', linkError);
-        addToast(`Erro ao vincular SKUs: ${linkError.message}`, 'error');
-        return;
-      }
+            if (linkError) {
+                console.error('❌ Erro ao vincular SKUs:', linkError);
+                addToast(`Erro ao vincular SKUs: ${linkError.message}`, 'error');
+                return;
+            }
 
-      console.log(`✅ [BulkLink-New] ${selectedSkus.length} SKUs vinculados ao novo produto`);
-      addToast(`✅ Produto "${newProductData.name}" criado com ${selectedSkus.length} SKU(s) vinculado(s)!`, 'success');
-      await loadData();
-    } catch (err) {
-      console.error('❌ Erro na bulk link create:', err);
-      addToast('Erro ao criar produto e vincular SKUs', 'error');
-    }
-  }, [currentUser, addToast, loadData]);
+            console.log(`✅ [BulkLink-New] ${selectedSkus.length} SKUs vinculados ao novo produto`);
+            addToast(`✅ Produto "${newProductData.name}" criado com ${selectedSkus.length} SKU(s) vinculado(s)!`, 'success');
+            await loadData();
+        } catch (err) {
+            console.error('❌ Erro na bulk link create:', err);
+            addToast('Erro ao criar produto e vincular SKUs', 'error');
+        }
+    }, [currentUser, addToast, loadData]);
 
-  const handleLaunchSuccess = useCallback(async (launchedOrders: OrderItem[]) => {
+    const handleUpdateOrdersBatch = useCallback(async (orderIds: string[], loteId: string) => {
+        try {
+            const { error } = await dbClient
+                .from('orders')
+                .update({ lote_id: loteId })
+                .in('order_id', orderIds);
+
+            if (error) throw error;
+            await loadData();
+            addToast(`Lote ${loteId} vinculado a ${orderIds.length} pedidos.`, 'success');
+        } catch (err: any) {
+            console.error('Erro ao atualizar lote dos pedidos:', err);
+            addToast(`Erro ao atualizar lote: ${err.message}`, 'error');
+        }
+    }, [loadData, addToast]);
+
+    const handleLaunchSuccess = useCallback(async (launchedOrders: OrderItem[]) => {
         const uniqueOrdersMap = new Map();
         launchedOrders.forEach(o => {
             const orderId = String(o.orderId || '').trim().toUpperCase();
             const sku = String(o.sku || '').trim().toUpperCase();
             const deterministicId = `${orderId}|${sku}`;
             const rowData: any = {
-            id: deterministicId,
-            order_id: o.orderId, 
-            bling_numero: o.blingNumero || null,
-            sku: o.sku, 
-            qty_original: o.qty_original, 
-            multiplicador: o.multiplicador, 
-            qty_final: o.qty_final, 
-            color: o.color, 
-            canal: o.canal, 
-            data: o.data, 
-            status: o.status, 
-            customer_name: o.customer_name, 
-            customer_cpf_cnpj: o.customer_cpf_cnpj, 
-            price_gross: o.price_gross, 
-            platform_fees: o.platform_fees, 
-            shipping_fee: o.shipping_fee, 
-            price_net: o.price_net,
-            data_prevista_envio: o.data_prevista_envio
+                id: deterministicId,
+                order_id: o.orderId,
+                bling_numero: o.blingNumero || null,
+                sku: o.sku,
+                qty_original: o.qty_original,
+                multiplicador: o.multiplicador,
+                qty_final: o.qty_final,
+                color: o.color,
+                canal: o.canal,
+                data: o.data,
+                status: o.status,
+                customer_name: o.customer_name,
+                customer_cpf_cnpj: o.customer_cpf_cnpj,
+                price_gross: o.price_gross,
+                platform_fees: o.platform_fees,
+                shipping_fee: o.shipping_fee,
+                price_net: o.price_net,
+                data_prevista_envio: o.data_prevista_envio,
+                vinculado_bling: o.vinculado_bling || false,
+                etiqueta_gerada: o.etiqueta_gerada || false,
+                lote_id: o.lote_id || null,
+                id_pedido_loja: o.id_pedido_loja || null,
+                venda_origem: o.venda_origem || null
             };
             // Só inclui tracking se não estiver vazio (evita sobrescrever rastreio existente)
             if (o.tracking) rowData.tracking = o.tracking;
             uniqueOrdersMap.set(`${orderId}|${sku}`, rowData);
         });
-        
+
         // Batching for robustness
         const BATCH_SIZE = 500;
         const uniqueOrders = Array.from(uniqueOrdersMap.values());
@@ -1553,12 +1621,27 @@ const App: React.FC = () => {
             }
             if (error && (error.code === '42703' || error.message?.includes('column'))) {
                 const reducedBatch = batch.map((o: any) => ({
-                    id: o.id, order_id: o.order_id, ...(o.tracking ? { tracking: o.tracking } : {}),
-                    sku: o.sku, qty_original: o.qty_original, multiplicador: o.multiplicador,
-                    qty_final: o.qty_final, color: o.color, canal: o.canal, data: o.data,
-                    status: o.status, customer_name: o.customer_name, customer_cpf_cnpj: o.customer_cpf_cnpj,
-                    price_gross: o.price_gross, platform_fees: o.platform_fees,
-                    shipping_fee: o.shipping_fee, price_net: o.price_net,
+                    id: o.id,
+                    order_id: o.order_id,
+                    ...(o.tracking ? { tracking: o.tracking } : {}),
+                    sku: o.sku,
+                    qty_original: o.qty_original,
+                    multiplicador: o.multiplicador,
+                    qty_final: o.qty_final,
+                    color: o.color,
+                    canal: o.canal,
+                    data: o.data,
+                    status: o.status,
+                    customer_name: o.customer_name,
+                    customer_cpf_cnpj: o.customer_cpf_cnpj,
+                    price_gross: o.price_gross,
+                    platform_fees: o.platform_fees,
+                    shipping_fee: o.shipping_fee,
+                    price_net: o.price_net,
+                    lote_id: o.lote_id,
+                    bling_numero: o.bling_numero,
+                    id_pedido_loja: o.id_pedido_loja,
+                    venda_origem: o.venda_origem
                 }));
                 const fallbackReduced = await dbClient.from('orders').upsert(reducedBatch, { onConflict: 'order_id,sku' });
                 error = fallbackReduced.error;
@@ -1589,18 +1672,18 @@ const App: React.FC = () => {
                 console.error('Batch upload error:', detail || batchError);
             }
         }
-        
-        if (successCount > 0) { 
-            await loadData(); 
-            addToast(`Sucesso! ${successCount} pedidos salvos.${errorCount > 0 ? ` (${errorCount} falhas)` : ''}`, errorCount > 0 ? 'info' : 'success'); 
+
+        if (successCount > 0) {
+            await loadData();
+            addToast(`Sucesso! ${successCount} pedidos salvos.${errorCount > 0 ? ` (${errorCount} falhas)` : ''}`, errorCount > 0 ? 'info' : 'success');
             if (uiSettings.soundOnSuccess) playSound('success');
         } else if (errorCount > 0) {
             addToast(`Erro ao salvar ${errorCount} pedido(s) no banco. Verifique o console ou rode a migration.sql.`, 'error');
             if (uiSettings.soundOnError) playSound('error');
         }
     }, [addToast, loadData, uiSettings]);
-    
-  const handleLinkSku = useCallback(async (importedSku: string, masterProductSku: string): Promise<boolean> => {
+
+    const handleLinkSku = useCallback(async (importedSku: string, masterProductSku: string): Promise<boolean> => {
         try {
             // Validações básicas
             if (!importedSku || !importedSku.trim()) {
@@ -1613,10 +1696,10 @@ const App: React.FC = () => {
                 addToast('SKU mestre é obrigatório.', 'error');
                 return false;
             }
-            
+
             const importedSkuUpper = importedSku.trim().toUpperCase();
             const masterSkuUpper = masterProductSku.trim().toUpperCase();
-            
+
             // Verificar se skuLink já existe
             const existingLink = skuLinks.find(l => l.importedSku.toUpperCase() === importedSkuUpper);
             if (existingLink && existingLink.masterProductSku.toUpperCase() === masterSkuUpper) {
@@ -1624,45 +1707,45 @@ const App: React.FC = () => {
                 addToast('Este vínculo já existe.', 'info');
                 return true;
             }
-            
+
             // Preparar dados para upsert
             const skuLinkData = {
                 imported_sku: importedSkuUpper,
                 master_product_sku: masterSkuUpper,
             };
-            
+
             console.log(`📥 [handleLinkSku] Vinculando ${importedSkuUpper} -> ${masterSkuUpper}`);
-            
+
             const { data, error } = await dbClient
                 .from('sku_links')
                 .upsert(skuLinkData, { onConflict: 'imported_sku' })
                 .select()
                 .single();
-            
+
             if (error) {
                 console.error('❌ [handleLinkSku] Erro ao vincular:', error.message);
                 addToast(`Erro ao vincular: ${error.message}`, 'error');
                 return false;
             }
-            
+
             if (!data) {
                 console.error('❌ [handleLinkSku] Nenhum dado retornado');
                 addToast('Erro ao vincular: resposta vazia.', 'error');
                 return false;
             }
-            
+
             // Atualizar estado localmente
             setSkuLinks(prev => [
                 ...prev.filter(l => l.importedSku.toUpperCase() !== importedSkuUpper),
-                { 
+                {
                     importedSku: data.imported_sku,
                     masterProductSku: data.master_product_sku
                 }
             ]);
-            
+
             console.log(`✅ [handleLinkSku] Vínculo criado com sucesso`);
             addToast('SKU vinculado com sucesso!', 'success');
-            
+
             return true;
         } catch (err: any) {
             console.error('❌ [handleLinkSku] Exceção:', err.message);
@@ -1671,35 +1754,35 @@ const App: React.FC = () => {
         }
     }, [addToast, skuLinks]);
 
-  const handleUnlinkSku = useCallback(async (importedSku: string): Promise<boolean> => {
+    const handleUnlinkSku = useCallback(async (importedSku: string): Promise<boolean> => {
         try {
             if (!importedSku || !importedSku.trim()) {
                 console.error('❌ Erro: SKU importado é obrigatório para desvinculação');
                 addToast('SKU importado é obrigatório.', 'error');
                 return false;
             }
-            
+
             console.log('🔗 Desvinculando SKU:', importedSku);
-            
+
             const { error } = await dbClient
                 .from('sku_links')
                 .delete()
                 .eq('imported_sku', importedSku.trim());
-            
+
             if (error) {
                 console.error('❌ Erro ao desvincula r SKU:', error);
                 addToast(`Erro ao desvincula r: ${error.message}`, 'error');
                 return false;
             }
-            
+
             setSkuLinks(prev => prev.filter(l => l.importedSku !== importedSku));
-            
+
             console.log('✅ SKU desvinculado com sucesso');
             addToast('SKU desvinculado com sucesso.', 'info');
-            
+
             // Recarregar dados após desvinculação
             await loadData();
-            
+
             return true;
         } catch (err: any) {
             console.error('❌ Exceção ao desvincula r SKU:', err);
@@ -1708,28 +1791,28 @@ const App: React.FC = () => {
         }
     }, [addToast, loadData]);
 
-  // ✏️ Abrir modal de edição de produto
-  const handleEditProduct = useCallback((product: StockItem) => {
-    setProductToEdit(product);
-    setIsEditProductModalOpen(true);
-  }, []);
+    // ✏️ Abrir modal de edição de produto
+    const handleEditProduct = useCallback((product: StockItem) => {
+        setProductToEdit(product);
+        setIsEditProductModalOpen(true);
+    }, []);
 
-  // ✏️ Salvar alterações do produto
-  const handleSaveProductEdit = useCallback(async (updates: Partial<StockItem>) => {
-    if (!productToEdit) return;
-    try {
-      const success = await handleEditItem(productToEdit.id!, updates);
-      if (success) {
-        setIsEditProductModalOpen(false);
-        setProductToEdit(null);
-      }
-    } catch (err) {
-      console.error('Erro ao salvar produto:', err);
-      addToast('Erro ao salvar produto', 'error');
-    }
-  }, [productToEdit, handleEditItem, addToast]);
+    // ✏️ Salvar alterações do produto
+    const handleSaveProductEdit = useCallback(async (updates: Partial<StockItem>) => {
+        if (!productToEdit) return;
+        try {
+            const success = await handleEditItem(productToEdit.id!, updates);
+            if (success) {
+                setIsEditProductModalOpen(false);
+                setProductToEdit(null);
+            }
+        } catch (err) {
+            console.error('Erro ao salvar produto:', err);
+            addToast('Erro ao salvar produto', 'error');
+        }
+    }, [productToEdit, handleEditItem, addToast]);
 
-  const handleAddImportToHistory = useCallback(async (item: any, processedData: any) => {
+    const handleAddImportToHistory = useCallback(async (item: any, processedData: any) => {
         try {
             const historyItem = {
                 file_name: item.fileName,
@@ -1740,15 +1823,15 @@ const App: React.FC = () => {
                 canal: item.canal,
                 processed_data: processedData as any,
             };
-            
+
             console.log('📥 Salvando importação no histórico:', historyItem);
-            
+
             const { data, error } = await dbClient
                 .from('import_history')
                 .insert(historyItem as any)
                 .select()
                 .single();
-            
+
             if (!error && data) {
                 setImportHistory(prev => [{
                     id: data.id,
@@ -1769,7 +1852,7 @@ const App: React.FC = () => {
         }
     }, []);
 
-  const handleClearImportHistory = useCallback(async () => {
+    const handleClearImportHistory = useCallback(async () => {
         await dbClient.from('import_history').delete().neq('id', '00000000-0000-0000-0000-000000000000');
         setImportHistory([]);
     }, []);
@@ -1777,7 +1860,7 @@ const App: React.FC = () => {
     const handleConfirmDeleteHistoryItem = async () => {
         if (!historyItemToDelete) return;
         setIsDeletingHistory(true);
-        
+
         let pData = historyItemToDelete.processedData;
         if (!pData) {
             const { data } = await dbClient.from('import_history').select('processed_data').eq('id', historyItemToDelete.id).single();
@@ -1794,7 +1877,7 @@ const App: React.FC = () => {
         }
 
         await dbClient.from('import_history').delete().eq('id', historyItemToDelete.id);
-        
+
         setIsDeletingHistory(false);
         setIsDeleteModalOpen(false);
         setHistoryItemToDelete(null);
@@ -1830,7 +1913,7 @@ const App: React.FC = () => {
         }
 
         const { error: deleteError } = await dbClient.from('import_history').delete().in('id', ids);
-        
+
         if (deleteError) {
             addToast('Erro ao excluir histórico.', 'error');
         } else {
@@ -1839,7 +1922,7 @@ const App: React.FC = () => {
         }
     }, [allOrders, loadData, addToast]);
 
-  const handleDeleteUser = useCallback(async (userId: string, adminPassword?: string): Promise<boolean> => {
+    const handleDeleteUser = useCallback(async (userId: string, adminPassword?: string): Promise<boolean> => {
         if (!currentUser) return false;
         const userToDelete = users.find(u => u.id === userId);
         if (!userToDelete || userToDelete.role === 'SUPER_ADMIN') return false;
@@ -1848,131 +1931,140 @@ const App: React.FC = () => {
             if (!loggedIn) return false;
         }
         const { error } = await dbClient.from('users').delete().eq('id', userId);
-        if(!error) { loadData(); addToast('Excluído.', 'success'); return true; }
+        if (!error) { loadData(); addToast('Excluído.', 'success'); return true; }
         return false;
     }, [users, currentUser, addToast, loadData]);
 
-  const handleBulkSetInitialStock = useCallback(async (updates: any): Promise<string> => {
-    if (!currentUser) return "";
-    const { data, error } = await dbClient.rpc('bulk_set_initial_stock', { updates: updates.map((u:any) => ({ item_code: u.code, new_initial_quantity: u.quantity })), user_name: currentUser.name });
-    if (!error) { addToast('Inventário ajustado!', 'success'); loadData(); return data as string; }
-    return "";
-  }, [currentUser, addToast, loadData]);
+    const handleBulkSetInitialStock = useCallback(async (updates: any): Promise<string> => {
+        if (!currentUser) return "";
+        const { data, error } = await dbClient.rpc('bulk_set_initial_stock', { updates: updates.map((u: any) => ({ item_code: u.code, new_initial_quantity: u.quantity })), user_name: currentUser.name });
+        if (!error) { addToast('Inventário ajustado!', 'success'); loadData(); return data as string; }
+        return "";
+    }, [currentUser, addToast, loadData]);
 
-  const handleLoadZplFromBling = (zpl: string, includeDanfe = true) => {
-    setEtiquetasState(prev => ({ ...prev, zplInput: zpl, zplPages: [], previews: [], extractedData: new Map(), includeDanfe }));
-    setCurrentPage('etiquetas');
-  };
+    const handleLoadZplFromBling = (zpl: string, includeDanfe = true) => {
+        setEtiquetasState(prev => ({ ...prev, zplInput: zpl, zplPages: [], previews: [], extractedData: new Map(), includeDanfe }));
+        setCurrentPage('etiquetas');
+    };
 
-  const renderPage = () => {
-    switch (currentPage) {
-        case 'dashboard': return <DashboardPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} allOrders={allOrders} scanHistory={scanHistory} stockItems={stockItems} produtosCombinados={produtosCombinados} users={users} lowStockCount={lowStockCount} uiSettings={uiSettings} onSaveUiSettings={handleSaveUiSettings} adminNotices={adminNotices} onSaveNotice={handleSaveNotice} onDeleteNotice={handleDeleteNotice} currentUser={currentUser!} skuLinks={skuLinks} onSaveDashboardConfig={handleSaveDashboardConfig} packGroups={packGroups} onSavePackGroup={async (g, id) => { await dbClient.from('stock_pack_groups').upsert(id ? { ...g, id } : g); loadData(); }} />
-        case 'importer': return <ImporterPage 
-            allOrders={allOrders} 
-            selectedFile={selectedFile} 
-            setSelectedFile={setSelectedFile} 
-            processedData={processedData} 
-            setProcessedData={setProcessedData} 
-            error={importError} 
-            setError={setImportError} 
-            isProcessing={isProcessing} 
-            setIsProcessing={setIsProcessing} 
-            onLaunchSuccess={handleLaunchSuccess} 
-            skuLinks={skuLinks} 
-            onLinkSku={handleLinkSku} 
-            onUnlinkSku={handleUnlinkSku} 
-            products={stockItems.filter(i => i.kind === 'PRODUTO')} 
-            onAddNewItem={handleAddNewItem} 
-            produtosCombinados={produtosCombinados} 
-            stockItems={stockItems} 
-            generalSettings={generalSettings} 
-            setGeneralSettings={handleSaveGeneralSettings} 
-            currentUser={currentUser!} 
-            importHistory={importHistory} 
-            addImportToHistory={handleAddImportToHistory} 
-            clearImportHistory={handleClearImportHistory} 
-            onDeleteHistoryItem={(item)=> {setHistoryItemToDelete(item); setIsDeleteModalOpen(true);}} 
-            onGetImportHistoryDetails={handleGetImportHistoryDetails} 
-            onBulkDeleteHistory={handleBulkDeleteHistoryItems} 
-            users={users}
-            blingLinkedIds={blingLinkedIds}
-        />
-        case 'bipagem': return <BipagemPage isAutoBipagemActive={isAutoBipagemActive} allOrders={allOrders} onNewScan={handleNewScan} onBomDeduction={() => {}} scanHistory={scanHistory} onCancelBipagem={handleCancelBipagem} onBulkCancelBipagem={handleBulkCancelBipagem} products={stockItems} users={users} onAddNewUser={handleAddNewUser} onSaveUser={handleUpdateUser} uiSettings={uiSettings} currentUser={currentUser!} onSyncPending={handleSyncPending} skuLinks={skuLinks} addToast={addToast} currentPage={currentPage} onHardDeleteScanLog={handleHardDeleteScanLog} onBulkHardDeleteScanLog={handleBulkHardDeleteScanLog} />
-        case 'pedidos': return <PedidosPage allOrders={allOrders} scanHistory={scanHistory} returns={returns} onLogError={handleLogError} onLogReturn={handleLogReturn} currentUser={currentUser!} onDeleteOrders={handleDeleteOrders} onBulkCancelBipagem={handleBulkCancelBipagem} onUpdateStatus={handleUpdateStatus} onRemoveReturn={handleRemoveReturn} onSolveOrders={handleSolveOrders} generalSettings={generalSettings} users={users} skuLinks={skuLinks} stockItems={stockItems} />
-        case 'planejamento': return <PlanejamentoPage stockItems={stockItems} allOrders={allOrders} skuLinks={skuLinks} produtosCombinados={produtosCombinados} productionPlans={productionPlans} onSaveProductionPlan={handleSaveProductionPlan} onDeleteProductionPlan={handleDeleteProductionPlan} onGenerateShoppingList={handleGenerateShoppingList} currentUser={currentUser!} planningSettings={generalSettings.estoque} onSavePlanningSettings={(s) => handleSaveGeneralSettings(p => ({...p, estoque: s}))} addToast={addToast} />
-        case 'compras': return <ComprasPage shoppingList={shoppingList} onClearList={handleClearShoppingList} onUpdateItem={handleUpdateShoppingItem} stockItems={stockItems} />
-        case 'pesagem': return <PesagemPage stockItems={stockItems} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} currentUser={currentUser!} onDeleteBatch={handleDeleteWeighingBatch} users={users} />
-        case 'moagem': return <MoagemPage stockItems={stockItems} grindingBatches={grindingBatches} onAddNewGrinding={handleAddNewGrinding} currentUser={currentUser!} onDeleteBatch={handleDeleteGrindingBatch} users={users} generalSettings={generalSettings} />
-        case 'estoque': return <EstoquePage stockItems={stockItems} stockMovements={stockMovements} onStockAdjustment={handleStockAdjustment} produtosCombinados={produtosCombinados} onSaveProdutoCombinado={handleSaveProdutoCombinado} onAddNewItem={handleAddNewItem} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} onProductionRun={handleProductionRun} onRegisterReadyStock={handleRegisterReadyStock} currentUser={currentUser!} onEditItem={handleEditItem} onDeleteItem={handleDeleteItem} onBulkDeleteItems={handleBulkDeleteItems} onDeleteMovement={async()=>false} onDeleteWeighingBatch={handleDeleteWeighingBatch} generalSettings={generalSettings} setGeneralSettings={setGeneralSettings as any} onConfirmImportFromXml={handleConfirmImportFromXml} onSaveExpeditionItems={handleSaveExpeditionItems} users={users} onUpdateInsumoCategory={async()=>{}} onBulkInventoryUpdate={handleBulkSetInitialStock} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} />
-        case 'funcionarios': return <FuncionariosPage users={users} onSetAttendance={handleSetAttendance} onAddNewUser={handleAddNewUser} onUpdateAttendanceDetails={handleUpdateAttendanceDetails} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} currentUser={currentUser!} onDeleteUser={handleDeleteUser} />
-        case 'relatorios': return <RelatoriosPage stockItems={stockItems} stockMovements={stockMovements} orders={allOrders} weighingBatches={weighingBatches} scanHistory={scanHistory} produtosCombinados={produtosCombinados} users={users} returns={returns} generalSettings={generalSettings} grindingBatches={grindingBatches} />
-        case 'financeiro': return <FinancePage allOrders={allOrders} stockItems={stockItems} skuLinks={skuLinks} produtosCombinados={produtosCombinados} generalSettings={generalSettings} onDeleteOrders={handleDeleteOrders} onLaunchOrders={handleLaunchSuccess} onNavigateToSettings={() => { _setCurrentPage('configuracoes-gerais'); localStorage.setItem('erp_current_page', 'configuracoes-gerais'); }} />
-        case 'etiquetas': return <EtiquetasPage settings={etiquetasSettings} onSettingsSave={handleSaveEtiquetasSettings} generalSettings={generalSettings} uiSettings={uiSettings} onSetUiSettings={setUiSettings as any} stockItems={stockItems} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} onAddNewItem={handleAddNewItem} etiquetasState={etiquetasState} setEtiquetasState={setEtiquetasState} currentUser={currentUser!} allOrders={allOrders} etiquetasHistory={etiquetasHistory} onSaveHistory={handleSaveEtiquetaHistory} onGetHistoryDetails={handleGetEtiquetaHistoryDetails} onProcessZpl={handleProcessZpl} isProcessing={isProcessingLabels} progressMessage={labelProgressMessage} />
-        case 'bling': return <BlingPage generalSettings={generalSettings} onLaunchSuccess={handleLaunchSuccess} addToast={addToast} setCurrentPage={setCurrentPage} onLoadZpl={handleLoadZplFromBling} onSaveSettings={handleSaveGeneralSettings} stockItems={stockItems} skuLinks={skuLinks} allOrders={allOrders} onLinkSku={handleLinkSku} />;
-        case 'integracoes': return <IntegracoesPage generalSettings={generalSettings} onSaveSettings={handleSaveGeneralSettings} onLaunchSuccess={handleLaunchSuccess} addToast={addToast} setCurrentPage={setCurrentPage} />;
-        case 'passo-a-passo': return <PassoAPassoPage />
-        case 'ajuda': return <AjudaPage />
-        case 'powerbi': return <BiDashboardPage biData={biData} users={users}/>
-        case 'powerbi-templates': return <PowerBiTemplatesPage setCurrentPage={setCurrentPage} />
-        case 'configuracoes': return <ConfiguracoesPage users={users} setCurrentPage={setCurrentPage} onDeleteUser={handleDeleteUser} onAddNewUser={handleAddNewUser} currentUser={currentUser!} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} stockItems={stockItems} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} onClearScanHistory={handleClearScanHistory} onSaveGeneralSettings={handleSaveGeneralSettings} addToast={addToast} />
-        case 'configuracoes-gerais': return <ConfiguracoesGeraisPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} onSaveGeneralSettings={handleSaveGeneralSettings} currentUser={currentUser} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} addToast={addToast} stockItems={stockItems} onClearScanHistory={handleClearScanHistory} users={users} />
-        default: return <DashboardPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} allOrders={allOrders} scanHistory={scanHistory} stockItems={stockItems} produtosCombinados={produtosCombinados} users={users} lowStockCount={lowStockCount} uiSettings={uiSettings} onSaveUiSettings={handleSaveUiSettings} adminNotices={adminNotices} onSaveNotice={handleSaveNotice} onDeleteNotice={handleDeleteNotice} currentUser={currentUser!} skuLinks={skuLinks} onSaveDashboardConfig={handleSaveDashboardConfig} packGroups={packGroups} onSavePackGroup={async (g, id) => { await dbClient.from('stock_pack_groups').upsert(id ? { ...g, id } : g); loadData(); }} />
-    }
-  };
+    const renderPage = () => {
+        switch (currentPage) {
+            case 'dashboard': return <DashboardPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} allOrders={allOrders} scanHistory={scanHistory} stockItems={stockItems} produtosCombinados={produtosCombinados} users={users} lowStockCount={lowStockCount} uiSettings={uiSettings} onSaveUiSettings={handleSaveUiSettings} adminNotices={adminNotices} onSaveNotice={handleSaveNotice} onDeleteNotice={handleDeleteNotice} currentUser={currentUser!} skuLinks={skuLinks} onSaveDashboardConfig={handleSaveDashboardConfig} packGroups={packGroups} onSavePackGroup={async (g, id) => { await dbClient.from('stock_pack_groups').upsert(id ? { ...g, id } : g); loadData(); }} />
+            case 'importer': return <ImporterPage
+                allOrders={allOrders}
+                selectedFile={selectedFile}
+                setSelectedFile={setSelectedFile}
+                processedData={processedData}
+                setProcessedData={setProcessedData}
+                error={importError}
+                setError={setImportError}
+                isProcessing={isProcessing}
+                setIsProcessing={setIsProcessing}
+                onLaunchSuccess={handleLaunchSuccess}
+                skuLinks={skuLinks}
+                onLinkSku={handleLinkSku}
+                onUnlinkSku={handleUnlinkSku}
+                products={stockItems.filter(i => i.kind === 'PRODUTO')}
+                onAddNewItem={handleAddNewItem}
+                produtosCombinados={produtosCombinados}
+                stockItems={stockItems}
+                generalSettings={generalSettings}
+                setGeneralSettings={handleSaveGeneralSettings}
+                currentUser={currentUser!}
+                importHistory={importHistory}
+                addImportToHistory={handleAddImportToHistory}
+                clearImportHistory={handleClearImportHistory}
+                onDeleteHistoryItem={(item) => { setHistoryItemToDelete(item); setIsDeleteModalOpen(true); }}
+                onGetImportHistoryDetails={handleGetImportHistoryDetails}
+                onBulkDeleteHistory={handleBulkDeleteHistoryItems}
+                users={users}
+                blingLinkedIds={blingLinkedIds}
+            />
+            case 'bipagem': return <BipagemPage isAutoBipagemActive={isAutoBipagemActive} allOrders={allOrders} onNewScan={handleNewScan} onBomDeduction={() => { }} scanHistory={scanHistory} onCancelBipagem={handleCancelBipagem} onBulkCancelBipagem={handleBulkCancelBipagem} products={stockItems} users={users} onAddNewUser={handleAddNewUser} onSaveUser={handleUpdateUser} uiSettings={uiSettings} currentUser={currentUser!} onSyncPending={handleSyncPending} skuLinks={skuLinks} addToast={addToast} currentPage={currentPage} onHardDeleteScanLog={handleHardDeleteScanLog} onBulkHardDeleteScanLog={handleBulkHardDeleteScanLog} />
+            case 'pedidos': return <PedidosPage allOrders={allOrders} scanHistory={scanHistory} returns={returns} onLogError={handleLogError} onLogReturn={handleLogReturn} currentUser={currentUser!} onDeleteOrders={handleDeleteOrders} onBulkCancelBipagem={handleBulkCancelBipagem} onUpdateStatus={handleUpdateStatus} onRemoveReturn={handleRemoveReturn} onSolveOrders={handleSolveOrders} generalSettings={generalSettings} users={users} skuLinks={skuLinks} stockItems={stockItems} />
+            case 'planejamento': return <PlanejamentoPage stockItems={stockItems} allOrders={allOrders} skuLinks={skuLinks} produtosCombinados={produtosCombinados} productionPlans={productionPlans} onSaveProductionPlan={handleSaveProductionPlan} onDeleteProductionPlan={handleDeleteProductionPlan} onGenerateShoppingList={handleGenerateShoppingList} currentUser={currentUser!} planningSettings={generalSettings.estoque} onSavePlanningSettings={(s) => handleSaveGeneralSettings(p => ({ ...p, estoque: s }))} addToast={addToast} />
+            case 'compras': return <ComprasPage shoppingList={shoppingList} onClearList={handleClearShoppingList} onUpdateItem={handleUpdateShoppingItem} stockItems={stockItems} />
+            case 'pesagem': return <PesagemPage stockItems={stockItems} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} currentUser={currentUser!} onDeleteBatch={handleDeleteWeighingBatch} users={users} />
+            case 'moagem': return <MoagemPage stockItems={stockItems} grindingBatches={grindingBatches} onAddNewGrinding={handleAddNewGrinding} currentUser={currentUser!} onDeleteBatch={handleDeleteGrindingBatch} users={users} generalSettings={generalSettings} />
+            case 'estoque': return <EstoquePage stockItems={stockItems} stockMovements={stockMovements} onStockAdjustment={handleStockAdjustment} produtosCombinados={produtosCombinados} onSaveProdutoCombinado={handleSaveProdutoCombinado} onAddNewItem={handleAddNewItem} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} onProductionRun={handleProductionRun} onRegisterReadyStock={handleRegisterReadyStock} currentUser={currentUser!} onEditItem={handleEditItem} onDeleteItem={handleDeleteItem} onBulkDeleteItems={handleBulkDeleteItems} onDeleteMovement={async () => false} onDeleteWeighingBatch={handleDeleteWeighingBatch} generalSettings={generalSettings} setGeneralSettings={setGeneralSettings as any} onConfirmImportFromXml={handleConfirmImportFromXml} onSaveExpeditionItems={handleSaveExpeditionItems} users={users} onUpdateInsumoCategory={async () => { }} onBulkInventoryUpdate={handleBulkSetInitialStock} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} />
+            case 'funcionarios': return <FuncionariosPage users={users} onSetAttendance={handleSetAttendance} onAddNewUser={handleAddNewUser} onUpdateAttendanceDetails={handleUpdateAttendanceDetails} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} currentUser={currentUser!} onDeleteUser={handleDeleteUser} />
+            case 'relatorios': return <RelatoriosPage stockItems={stockItems} stockMovements={stockMovements} orders={allOrders} weighingBatches={weighingBatches} scanHistory={scanHistory} produtosCombinados={produtosCombinados} users={users} returns={returns} generalSettings={generalSettings} grindingBatches={grindingBatches} />
+            case 'financeiro': return <FinancePage allOrders={allOrders} stockItems={stockItems} skuLinks={skuLinks} produtosCombinados={produtosCombinados} generalSettings={generalSettings} onDeleteOrders={handleDeleteOrders} onLaunchOrders={handleLaunchSuccess} onNavigateToSettings={() => { _setCurrentPage('configuracoes-gerais'); localStorage.setItem('erp_current_page', 'configuracoes-gerais'); }} />
+            case 'etiquetas': return <EtiquetasPage settings={etiquetasSettings} onSettingsSave={handleSaveEtiquetasSettings} generalSettings={generalSettings} uiSettings={uiSettings} onSetUiSettings={setUiSettings as any} stockItems={stockItems} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} onAddNewItem={handleAddNewItem} etiquetasState={etiquetasState} setEtiquetasState={setEtiquetasState} currentUser={currentUser!} allOrders={allOrders} etiquetasHistory={etiquetasHistory} onSaveHistory={handleSaveEtiquetaHistory} onGetHistoryDetails={handleGetEtiquetaHistoryDetails} onProcessZpl={handleProcessZpl} isProcessing={isProcessingLabels} progressMessage={labelProgressMessage} />
+            case 'bling': return <BlingPage generalSettings={generalSettings} onLaunchSuccess={handleLaunchSuccess} onUpdateOrdersBatch={handleUpdateOrdersBatch} addToast={addToast} setCurrentPage={setCurrentPage} onLoadZpl={handleLoadZplFromBling} onSaveSettings={handleSaveGeneralSettings} stockItems={stockItems} skuLinks={skuLinks} allOrders={allOrders} onLinkSku={handleLinkSku} />;
+            case 'integracoes': return <IntegracoesPage generalSettings={generalSettings} onSaveSettings={handleSaveGeneralSettings} onLaunchSuccess={handleLaunchSuccess} addToast={addToast} setCurrentPage={setCurrentPage} />;
+            case 'passo-a-passo': return <PassoAPassoPage />
+            case 'ajuda': return <AjudaPage />
+            case 'powerbi': return <BiDashboardPage biData={biData} users={users} />
+            case 'powerbi-templates': return <PowerBiTemplatesPage setCurrentPage={setCurrentPage} />
+            case 'configuracoes': return <ConfiguracoesPage users={users} setCurrentPage={setCurrentPage} onDeleteUser={handleDeleteUser} onAddNewUser={handleAddNewUser} currentUser={currentUser!} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} stockItems={stockItems} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} onClearScanHistory={handleClearScanHistory} onSaveGeneralSettings={handleSaveGeneralSettings} addToast={addToast} />
+            case 'configuracoes-gerais': return <ConfiguracoesGeraisPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} onSaveGeneralSettings={handleSaveGeneralSettings} currentUser={currentUser} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} addToast={addToast} stockItems={stockItems} onClearScanHistory={handleClearScanHistory} users={users} />
+            default: return <DashboardPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} allOrders={allOrders} scanHistory={scanHistory} stockItems={stockItems} produtosCombinados={produtosCombinados} users={users} lowStockCount={lowStockCount} uiSettings={uiSettings} onSaveUiSettings={handleSaveUiSettings} adminNotices={adminNotices} onSaveNotice={handleSaveNotice} onDeleteNotice={handleDeleteNotice} currentUser={currentUser!} skuLinks={skuLinks} onSaveDashboardConfig={handleSaveDashboardConfig} packGroups={packGroups} onSavePackGroup={async (g, id) => { await dbClient.from('stock_pack_groups').upsert(id ? { ...g, id } : g); loadData(); }} />
+        }
+    };
 
-  if (appStatus === 'initializing') return <div className="flex items-center justify-center h-screen"><Loader2 className="h-8 w-8 animate-spin" /></div>;
-  if (appStatus === 'needs_setup') return <DatabaseSetupPage onRetry={() => window.location.reload()} details={setupDetails} />;
-  if (appStatus === 'error') return <div className="p-4 bg-red-100 text-red-800">Erro crítico ao carregar aplicativo.</div>;
+    if (appStatus === 'initializing') return <div className="flex items-center justify-center h-screen"><Loader2 className="h-8 w-8 animate-spin" /></div>;
+    if (appStatus === 'needs_setup') return <DatabaseSetupPage onRetry={() => window.location.reload()} details={setupDetails} />;
+    if (appStatus === 'error') return <div className="p-4 bg-red-100 text-red-800">Erro crítico ao carregar aplicativo.</div>;
 
-  if (!currentUser) return <LoginPage onLogin={async (l, p) => { const user = await loginUser(l, p); if (user) { localStorage.setItem('erp_current_user', JSON.stringify(user)); setCurrentUser(user); return true; } return false; }} />;
+    if (!currentUser) return <LoginPage onLogin={async (l, p) => {
+        const user = await loginUser(l, p);
+        if (user) {
+            localStorage.setItem('erp_current_user', JSON.stringify(user));
+            localStorage.setItem('erp_login_time', Date.now().toString());
+            setCurrentUser(user);
+            return true;
+        }
+        return false;
+    }} />;
 
-  return (
-    <div>
-        <style>{`:root { --font-size-dynamic: ${uiSettings.fontSize}px; }`}</style>
-        <div className="flex h-screen font-sans bg-[var(--color-bg)]">
-            <Sidebar currentPage={currentPage} setCurrentPage={setCurrentPage} lowStockCount={lowStockCount} isCollapsed={isSidebarCollapsed} toggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} isMobileOpen={isMobileSidebarOpen} setIsMobileSidebarOpen={setIsMobileSidebarOpen} currentUser={currentUser} onLogout={() => { localStorage.removeItem('erp_current_user'); initialized.current = false; setCurrentUser(null) }} generalSettings={generalSettings} />
-            <main className={`flex-1 flex flex-col transition-all duration-300 ${isSidebarCollapsed ? 'md:pl-20' : 'md:pl-64'}`}>
-                <GlobalHeader 
-                    currentPage={currentPage} 
-                    onMenuClick={() => setIsMobileSidebarOpen(true)} 
-                    lowStockItems={lowStockItems} 
-                    setCurrentPage={setCurrentPage} 
-                    bannerNotice={bannerNotice} 
-                    isAutoBipagemActive={isAutoBipagemActive} 
-                    onToggleAutoBipagem={setIsAutoBipagemActive} 
-                    currentUser={currentUser} 
-                    onDismissNotice={handleDeleteNotice} 
-                    isProcessingLabels={isProcessingLabels}
-                    labelProgressMessage={labelProgressMessage}
-                    labelProcessingProgress={labelProcessingProgress}
-                />
-                <div className="flex-1 p-4 md:p-6 overflow-y-auto bg-[var(--color-bg)]">
-                    {renderPage()}
-                </div>
-            </main>
+    return (
+        <div>
+            <style>{`:root { --font-size-dynamic: ${uiSettings.fontSize}px; }`}</style>
+            <div className="flex h-screen font-sans bg-[var(--color-bg)]">
+                <Sidebar currentPage={currentPage} setCurrentPage={setCurrentPage} lowStockCount={lowStockCount} isCollapsed={isSidebarCollapsed} toggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} isMobileOpen={isMobileSidebarOpen} setIsMobileSidebarOpen={setIsMobileSidebarOpen} currentUser={currentUser} onLogout={() => { localStorage.removeItem('erp_current_user'); initialized.current = false; setCurrentUser(null) }} generalSettings={generalSettings} />
+                <main className={`flex-1 flex flex-col transition-all duration-300 ${isSidebarCollapsed ? 'md:pl-20' : 'md:pl-64'}`}>
+                    <GlobalHeader
+                        currentPage={currentPage}
+                        onMenuClick={() => setIsMobileSidebarOpen(true)}
+                        lowStockItems={lowStockItems}
+                        setCurrentPage={setCurrentPage}
+                        bannerNotice={bannerNotice}
+                        isAutoBipagemActive={isAutoBipagemActive}
+                        onToggleAutoBipagem={setIsAutoBipagemActive}
+                        currentUser={currentUser}
+                        onDismissNotice={handleDeleteNotice}
+                        isProcessingLabels={isProcessingLabels}
+                        labelProgressMessage={labelProgressMessage}
+                        labelProcessingProgress={labelProcessingProgress}
+                    />
+                    <div className="flex-1 p-4 md:p-6 overflow-y-auto bg-[var(--color-bg)]">
+                        {renderPage()}
+                    </div>
+                </main>
+            </div>
+            <ToastContainer toasts={toasts} removeToast={removeToast} />
+            {isDeleteHistoryModalOpen && <ConfirmActionModal isOpen={isDeleteHistoryModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDeleteHistoryItem} title="Confirmar Exclusão de Importação" message={<p>Tem certeza que deseja excluir esta importação? <strong>Isso também apagará todos os pedidos vinculados a ela que ainda estão no banco de dados.</strong></p>} confirmButtonText="Sim, Excluir Tudo" isConfirming={isDeletingHistory} />}
+            <EditProductModal
+                isOpen={isEditProductModalOpen}
+                onClose={() => {
+                    setIsEditProductModalOpen(false);
+                    setProductToEdit(null);
+                }}
+                product={productToEdit}
+                linkedSkus={skuLinks}
+                onSaves={handleSaveProductEdit}
+                onUnlinkSku={handleUnlinkSku}
+            />
+            <BulkLinkSKUsModal
+                isOpen={isBulkLinkSKUsModalOpen}
+                onClose={() => setIsBulkLinkSKUsModalOpen(false)}
+                importedProducts={importedSkusForBulkLink}
+                existingProducts={stockItems.map(p => ({ id: p.id || p.code, code: p.code, name: p.name }))}
+                onLinkBulk={handleBulkLinkSKUsToExisting}
+                onCreateAndLink={handleBulkLinkSKUsCreateNew}
+            />
         </div>
-        <ToastContainer toasts={toasts} removeToast={removeToast} />
-        {isDeleteHistoryModalOpen && <ConfirmActionModal isOpen={isDeleteHistoryModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleConfirmDeleteHistoryItem} title="Confirmar Exclusão de Importação" message={<p>Tem certeza que deseja excluir esta importação? <strong>Isso também apagará todos os pedidos vinculados a ela que ainda estão no banco de dados.</strong></p>} confirmButtonText="Sim, Excluir Tudo" isConfirming={isDeletingHistory} />}
-        <EditProductModal
-          isOpen={isEditProductModalOpen}
-          onClose={() => {
-            setIsEditProductModalOpen(false);
-            setProductToEdit(null);
-          }}
-          product={productToEdit}
-          linkedSkus={skuLinks}
-          onSaves={handleSaveProductEdit}
-          onUnlinkSku={handleUnlinkSku}
-        />
-        <BulkLinkSKUsModal
-          isOpen={isBulkLinkSKUsModalOpen}
-          onClose={() => setIsBulkLinkSKUsModalOpen(false)}
-          importedProducts={importedSkusForBulkLink}
-          existingProducts={stockItems.map(p => ({ id: p.id || p.code, code: p.code, name: p.name }))}
-          onLinkBulk={handleBulkLinkSKUsToExisting}
-          onCreateAndLink={handleBulkLinkSKUsCreateNew}
-        />
-    </div>
-  );
+    );
 };
 export default App;

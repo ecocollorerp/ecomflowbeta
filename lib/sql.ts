@@ -1,6 +1,6 @@
 
 export const SETUP_SQL_STRING = `
--- ERP Fábrica Pro - Script de Sincronização Completo v3.4
+-- ERP Fábrica Pro - Script de Sincronização Completo v3.5
 
 CREATE OR REPLACE FUNCTION sync_database()
 RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
@@ -99,6 +99,7 @@ BEGIN
   CREATE TABLE IF NOT EXISTS public.orders (
       id TEXT PRIMARY KEY,
       order_id TEXT NOT NULL,
+      bling_numero TEXT,
       tracking TEXT,
       sku TEXT NOT NULL,
       qty_original INT NOT NULL,
@@ -119,9 +120,42 @@ BEGIN
       price_net REAL DEFAULT 0,
       error_reason TEXT,
       resolution_details JSONB,
+      vinculado_bling BOOLEAN DEFAULT FALSE,
+      etiqueta_gerada BOOLEAN DEFAULT FALSE,
+      lote_id TEXT,
+      id_pedido_loja TEXT,
+      venda_origem TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
   );
+
+  -- Adiciona colunas se não existirem
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='bling_numero') THEN
+    ALTER TABLE public.orders ADD COLUMN bling_numero TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='vinculado_bling') THEN
+    ALTER TABLE public.orders ADD COLUMN vinculado_bling BOOLEAN DEFAULT FALSE;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='etiqueta_gerada') THEN
+    ALTER TABLE public.orders ADD COLUMN etiqueta_gerada BOOLEAN DEFAULT FALSE;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='lote_id') THEN
+    ALTER TABLE public.orders ADD COLUMN lote_id TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='id_pedido_loja') THEN
+    ALTER TABLE public.orders ADD COLUMN id_pedido_loja TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='venda_origem') THEN
+    ALTER TABLE public.orders ADD COLUMN venda_origem TEXT;
+  END IF;
   CREATE UNIQUE INDEX IF NOT EXISTS orders_order_id_sku_idx ON public.orders (order_id, sku);
+
+  -- Migração: stock_pack_groups - Tipo (volatil/tradicional)
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_pack_groups' AND column_name='tipo') THEN
+    ALTER TABLE public.stock_pack_groups ADD COLUMN tipo TEXT DEFAULT 'tradicional';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_pack_groups' AND column_name='quantidade_volatil') THEN
+    ALTER TABLE public.stock_pack_groups ADD COLUMN quantidade_volatil NUMERIC DEFAULT 0;
+  END IF;
 
   -- Logs de Bipagem
   CREATE TABLE IF NOT EXISTS public.scan_logs (
@@ -256,6 +290,43 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_pack_groups' AND column_name='barcode') THEN
     ALTER TABLE public.stock_pack_groups ADD COLUMN barcode TEXT;
   END IF;
+
+  -- Estoque Pronto Adicionado
+  CREATE TABLE IF NOT EXISTS public.estoque_pronto (
+      id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
+      batch_id TEXT NOT NULL,
+      stock_item_id TEXT NOT NULL,
+      quantidade_total NUMERIC DEFAULT 0,
+      quantidade_disponivel NUMERIC DEFAULT 0,
+      localizacao TEXT,
+      status TEXT DEFAULT 'PRONTO',
+      observacoes TEXT,
+      produtos JSONB DEFAULT '[]'::jsonb,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      created_by TEXT
+  );
+      
+  CREATE INDEX IF NOT EXISTS idx_estoque_pronto_status ON public.estoque_pronto(status);
+  CREATE INDEX IF NOT EXISTS idx_estoque_pronto_sku ON public.estoque_pronto(stock_item_id);
+
+  CREATE TABLE IF NOT EXISTS public.order_items (
+      id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL,
+      bling_id TEXT,
+      sku TEXT NOT NULL,
+      nome TEXT,
+      quantidade NUMERIC DEFAULT 1,
+      preco_unitario NUMERIC DEFAULT 0,
+      preco_total NUMERIC DEFAULT 0,
+      status TEXT DEFAULT 'nao_sincronizado',
+      data_criacao TIMESTAMPTZ DEFAULT NOW(),
+      ultima_sincronizacao TIMESTAMPTZ,
+      erro_mensagem TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_order_items_o_id ON public.order_items(order_id);
+  CREATE INDEX IF NOT EXISTS idx_order_items_sku ON public.order_items(sku);
 
   -- 4. VIEWS (Dados Analíticos)
   CREATE OR REPLACE VIEW public.vw_dados_analiticos AS
@@ -569,7 +640,7 @@ DECLARE
     check_func text := 'SELECT jsonb_agg(jsonb_build_object(''name'', t, ''exists'', EXISTS (SELECT FROM pg_proc WHERE proname = t))) FROM unnest($1::text[]) t';
 
 BEGIN
-    EXECUTE check_table USING ARRAY['stock_items', 'orders', 'stock_movements', 'users', 'scan_logs', 'product_boms', 'sku_links', 'weighing_batches', 'production_plans', 'shopping_list_items', 'stock_pack_groups'] INTO tables_status;
+    EXECUTE check_table USING ARRAY['stock_items', 'orders', 'stock_movements', 'users', 'scan_logs', 'product_boms', 'sku_links', 'weighing_batches', 'production_plans', 'shopping_list_items', 'stock_pack_groups', 'estoque_pronto', 'order_items'] INTO tables_status;
     EXECUTE check_type USING ARRAY['canal_type', 'order_status_value'] INTO types_status;
     EXECUTE check_func USING ARRAY['sync_database', 'adjust_stock_quantity', 'record_production_run', 'login'] INTO functions_status;
 

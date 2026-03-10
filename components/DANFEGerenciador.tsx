@@ -22,6 +22,8 @@ interface DANFE {
   xmlUrl?: string;
   pdfUrl?: string;
   etiquetaZpl?: string;
+  canal?: string;
+  pedidoLoja?: string;
 }
 
 interface DANFEGerenciadorProps {
@@ -34,6 +36,8 @@ interface DANFEGerenciadorProps {
   onReemitir?: (danfeId: string) => void;
   itensPorPedido?: { [key: string]: any[] };
   onSincronizarItens?: (pedidoId: string) => Promise<void>;
+  onImprimirSimplificada?: (danfe: DANFE) => void;
+  onCorrigirErro?: (danfe: DANFE) => void;
 }
 
 const statusConfig = {
@@ -54,8 +58,11 @@ export const DANFEGerenciador: React.FC<DANFEGerenciadorProps> = ({
   onReemitir,
   itensPorPedido = {},
   onSincronizarItens,
+  onImprimirSimplificada,
+  onCorrigirErro,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [searchSKU, setSearchSKU] = useState(''); // Estado para filtro de SKU
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showZPLModal, setShowZPLModal] = useState(false);
@@ -64,16 +71,32 @@ export const DANFEGerenciador: React.FC<DANFEGerenciadorProps> = ({
   // Filtrar DANFE
   const danfesFiltrados = useMemo(() => {
     return danfes.filter(d => {
-      const matchSearch = 
+      const matchSearch =
         d.nfeNumero.includes(searchTerm) ||
         d.nfeChave.includes(searchTerm) ||
         d.cliente.toLowerCase().includes(searchTerm.toLowerCase()) ||
         d.pedidoNumero?.includes(searchTerm);
-      
+
+      // Lógica de Filtro por SKU (Verifica nos itens vinculados ao pedido da NF)
+      const buscarSKU = searchSKU.trim().toUpperCase();
+      let matchSKU = true;
+
+      if (buscarSKU) {
+        const itensDestaNota = itensPorPedido[d.pedidoId] || [];
+        // Se ainda não carregou os itens ou a nota não tem itens
+        if (itensDestaNota.length === 0) {
+          matchSKU = false; // Se tá buscando SKU forte e a nota não tem item, não exibe
+        } else {
+          matchSKU = itensDestaNota.some(item =>
+            item.sku?.toUpperCase().includes(buscarSKU)
+          );
+        }
+      }
+
       const matchStatus = !statusFilter || d.status === statusFilter;
-      return matchSearch && matchStatus;
+      return matchSearch && matchStatus && matchSKU;
     });
-  }, [danfes, searchTerm, statusFilter]);
+  }, [danfes, searchTerm, searchSKU, statusFilter, itensPorPedido]);
 
   // Estatísticas
   const stats = useMemo(() => {
@@ -153,6 +176,19 @@ export const DANFEGerenciador: React.FC<DANFEGerenciadorProps> = ({
             className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg outline-none focus:border-blue-500 font-bold"
           />
         </div>
+
+        {/* Filtro específico por SKU Principal */}
+        <div className="flex-1 max-w-sm relative">
+          <Package className="absolute left-3 top-3 text-gray-400" size={18} />
+          <input
+            type="text"
+            placeholder="Filtrar por SKU Principal..."
+            value={searchSKU}
+            onChange={(e) => setSearchSKU(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 border-2 border-purple-200 bg-purple-50 text-purple-900 placeholder-purple-400 rounded-lg outline-none focus:border-purple-500 focus:bg-white transition-all font-bold uppercase"
+          />
+        </div>
+
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
@@ -195,7 +231,15 @@ export const DANFEGerenciador: React.FC<DANFEGerenciadorProps> = ({
                     <div className="flex-1 min-w-0">
                       <div className="font-bold text-gray-900">NF-e #{danfe.nfeNumero}</div>
                       <div className="text-sm text-gray-600">Chave: {danfe.nfeChave}</div>
-                      <div className="text-sm text-gray-600">{danfe.cliente}</div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded uppercase tracking-tighter">
+                          {danfe.canal || 'S/ Canal'}
+                        </span>
+                        <span className="text-[10px] font-bold text-gray-500">
+                          Loja: {danfe.pedidoLoja || 'S/ Referência'}
+                        </span>
+                      </div>
+                      <div className="text-sm text-gray-600 mt-1">{danfe.cliente}</div>
                     </div>
                     <div className="text-right">
                       <div className={`px-3 py-1 rounded-full text-xs font-black ${config.cor} ${config.textCor}`}>
@@ -229,6 +273,14 @@ export const DANFEGerenciador: React.FC<DANFEGerenciadorProps> = ({
                         <p className="text-xs font-bold text-gray-600 uppercase">Valor</p>
                         <p className="font-bold text-gray-900">{formatarValor(danfe.valor)}</p>
                       </div>
+                      <div>
+                        <p className="text-xs font-bold text-gray-600 uppercase">Origem/Canal</p>
+                        <p className="font-bold text-blue-700 uppercase">{danfe.canal || 'Não detectado'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold text-gray-600 uppercase">Nº Pedido Loja</p>
+                        <p className="font-bold text-indigo-700">{danfe.pedidoLoja || 'Sem referência'}</p>
+                      </div>
                     </div>
 
                     {danfe.observacoes && (
@@ -246,7 +298,27 @@ export const DANFEGerenciador: React.FC<DANFEGerenciadorProps> = ({
                           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold transition-all"
                         >
                           <Printer size={16} />
-                          Imprimir DANFE
+                          Danfe Regular
+                        </button>
+                      )}
+
+                      {onImprimirSimplificada && danfe.status === 'autorizada' && (
+                        <button
+                          onClick={() => onImprimirSimplificada(danfe)}
+                          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold transition-all"
+                        >
+                          <Printer size={16} />
+                          Danfe Simplificada
+                        </button>
+                      )}
+
+                      {onGerarZPL && (
+                        <button
+                          onClick={() => handleGerarZPL(danfe)}
+                          className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold transition-all"
+                        >
+                          <Printer size={16} />
+                          {danfe.status === 'autorizada' ? 'Apenas Etiqueta' : 'Etiqueta ZPL'}
                         </button>
                       )}
 
@@ -270,23 +342,23 @@ export const DANFEGerenciador: React.FC<DANFEGerenciadorProps> = ({
                         </button>
                       )}
 
-                      {onGerarZPL && (
+                      {danfe.status === 'erro' && onCorrigirErro && (
                         <button
-                          onClick={() => handleGerarZPL(danfe)}
-                          className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-bold transition-all"
+                          onClick={() => onCorrigirErro(danfe)}
+                          className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 font-bold transition-all"
                         >
-                          <Printer size={16} />
-                          Etiqueta ZPL
+                          <AlertCircle size={16} />
+                          Alterar e Completar
                         </button>
                       )}
 
                       {danfe.status === 'erro' && onReemitir && (
                         <button
                           onClick={() => onReemitir(danfe.id)}
-                          className="flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 font-bold transition-all"
+                          className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-bold transition-all"
                         >
                           <AlertCircle size={16} />
-                          Reemitir
+                          Tentar Reemitir Novamente
                         </button>
                       )}
                     </div>

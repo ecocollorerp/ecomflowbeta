@@ -21,7 +21,7 @@ interface FiltroAutorisadoSemDANFEProps {
   stockItems: StockItem[];
   skuLinks: SkuLink[];
   onProcessarPedidos: (selecionados: AutorizadoSemDANFEItem[]) => void;
-  onGerar DANFE: (item: AutorizadoSemDANFEItem) => void;
+  onGerarDANFE: (item: AutorizadoSemDANFEItem) => void;
   addToast: (msg: string, type: string) => void;
 }
 
@@ -258,9 +258,8 @@ const FiltroAutorisadoSemDANFE: React.FC<FiltroAutorisadoSemDANFEProps> = ({
                 itensFiltrados.map(item => (
                   <tr
                     key={item.pedidoId}
-                    className={`hover:bg-blue-50 ${
-                      item.status === 'autorizado_sku_invalido' ? 'bg-red-50' : ''
-                    }`}
+                    className={`hover:bg-blue-50 ${item.status === 'autorizado_sku_invalido' ? 'bg-red-50' : ''
+                      }`}
                   >
                     <td className="px-4 py-3">
                       <input

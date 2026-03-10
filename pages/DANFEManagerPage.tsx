@@ -5,9 +5,10 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { DANFEGerenciador } from '../components/DANFEGerenciador';
 import { ListaItensPedido } from '../components/ListaItensPedido';
-import { FileText, AlertCircle, CheckCircle, Package, Loader2, Eye, ZapOff, Zap } from 'lucide-react';
+import { FileText, AlertCircle, CheckCircle, Package, Loader2, Eye, ZapOff, Zap, Clock } from 'lucide-react';
 import { gerarEtiquetaDANFE } from '../services/zplService';
 import { syncBlingItems, useSyncBlingItems } from '../services/syncBlingItems';
+import { dbClient } from '../lib/supabaseClient';
 
 interface NotaFiscal {
   id: string;
@@ -32,6 +33,8 @@ interface NotaFiscal {
   erroMsg?: string;
   xmlUrl?: string;
   pdfUrl?: string;
+  canal?: string;
+  pedidoLoja?: string;
 }
 
 interface DANFEManagerPageProps {
@@ -44,7 +47,12 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
   const [isLoading, setIsLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('danfe');
   const [itensPorPedido, setItensPorPedido] = useState<{ [key: string]: any[] }>({});
+  const [danfeEmCorrecao, setDanfeEmCorrecao] = useState<any | null>(null);
+  const [lotesDiarios, setLotesDiarios] = useState<any[]>([]);
   const { isSyncing, sincronizar: sincronizarItens } = useSyncBlingItems();
+
+  const [limiteNfe, setLimiteNfe] = useState<number>(200);
+  const [skuFilter, setSkuFilter] = useState('');
 
   // Carregar DANFE e NF-e
   useEffect(() => {
@@ -54,7 +62,19 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
       sincronizarItensAutomatico();
     }, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [limiteNfe]); // Recarrega se alterar o limite
+
+  // Carregar Lotes Diários da Memória
+  useEffect(() => {
+    if (activeTab === 'lotes') {
+      try {
+        const locally = JSON.parse(localStorage.getItem('nfe_lotes_diarios') || '[]');
+        setLotesDiarios(locally);
+      } catch (e) {
+        console.error('Erro ao ler lotes do localStorage:', e);
+      }
+    }
+  }, [activeTab]);
 
   const carregarDados = async () => {
     try {
@@ -63,8 +83,8 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
       const token = localStorage.getItem('bling_token');
       if (!token) throw new Error('Token Bling não encontrado');
 
-      // Buscar pedidos de vendas para pegar NF-e
-      const response = await fetch('/api/bling/pedidos/vendas?limit=100', {
+      // Buscar pedidos de vendas para pegar NF-e COM limite aberto
+      const response = await fetch(`/api/bling/pedidos/vendas?limit=${limiteNfe}`, {
         headers: { Authorization: token },
       });
 
@@ -101,12 +121,14 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
             erroMsg: nfe.erroMsg,
             xmlUrl: nfe.xmlUrl,
             pdfUrl: nfe.pdfUrl,
+            canal: p.loja?.nome || p.origem || '',
+            pedidoLoja: p.numeroLoja || p.intermediador?.numeroPedido || '',
           };
         });
 
       setNotasFiscais(notasFiscaisMap);
 
-      // Converter para formato DANFE
+      // Conversão inicial para DANFE
       const danfesMap = notasFiscaisMap.map((nf: NotaFiscal) => ({
         id: nf.id,
         nfeNumero: nf.numero,
@@ -121,10 +143,71 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
         observacoes: nf.erroMsg,
         xmlUrl: nf.xmlUrl,
         pdfUrl: nf.pdfUrl,
+        canal: nf.canal,
+        pedidoLoja: nf.pedidoLoja,
       }));
-
       setDANFEs(danfesMap);
-      addToast(`${danfesMap.length} DANFE(s) carregada(s)`, 'success');
+
+      // Enriquecer com dados do Supabase (Lote e Pedido Loja) em background
+      (async () => {
+        try {
+          const blingNumeros = [...new Set(notasFiscaisMap.map(nf => nf.pedidoNumero).filter(Boolean))];
+          if (blingNumeros.length > 0) {
+            const { data: dbOrders } = await dbClient
+              .from('orders')
+              .select('bling_numero, id_pedido_loja, venda_origem')
+              .in('bling_numero', blingNumeros);
+
+            if (dbOrders && dbOrders.length > 0) {
+              setDANFEs(prev => prev.map(nf => {
+                const matched = dbOrders.find(dbo => dbo.bling_numero === nf.pedidoNumero);
+                if (matched) {
+                  return {
+                    ...nf,
+                    pedidoLoja: matched.id_pedido_loja || nf.pedidoLoja,
+                    canal: matched.venda_origem || nf.canal
+                  };
+                }
+                return nf;
+              }));
+            }
+          }
+        } catch (e) {
+          console.error('Erro ao enriquecer dados com Supabase:', e);
+        }
+      })();
+      addToast(`${danfesMap.length} NF-e(s) carregada(s). Sincronizando SKUs em segundo plano...`, 'info');
+
+      // Buscar Intens IMEDIATAMENTE em background (P/ filtro de SKU)
+      (async () => {
+        const itensMap: { [key: string]: any[] } = {};
+        // Processar em chunks para não dar Rate Limit 429
+        const chunkSize = 10;
+        for (let i = 0; i < notasFiscaisMap.length; i += chunkSize) {
+          const chunk = notasFiscaisMap.slice(i, i + chunkSize);
+
+          await Promise.all(chunk.map(async (nf) => {
+            try {
+              // Tenta puxar via sync
+              const result = await syncBlingItems.sincronizarPedido(nf.pedidoId, nf.id, token);
+              if (result.sucesso && result.itens) {
+                itensMap[nf.pedidoId] = result.itens;
+              }
+            } catch (e) {
+              // Silencioso pro usuário, só avisa no console
+            }
+          }));
+
+          // Atualiza na tela a cada lote de 10 pra aliviar o loading e habilitar o filtro
+          setItensPorPedido(prev => ({ ...prev, ...itensMap }));
+
+          if (i + chunkSize < notasFiscaisMap.length) {
+            await new Promise(res => setTimeout(res, 600)); // Sleep de Rate limit
+          }
+        }
+        addToast(`SKUs sincronizados com sucesso! Filtragem disponível.`, 'success');
+      })();
+
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
       addToast(`Erro ao carregar DANFE: ${error instanceof Error ? error.message : 'erro'}`, 'error');
@@ -164,7 +247,7 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
     try {
       const nf = notasFiscais?.find(n => n.pedidoId === orderId);
       const token = localStorage.getItem('bling_token');
-      
+
       if (!token) {
         addToast('Token Bling não configurado', 'error');
         return;
@@ -176,7 +259,7 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
       }
 
       const resultado = await syncBlingItems.sincronizarPedido(orderId, nf.id, token);
-      
+
       if (resultado.sucesso) {
         setItensPorPedido(prev => ({
           ...prev,
@@ -223,11 +306,37 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
     }
   }, [addToast]);
 
+  // Imprimir DANFE Simplificada
+  const handleImprimirSimplificada = useCallback((danfe: any) => {
+    if (danfe.pdfUrl) {
+      window.open(danfe.pdfUrl, '_blank');
+      addToast('Abrindo DANFE Simplificada...', 'info');
+    } else {
+      addToast('PDF da DANFE não disponível', 'error');
+    }
+  }, [addToast]);
+
+  // Corrigir Erro SEFAZ
+  const handleCorrigirErro = useCallback((danfe: any) => {
+    setDanfeEmCorrecao(danfe);
+  }, []);
+
+  const fecharModalCorrecao = useCallback(() => {
+    setDanfeEmCorrecao(null);
+  }, []);
+
   // Gerar ZPL
   const handleGerarZPL = useCallback((danfe: any) => {
     try {
       const notaFiscal = notasFiscais.find(nf => nf.id === danfe.id);
       if (!notaFiscal) return;
+
+      // Montar a string de SKUs para colar no rodapé da etiqueta zebra
+      let skusFormatados = '';
+      const itensDaNota = itensPorPedido[notaFiscal.pedidoId];
+      if (itensDaNota && itensDaNota.length > 0) {
+        skusFormatados = itensDaNota.map(item => `${item.quantidade}x ${item.sku}`).join(' | ');
+      }
 
       const zpl = gerarEtiquetaDANFE({
         nfeNumero: danfe.nfeNumero,
@@ -239,6 +348,7 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
         cep: notaFiscal.cep,
         peso: notaFiscal.peso,
         valor: danfe.valor,
+        skus: skusFormatados,
       });
 
       // Adicionar ZPL ao objeto DANFE
@@ -251,7 +361,7 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
       console.error('Erro ao gerar ZPL:', error);
       addToast('Erro ao gerar ZPL', 'error');
     }
-  }, [notasFiscais, addToast]);
+  }, [notasFiscais, itensPorPedido, addToast]);
 
   // Reemitir NF-e
   const handleReemitir = useCallback(async (danfeId: string) => {
@@ -288,19 +398,33 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
     }
   }, [danfes, addToast]);
 
+  const filteredDanfes = useMemo(() => {
+    if (!skuFilter.trim()) return danfes;
+    const filterUpper = skuFilter.trim().toUpperCase();
+    return danfes.filter(d => {
+      const itens = itensPorPedido[d.pedidoId];
+      if (!itens) return false;
+      return itens.some(item =>
+        item.sku.toUpperCase().includes(filterUpper) ||
+        item.descricao?.toUpperCase().includes(filterUpper)
+      );
+    });
+  }, [danfes, skuFilter, itensPorPedido]);
+
   // Estatísticas
   const stats = useMemo(() => {
+    const target = skuFilter.trim() ? filteredDanfes : danfes;
     return {
-      total: danfes.length,
-      autorizada: danfes.filter(d => d.status === 'autorizada').length,
-      emitida: danfes.filter(d => d.status === 'emitida').length,
-      enviada: danfes.filter(d => d.status === 'enviada').length,
-      pendente: danfes.filter(d => d.status === 'pendente').length,
-      erro: danfes.filter(d => d.status === 'erro').length,
+      total: target.length,
+      autorizada: target.filter(d => d.status === 'autorizada').length,
+      emitida: target.filter(d => d.status === 'emitida').length,
+      enviada: target.filter(d => d.status === 'enviada').length,
+      pendente: target.filter(d => d.status === 'pendente').length,
+      erro: target.filter(d => d.status === 'erro').length,
     };
-  }, [danfes]);
+  }, [danfes, filteredDanfes, skuFilter]);
 
-  const valorTotal = useMemo(() => 
+  const valorTotal = useMemo(() =>
     danfes.reduce((sum, d) => sum + (d.valor || 0), 0),
     [danfes]
   );
@@ -320,14 +444,42 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
                 <p className="text-gray-600 font-bold">Documentos Auxiliares de Nota Fiscal Eletrônica</p>
               </div>
             </div>
-            <button
-              onClick={carregarDados}
-              disabled={isLoading}
-              className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-all disabled:opacity-50"
-            >
-              {isLoading ? <Loader2 className="animate-spin" size={20} /> : null}
-              Atualizar
-            </button>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 text-sm">
+                <span className="text-gray-700 font-bold">Exibir até:</span>
+                <select
+                  value={limiteNfe}
+                  onChange={(e) => setLimiteNfe(Number(e.target.value))}
+                  className="border-2 border-blue-200 rounded-lg p-2 font-bold text-blue-900 bg-blue-50 outline-none focus:border-blue-500"
+                >
+                  <option value={100}>100 Notas</option>
+                  <option value={200}>200 Notas</option>
+                  <option value={500}>500 Notas</option>
+                  <option value={1000}>1000 Notas</option>
+                  <option value={2000}>2000 Notas</option>
+                </select>
+              </label>
+
+              <div className="relative">
+                <Package className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-400" size={18} />
+                <input
+                  type="text"
+                  placeholder="Filtrar por SKU..."
+                  value={skuFilter}
+                  onChange={(e) => setSkuFilter(e.target.value)}
+                  className="pl-10 pr-4 py-2 border-2 border-blue-200 rounded-lg font-bold text-blue-900 bg-blue-50 outline-none focus:border-blue-500 w-64"
+                />
+              </div>
+
+              <button
+                onClick={carregarDados}
+                disabled={isLoading}
+                className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-all disabled:opacity-50"
+              >
+                {isLoading ? <Loader2 className="animate-spin" size={20} /> : null}
+                Atualizar
+              </button>
+            </div>
           </div>
 
           {/* Cards de Estatísticas */}
@@ -362,15 +514,15 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
             { id: 'danfe', label: '📄 Gerenciar DANFE', icon: FileText },
             { id: 'pendentes', label: '⚠️ Pendentes', icon: AlertCircle },
             { id: 'autorizadas', label: '✓ Autorizadas', icon: CheckCircle },
+            { id: 'lotes', label: '📦 Lotes Diários', icon: Package },
           ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 px-6 py-4 font-black uppercase text-sm tracking-widest transition-all ${
-                activeTab === tab.id
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
+              className={`flex-1 px-6 py-4 font-black uppercase text-sm tracking-widest transition-all ${activeTab === tab.id
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
             >
               {tab.label}
             </button>
@@ -381,7 +533,7 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
         <div className="bg-white rounded-xl shadow-lg overflow-hidden">
           {activeTab === 'danfe' && (
             <DANFEGerenciador
-              danfes={danfes}
+              danfes={filteredDanfes}
               isLoading={isLoading}
               onImprimir={handleImprimir}
               onDownloadXML={handleDownloadXML}
@@ -390,24 +542,28 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
               onReemitir={handleReemitir}
               itensPorPedido={itensPorPedido}
               onSincronizarItens={handleSincronizarItens}
+              onImprimirSimplificada={handleImprimirSimplificada}
+              onCorrigirErro={handleCorrigirErro}
             />
           )}
 
           {activeTab === 'pendentes' && (
             <DANFEGerenciador
-              danfes={danfes.filter(d => d.status === 'pendente' || d.status === 'emitida')}
+              danfes={filteredDanfes.filter(d => d.status === 'pendente' || d.status === 'emitida' || d.status === 'erro')}
               isLoading={isLoading}
               onImprimir={handleImprimir}
               onDownloadPDF={handleDownloadPDF}
               onGerarZPL={handleGerarZPL}
+              onReemitir={handleReemitir}
               itensPorPedido={itensPorPedido}
               onSincronizarItens={handleSincronizarItens}
+              onCorrigirErro={handleCorrigirErro}
             />
           )}
 
           {activeTab === 'autorizadas' && (
             <DANFEGerenciador
-              danfes={danfes.filter(d => d.status === 'autorizada' || d.status === 'enviada')}
+              danfes={filteredDanfes.filter(d => d.status === 'autorizada' || d.status === 'enviada')}
               isLoading={isLoading}
               onImprimir={handleImprimir}
               onDownloadXML={handleDownloadXML}
@@ -415,7 +571,82 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
               onGerarZPL={handleGerarZPL}
               itensPorPedido={itensPorPedido}
               onSincronizarItens={handleSincronizarItens}
+              onImprimirSimplificada={handleImprimirSimplificada}
             />
+          )}
+
+          {activeTab === 'lotes' && (
+            <div className="p-6 min-h-[500px]">
+              <div className="flex justify-between items-center border-b border-gray-100 pb-4 mb-6">
+                <h3 className="text-2xl font-black text-gray-800 flex items-center gap-3">
+                  <Package size={28} className="text-blue-600" /> Lotes de Geração/Emissão
+                </h3>
+                <button
+                  onClick={() => {
+                    if (window.confirm("Isso apagará o log visual dos envios em Lote feitos nesta máquina hoje. Continuar?")) {
+                      localStorage.removeItem('nfe_lotes_diarios');
+                      setLotesDiarios([]);
+                    }
+                  }}
+                  className="px-4 py-2 bg-red-50 text-red-700 font-bold rounded-lg hover:bg-red-100 border border-red-200 transition-all text-xs"
+                >
+                  Limpar Histórico Local
+                </button>
+              </div>
+
+              {lotesDiarios.length === 0 ? (
+                <div className="py-12 text-center text-gray-400">
+                  <Package size={64} className="mx-auto mb-4 opacity-20" />
+                  <p className="font-bold text-gray-500 text-lg">Nenhum lote diário encontrado nesta máquina.</p>
+                  <p className="text-sm mt-2">Os lotes de envio aparecerão aqui após você gerar notas em massa na aba "Importação de Pedidos".</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {lotesDiarios.map((lote: any, i: number) => (
+                    <div key={i} className="border-2 border-gray-100 rounded-2xl p-5 shadow-sm hover:shadow-md hover:border-blue-200 transition-all bg-white relative overflow-hidden">
+                      <div className="flex justify-between items-start mb-4">
+                        <div>
+                          <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-1 inline-block rounded-md mb-2">NF-e Lote: {lote.id}</p>
+                          <p className="text-sm text-gray-700 font-bold flex items-center gap-2">
+                            <Clock size={14} className="opacity-50" /> {new Date(lote.data).toLocaleString('pt-BR')}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2 mb-4 bg-gray-50 p-4 rounded-xl border border-gray-100 divide-x divide-gray-200">
+                        <div className="text-center flex-1 px-2">
+                          <p className="text-[10px] uppercase font-black tracking-widest text-gray-500 mb-1">Processadas</p>
+                          <p className="text-2xl font-black text-gray-800">{lote.total}</p>
+                        </div>
+                        <div className="text-center flex-1 px-2">
+                          <p className="text-[10px] uppercase font-black tracking-widest text-green-600 mb-1">Sucesso</p>
+                          <p className="text-2xl font-black text-green-700">{lote.ok}</p>
+                        </div>
+                        <div className="text-center flex-1 px-2">
+                          <p className="text-[10px] uppercase font-black tracking-widest text-red-600 mb-1">Rejeitadas</p>
+                          <p className="text-2xl font-black text-red-700">{lote.fail}</p>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 pt-4 border-t-2 border-dashed border-gray-100 text-xs">
+                        <p className="font-bold text-gray-800 mb-2 uppercase tracking-wide text-[10px]">Detalhamento das NF-es (Livre/Aprovadas):</p>
+                        <div className="max-h-32 overflow-y-auto pr-2 space-y-1">
+                          {lote.nfes?.map((nfe: any, idx: number) => (
+                            <div key={idx} className="flex items-center justify-between py-1 border-b border-gray-50 last:border-0">
+                              <span className="font-bold text-gray-600">NF-e: {nfe.nfeNumero || 'S/N'}</span>
+                              <span className="text-[9px] text-gray-400 font-mono">Ped: {nfe.pedidoVendaId}</span>
+                            </div>
+                          ))}
+                          {(!lote.nfes || lote.nfes.length === 0) && (
+                            <p className="text-gray-400 italic font-medium p-2 bg-gray-50 rounded text-center">Nenhum detalhe salvo (Lote vázio ou 100% erro).</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -433,6 +664,53 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
             <li>✓ Download do XML para integrações e sistemas</li>
           </ul>
         </div>
+
+        {/* Modal de Correção SEFAZ */}
+        {danfeEmCorrecao && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4">
+              <h3 className="text-xl font-black text-red-600 flex items-center gap-2">
+                <AlertCircle size={28} />
+                Correção de Erro SEFAZ - NF-e #{danfeEmCorrecao.nfeNumero || 'Nova'}
+              </h3>
+
+              <div className="p-4 bg-red-50 rounded-lg border border-red-200">
+                <p className="text-sm font-bold text-red-900 mb-1">Motivo da Rejeição:</p>
+                <p className="text-red-700 font-bold">{danfeEmCorrecao.observacoes || 'Erro não especificado pela SEFAZ. Ocorreu falha na transmissão da nota.'}</p>
+              </div>
+
+              <div className="space-y-3">
+                <p className="text-sm text-gray-700 font-bold">Instruções para Correção:</p>
+                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <ol className="list-decimal list-inside text-sm text-gray-600 space-y-2 font-semibold">
+                    <li>Clique no botão abaixo para abrir a nota no painel do ERP Bling.</li>
+                    <li>Navegue até os Dados Adicionais ou Produtos para corrigir as inconsistências (ex: NCM, CPF/CNPJ, Endereço).</li>
+                    <li>Após corrigir e salvar no ambiente remoto, feche esta tela.</li>
+                    <li>Clique no botão <strong>"Tentar Reemitir Novamente"</strong> na listagem vermelha de erro.</li>
+                  </ol>
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={fecharModalCorrecao}
+                  className="flex-1 px-4 py-3 bg-gray-200 text-gray-800 rounded-lg font-bold hover:bg-gray-300 transition-all"
+                >
+                  Fechar Manualmente
+                </button>
+                <button
+                  onClick={() => {
+                    window.open(`https://www.bling.com.br/b/notas.fiscais.php`, '_blank');
+                  }}
+                  className="flex-1 px-4 py-3 bg-red-600 text-white rounded-lg font-bold hover:bg-red-700 transition-all flex items-center justify-center gap-2"
+                >
+                  Abrir Ambiente Bling para Corrigir
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );

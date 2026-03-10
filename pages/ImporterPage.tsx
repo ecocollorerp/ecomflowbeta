@@ -55,27 +55,27 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         blingLinkedIds
     } = props;
 
-    const [importOptions, setImportOptions] = useState({ 
-        importCpf: false, 
-        importName: true, 
+    const [importOptions, setImportOptions] = useState({
+        importCpf: false,
+        importName: true,
         trackingFilter: 'all' as any,
     });
     const [importAsHistory, setImportAsHistory] = useState(false);
     const [selectedChannel, setSelectedChannel] = useState<Canal | 'AUTO'>('AUTO');
-    
+
     // Estados para o fluxo de datas
-    const [availableShippingDates, setAvailableShippingDates] = useState<{date: string, count: number}[]>([]);
+    const [availableShippingDates, setAvailableShippingDates] = useState<{ date: string, count: number }[]>([]);
     const [isDateModalOpen, setIsDateModalOpen] = useState(false);
     const [isScanningDates, setIsScanningDates] = useState(false);
 
-    
+
     const [selectedSkus, setSelectedSkus] = useState<Set<string>>(new Set());
     const [linkModalState, setLinkModalState] = useState({ isOpen: false, skus: [] as string[], color: '' });
-    const [createModalState, setCreateModalState] = useState<{isOpen: boolean, data: { sku: string; colorSugerida: string } | null}>({isOpen: false, data: null});
+    const [createModalState, setCreateModalState] = useState<{ isOpen: boolean, data: { sku: string; colorSugerida: string } | null }>({ isOpen: false, data: null });
     const [isViewingHistory, setIsViewingHistory] = useState(false);
     const [dbInconsistency, setDbInconsistency] = useState<any>(null);
     const [copiedSql, setCopiedSql] = useState(false);
-    
+
     // History Management
     const [isHistoryManagerOpen, setIsHistoryManagerOpen] = useState(false);
     const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
@@ -105,7 +105,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         console.log(`🔗 Iniciando vínc ulo de ${linkModalState.skus.length} SKU(s) com produto mestre: ${masterSku}`);
         let sucessos = 0;
         let erros = 0;
-        
+
         for (const sku of linkModalState.skus) {
             try {
                 const resultado = await onLinkSku(sku.toUpperCase(), masterSku.toUpperCase());
@@ -121,9 +121,9 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 console.error(`❌ Erro ao vincular ${sku}:`, err);
             }
         }
-        
+
         console.log(`📊 Resultado: ${sucessos} vinc ulo(s) bem-sucedido(s), ${erros} erro(s)`);
-        
+
         setLinkModalState({ isOpen: false, skus: [], color: '' });
         setSelectedSkus(new Set());
     };
@@ -131,27 +131,27 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
     const handleConfirmCreateAndLink = async (newItem: Omit<StockItem, 'id'>) => {
         console.log('🆕 Criando novo produto e vinculando SKU...');
         const product = await onAddNewItem(newItem);
-        
+
         if (!product) {
             console.error('❌ Falha ao criar novo produto');
             return;
         }
-        
+
         console.log(`✅ Produto criado: ${product.code} - ${product.name}`);
-        
+
         if (createModalState.data) {
             const resultadoVinculo = await onLinkSku(
                 createModalState.data.sku.toUpperCase(),
                 product.code.toUpperCase()
             );
-            
+
             if (resultadoVinculo) {
                 console.log(`✅ SKU ${createModalState.data.sku} vinculado ao produto ${product.code}`);
             } else {
                 console.error(`❌ Falha ao vincular SKU ${createModalState.data.sku}`);
             }
         }
-        
+
         setCreateModalState({ isOpen: false, data: null });
         setSelectedSkus(new Set());
     };
@@ -159,16 +159,16 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
     // 1. Botão "Iniciar Processamento" chama esta função
     const handleStartProcessing = async () => {
         if (!selectedFile) return;
-        
+
         setIsScanningDates(true);
         setError(null);
 
         try {
             const buffer = await selectedFile.arrayBuffer();
-            
+
             // Tenta extrair datas PRIMEIRO, passando o canal selecionado para forçar a configuração correta
             const dates = extractShippingDates(buffer, generalSettings, selectedChannel);
-            
+
             if (dates.length > 0) {
                 // Se encontrar datas, abre o modal e PAUSA o processamento
                 setAvailableShippingDates(dates);
@@ -192,12 +192,12 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
     const handleDateConfirm = async (selectedDates: string[]) => {
         setIsDateModalOpen(false);
         if (!selectedFile) return;
-        
+
         setIsProcessing(true); // Mostra loading principal
         try {
             const buffer = await selectedFile.arrayBuffer();
             executeFullProcessing(buffer, selectedDates);
-        } catch(e) {
+        } catch (e) {
             setIsProcessing(false);
         }
     };
@@ -208,10 +208,10 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         setIsProcessing(true);
         try {
             const data = parseExcelFile(
-                buffer, 
-                selectedFile.name, 
-                allOrders, 
-                generalSettings, 
+                buffer,
+                selectedFile.name,
+                allOrders,
+                generalSettings,
                 {
                     ...importOptions,
                     allowedShippingDates: allowedDates
@@ -228,18 +228,20 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 unlinked_count: data.skusNaoVinculados.length,
                 canal: data.canal
             }, data);
-        } catch (err: any) { 
-            setError(err.message || 'Erro crítico ao ler planilha.'); 
+        } catch (err: any) {
+            setError(err.message || 'Erro crítico ao ler planilha.');
         } finally { setIsProcessing(false); }
     };
 
     const handleLaunch = () => {
         if (!processedData) return;
+        const loteId = `IMPORT-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
         const ordersToLaunch = processedData.lists.completa.map(order => ({
             ...order,
+            lote_id: loteId,
             status: importAsHistory ? 'BIPADO' : 'NORMAL' // Override status if history mode is enabled
         }));
-        
+
         onLaunchSuccess(ordersToLaunch as any);
         setProcessedData(null);
         setImportAsHistory(false); // Reset checkbox
@@ -289,15 +291,15 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 {dbInconsistency && (
                     <div className="p-5 bg-red-100 border-2 border-red-500 rounded-2xl text-red-900 flex flex-col gap-3 animate-in slide-in-from-top-4">
                         <div className="flex items-center gap-3">
-                            <AlertTriangle className="text-red-600" size={32}/>
+                            <AlertTriangle className="text-red-600" size={32} />
                             <div>
                                 <p className="font-black text-lg">Banco de Dados Incompleto!</p>
                                 <p className="text-sm opacity-80 font-medium">Faltam funções RPC para processamento de pedidos. Cole o código SQL no seu Supabase para consertar.</p>
                             </div>
                         </div>
                         <div className="flex gap-2">
-                             <button onClick={handleCopySql} className="flex-1 flex items-center justify-center gap-2 bg-red-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-red-700 transition-all">
-                                {copiedSql ? <Check size={18}/> : <Copy size={18}/>}
+                            <button onClick={handleCopySql} className="flex-1 flex items-center justify-center gap-2 bg-red-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-red-700 transition-all">
+                                {copiedSql ? <Check size={18} /> : <Copy size={18} />}
                                 {copiedSql ? 'Copiado!' : 'Copiar Código de Reparo SQL'}
                             </button>
                             <button onClick={() => window.location.reload()} className="bg-white border border-red-200 text-red-600 px-4 py-2 rounded-xl font-bold">Já atualizei, Recarregar</button>
@@ -315,14 +317,14 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 {!processedData && !isViewingHistory && (
                     <>
                         <div className="relative">
-                            <FileUploader 
-                                onFileSelect={handleFileSelect} 
-                                selectedFile={selectedFile} 
+                            <FileUploader
+                                onFileSelect={handleFileSelect}
+                                selectedFile={selectedFile}
                             />
                             {isScanningDates && (
                                 <div className="absolute inset-0 bg-white/80 flex items-center justify-center rounded-xl z-10 animate-in fade-in">
                                     <div className="flex items-center gap-3 font-bold text-blue-600 bg-white p-6 rounded-2xl shadow-2xl border-2 border-blue-100">
-                                        <Loader2 className="animate-spin" size={24} /> 
+                                        <Loader2 className="animate-spin" size={24} />
                                         <div>
                                             <p>Analisando datas de envio...</p>
                                             <p className="text-xs text-gray-400 font-medium mt-1">Isso geralmente é rápido.</p>
@@ -334,13 +336,13 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
 
                         {selectedFile && (
                             <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-6 animate-in fade-in zoom-in-95">
-                                <div className="flex items-center gap-2 border-b pb-3"><Settings size={20} className="text-blue-600"/><h3 className="font-black text-gray-800 uppercase tracking-tighter">Configuração de Importação</h3></div>
+                                <div className="flex items-center gap-2 border-b pb-3"><Settings size={20} className="text-blue-600" /><h3 className="font-black text-gray-800 uppercase tracking-tighter">Configuração de Importação</h3></div>
 
                                 {/* Seleção de Canal Manual */}
                                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
                                     <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Canal / Layout da Planilha</label>
-                                    <select 
-                                        value={selectedChannel} 
+                                    <select
+                                        value={selectedChannel}
                                         onChange={e => setSelectedChannel(e.target.value as any)}
                                         className="w-full p-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
                                     >
@@ -351,17 +353,17 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                                     </select>
                                     <p className="text-[10px] text-slate-400 mt-2 font-medium">Use "Automático" por padrão. Se houver erro de colunas não encontradas, selecione o canal específico aqui.</p>
                                 </div>
-                                
+
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <label className="flex items-start gap-3 p-4 bg-gray-50 rounded-xl cursor-pointer border-2 border-transparent hover:border-blue-500 transition-all">
-                                        <input type="checkbox" checked={importOptions.importCpf} onChange={e => setImportOptions(p => ({...p, importCpf: e.target.checked}))} className="w-6 h-6 text-blue-600 rounded mt-0.5 shadow-sm"/>
+                                        <input type="checkbox" checked={importOptions.importCpf} onChange={e => setImportOptions(p => ({ ...p, importCpf: e.target.checked }))} className="w-6 h-6 text-blue-600 rounded mt-0.5 shadow-sm" />
                                         <div className="text-sm">
                                             <p className="font-black text-gray-800">Extrair CPF/CNPJ</p>
                                             <p className="text-xs text-gray-500 font-medium">Habilita conferência de documentos na expedição.</p>
                                         </div>
                                     </label>
                                     <label className="flex items-start gap-3 p-4 bg-gray-50 rounded-xl cursor-pointer border-2 border-transparent hover:border-blue-500 transition-all">
-                                        <input type="checkbox" checked={importOptions.importName} onChange={e => setImportOptions(p => ({...p, importName: e.target.checked}))} className="w-6 h-6 text-blue-600 rounded mt-0.5 shadow-sm"/>
+                                        <input type="checkbox" checked={importOptions.importName} onChange={e => setImportOptions(p => ({ ...p, importName: e.target.checked }))} className="w-6 h-6 text-blue-600 rounded mt-0.5 shadow-sm" />
                                         <div className="text-sm">
                                             <p className="font-black text-gray-800">Extrair Nome do Cliente</p>
                                             <p className="text-xs text-gray-500 font-medium">Exibe o nome do comprador no painel de pedidos.</p>
@@ -369,11 +371,11 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                                     </label>
                                 </div>
                                 <div className="p-4 bg-gray-50 border border-gray-100 rounded-2xl flex gap-3 items-center">
-                                    <Info size={24} className="text-gray-400 flex-shrink-0"/>
+                                    <Info size={24} className="text-gray-400 flex-shrink-0" />
                                     <p className="text-xs font-bold text-gray-600">Dica: Se a planilha contiver datas de envio (ex: Shopee), um seletor aparecerá após clicar no botão abaixo.</p>
                                 </div>
                                 <button onClick={handleStartProcessing} disabled={isProcessing || isScanningDates} className="w-full flex items-center justify-center gap-2 py-5 bg-blue-600 text-white font-black text-lg rounded-2xl hover:bg-blue-700 disabled:opacity-50 transition-all shadow-xl shadow-blue-100 transform active:scale-95">
-                                    {isProcessing ? <Loader2 size={24} className="animate-spin"/> : <Zap size={24}/>} 
+                                    {isProcessing ? <Loader2 size={24} className="animate-spin" /> : <Zap size={24} />}
                                     {isProcessing ? 'Lendo e Analisando...' : 'Iniciar Processamento'}
                                 </button>
                             </div>
@@ -382,7 +384,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 )}
 
                 {error && <div className="p-5 bg-red-100 text-red-900 rounded-2xl border-2 border-red-200 flex flex-col gap-2 font-medium shadow-lg animate-in slide-in-from-top-2">
-                    <div className="flex items-center gap-3 font-black text-lg"><X size={24} className="bg-red-500 text-white p-1 rounded-full"/> Erro na Importação</div>
+                    <div className="flex items-center gap-3 font-black text-lg"><X size={24} className="bg-red-500 text-white p-1 rounded-full" /> Erro na Importação</div>
                     <p>{error}</p>
                 </div>}
 
@@ -391,11 +393,11 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                         {/* New Toggle for Import Type */}
                         {!isViewingHistory && (
                             <div className="bg-amber-50 border-2 border-amber-200 p-4 rounded-xl mb-4 flex items-center gap-4">
-                                <input 
-                                    type="checkbox" 
-                                    id="import-history-check" 
-                                    checked={importAsHistory} 
-                                    onChange={(e) => setImportAsHistory(e.target.checked)} 
+                                <input
+                                    type="checkbox"
+                                    id="import-history-check"
+                                    checked={importAsHistory}
+                                    onChange={(e) => setImportAsHistory(e.target.checked)}
                                     className="w-6 h-6 text-amber-600 rounded focus:ring-amber-500"
                                 />
                                 <div>
@@ -405,7 +407,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                             </div>
                         )}
 
-                        <ImportResults 
+                        <ImportResults
                             data={processedData}
                             blingLinkedIds={blingLinkedIds}
                             onLaunchSuccess={handleLaunch}
@@ -426,12 +428,12 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
 
             <div className="lg:col-span-1 bg-white p-6 rounded-2xl border border-gray-200 shadow-sm h-fit sticky top-6">
                 <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-black text-gray-800 flex items-center gap-2 uppercase text-xs tracking-widest"><History size={18} className="text-blue-500"/> Histórico</h3>
-                    <button 
+                    <h3 className="font-black text-gray-800 flex items-center gap-2 uppercase text-xs tracking-widest"><History size={18} className="text-blue-500" /> Histórico</h3>
+                    <button
                         onClick={() => setIsHistoryManagerOpen(true)}
                         className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 flex items-center gap-1"
                     >
-                        <List size={14}/> Gerenciar
+                        <List size={14} /> Gerenciar
                     </button>
                 </div>
                 <div className="space-y-3 max-h-[75vh] overflow-y-auto pr-2 custom-scrollbar">
@@ -450,8 +452,8 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                                     {item.unlinkedCount > 0 && <span className="bg-red-500 text-white px-2 py-0.5 rounded-lg text-[10px] font-black">{item.unlinkedCount} N/V</span>}
                                 </div>
                                 <div className="flex gap-2">
-                                    <button onClick={() => handleViewHistory(item)} className="text-gray-300 hover:text-blue-500 transition-colors"><Eye size={18}/></button>
-                                    <button onClick={() => onDeleteHistoryItem(item)} className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={18}/></button>
+                                    <button onClick={() => handleViewHistory(item)} className="text-gray-300 hover:text-blue-500 transition-colors"><Eye size={18} /></button>
+                                    <button onClick={() => onDeleteHistoryItem(item)} className="text-gray-300 hover:text-red-500 transition-colors"><Trash2 size={18} /></button>
                                 </div>
                             </div>
                         </div>
@@ -469,17 +471,17 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                                 <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter">Gerenciar Histórico Completo</h2>
                                 <p className="text-sm font-bold text-gray-400 mt-1 uppercase tracking-widest">{importHistory.length} importações registradas</p>
                             </div>
-                            <button onClick={() => setIsHistoryManagerOpen(false)} className="bg-gray-100 p-2 rounded-full hover:bg-gray-200 transition-colors text-gray-500"><X size={24}/></button>
+                            <button onClick={() => setIsHistoryManagerOpen(false)} className="bg-gray-100 p-2 rounded-full hover:bg-gray-200 transition-colors text-gray-500"><X size={24} /></button>
                         </div>
-                        
+
                         <div className="flex-1 overflow-auto p-0">
                             <table className="w-full text-sm">
                                 <thead className="bg-slate-50 sticky top-0 z-10 text-[10px] font-black text-slate-500 uppercase tracking-widest">
                                     <tr>
                                         <th className="p-4 w-12 text-center">
-                                            <input 
-                                                type="checkbox" 
-                                                checked={selectedHistoryIds.size === importHistory.length && importHistory.length > 0} 
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedHistoryIds.size === importHistory.length && importHistory.length > 0}
                                                 onChange={handleSelectAllHistory}
                                                 className="w-4 h-4 rounded text-blue-600 cursor-pointer"
                                             />
@@ -495,8 +497,8 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                                     {importHistory.map(item => (
                                         <tr key={item.id} className={`${selectedHistoryIds.has(item.id) ? 'bg-blue-50' : 'hover:bg-slate-50'} transition-colors`}>
                                             <td className="p-4 text-center">
-                                                <input 
-                                                    type="checkbox" 
+                                                <input
+                                                    type="checkbox"
                                                     checked={selectedHistoryIds.has(item.id)}
                                                     onChange={() => handleToggleSelectHistory(item.id)}
                                                     className="w-4 h-4 rounded text-blue-600 cursor-pointer"
@@ -513,8 +515,8 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                                                 {item.unlinkedCount > 0 && <span className="ml-2 text-red-500 text-[10px] bg-red-50 px-2 py-0.5 rounded-md">+{item.unlinkedCount} N/V</span>}
                                             </td>
                                             <td className="p-4 text-center flex justify-center gap-2">
-                                                <button onClick={() => handleViewHistory(item)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg"><Eye size={18}/></button>
-                                                <button onClick={() => onDeleteHistoryItem(item)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={18}/></button>
+                                                <button onClick={() => handleViewHistory(item)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg"><Eye size={18} /></button>
+                                                <button onClick={() => onDeleteHistoryItem(item)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={18} /></button>
                                             </td>
                                         </tr>
                                     ))}
@@ -527,11 +529,11 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                             <div className="flex gap-3">
                                 <button onClick={() => setIsHistoryManagerOpen(false)} className="px-6 py-3 rounded-xl bg-white border font-black text-xs uppercase tracking-widest text-slate-500 hover:bg-gray-50">Fechar</button>
                                 {selectedHistoryIds.size > 0 && (
-                                    <button 
-                                        onClick={() => setIsConfirmBulkDeleteOpen(true)} 
+                                    <button
+                                        onClick={() => setIsConfirmBulkDeleteOpen(true)}
                                         className="px-6 py-3 rounded-xl bg-red-600 text-white font-black text-xs uppercase tracking-widest shadow-xl shadow-red-200 hover:bg-red-700 flex items-center gap-2"
                                     >
-                                        <Trash2 size={16}/> Excluir Selecionados ({selectedHistoryIds.size})
+                                        <Trash2 size={16} /> Excluir Selecionados ({selectedHistoryIds.size})
                                     </button>
                                 )}
                             </div>
@@ -540,23 +542,23 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 </div>
             )}
 
-            <LinkSkuModal isOpen={linkModalState.isOpen} onClose={() => setLinkModalState({isOpen: false, skus: [], color: ''})} skusToLink={linkModalState.skus} colorSugerida={linkModalState.color} onConfirmLink={handleConfirmLink} products={stockItems.filter(i => i.kind === 'PRODUTO' || i.kind === 'PROCESSADO')} skuLinks={skuLinks} onTriggerCreate={() => { setLinkModalState(p => ({ ...p, isOpen: false })); setCreateModalState({isOpen: true, data: { sku: linkModalState.skus[0], colorSugerida: linkModalState.color }}); }} />
-            {createModalState.data && <CreateProductFromImportModal isOpen={createModalState.isOpen} onClose={() => setCreateModalState({isOpen: false, data: null})} unlinkedSkuData={createModalState.data ? {skus: [createModalState.data.sku], colorSugerida: createModalState.data.colorSugerida} : null} onConfirm={handleConfirmCreateAndLink} generalSettings={generalSettings} />}
-            
-            <ConfirmActionModal 
-                isOpen={isConfirmBulkDeleteOpen} 
-                onClose={() => setIsConfirmBulkDeleteOpen(false)} 
-                onConfirm={handleBulkDelete} 
-                title={`Excluir ${selectedHistoryIds.size} Importações`} 
-                message={<><p>Você tem certeza que deseja excluir <strong>{selectedHistoryIds.size}</strong> importações do histórico?</p><p className="mt-2 text-red-600 font-bold">Isso apagará TODOS os pedidos vinculados a essas importações do banco de dados.</p><p className="text-xs mt-1">Essa ação é irreversível.</p></>} 
-                confirmButtonText="Sim, Excluir Tudo" 
-                isConfirming={isDeletingBulk} 
+            <LinkSkuModal isOpen={linkModalState.isOpen} onClose={() => setLinkModalState({ isOpen: false, skus: [], color: '' })} skusToLink={linkModalState.skus} colorSugerida={linkModalState.color} onConfirmLink={handleConfirmLink} products={stockItems.filter(i => i.kind === 'PRODUTO' || i.kind === 'PROCESSADO')} skuLinks={skuLinks} onTriggerCreate={() => { setLinkModalState(p => ({ ...p, isOpen: false })); setCreateModalState({ isOpen: true, data: { sku: linkModalState.skus[0], colorSugerida: linkModalState.color } }); }} />
+            {createModalState.data && <CreateProductFromImportModal isOpen={createModalState.isOpen} onClose={() => setCreateModalState({ isOpen: false, data: null })} unlinkedSkuData={createModalState.data ? { skus: [createModalState.data.sku], colorSugerida: createModalState.data.colorSugerida } : null} onConfirm={handleConfirmCreateAndLink} generalSettings={generalSettings} />}
+
+            <ConfirmActionModal
+                isOpen={isConfirmBulkDeleteOpen}
+                onClose={() => setIsConfirmBulkDeleteOpen(false)}
+                onConfirm={handleBulkDelete}
+                title={`Excluir ${selectedHistoryIds.size} Importações`}
+                message={<><p>Você tem certeza que deseja excluir <strong>{selectedHistoryIds.size}</strong> importações do histórico?</p><p className="mt-2 text-red-600 font-bold">Isso apagará TODOS os pedidos vinculados a essas importações do banco de dados.</p><p className="text-xs mt-1">Essa ação é irreversível.</p></>}
+                confirmButtonText="Sim, Excluir Tudo"
+                isConfirming={isDeletingBulk}
             />
-            
-            <DateSelectionModal 
-                isOpen={isDateModalOpen} 
-                onClose={() => { setIsDateModalOpen(false); }} 
-                availableDates={availableShippingDates} 
+
+            <DateSelectionModal
+                isOpen={isDateModalOpen}
+                onClose={() => { setIsDateModalOpen(false); }}
+                availableDates={availableShippingDates}
                 onConfirm={handleDateConfirm}
                 fileName={selectedFile?.name || ''}
             />
