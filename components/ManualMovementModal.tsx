@@ -26,24 +26,24 @@ const ManualMovementModal: React.FC<ManualMovementModalProps> = ({ isOpen, onClo
             const initialItem = preselectedItem || items.find(i => i.kind === 'INSUMO') || items[0];
             if (initialItem) {
                 setSelectedItemCode(initialItem.code);
-                 if(initialItem.kind === 'PRODUTO' || initialItem.kind === 'PROCESSADO') {
+                if (initialItem.kind === 'PRODUTO' || initialItem.kind === 'PROCESSADO') {
                     setMovementType('entrada');
                     setReason('Ajuste de Saldo Físico');
                     setIsAdjustmentOnly(true);
-                 } else {
+                } else {
                     setMovementType('entrada');
                     setReason('Correção');
                     setIsAdjustmentOnly(true);
-                 }
+                }
             } else {
                 setSelectedItemCode('');
             }
             setQuantity(1);
         }
     }, [isOpen, items, preselectedItem]);
-    
+
     useEffect(() => {
-        if(isProducible) {
+        if (isProducible) {
             // Se for produto, o padrão agora é ajuste manual para permitir correções de "estoque físico"
             if (!reason.includes('Produção')) {
                 setIsAdjustmentOnly(true);
@@ -61,12 +61,12 @@ const ManualMovementModal: React.FC<ManualMovementModalProps> = ({ isOpen, onClo
         const finalRef = !isAdjustmentOnly ? `Produção Manual: ${reason}` : reason;
         onConfirm(selectedItemCode, movementType, quantity, finalRef);
     };
-    
+
     const isFormValid = selectedItemCode && quantity > 0 && reason.trim() !== '';
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-lg m-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-[95vw] md:max-w-2xl flex flex-col max-h-[95vh] overflow-y-auto">
                 <div className="flex justify-between items-center mb-4">
                     <h2 className="text-xl font-black text-slate-800 flex items-center uppercase tracking-tighter">
                         <PlusCircle className="mr-2 text-blue-600" />
@@ -76,7 +76,7 @@ const ManualMovementModal: React.FC<ManualMovementModalProps> = ({ isOpen, onClo
                         <X size={24} />
                     </button>
                 </div>
-                
+
                 <div className="space-y-4">
                     <div>
                         <label htmlFor="item-select" className="text-[10px] font-black text-gray-400 uppercase">Item Selecionado</label>
@@ -98,7 +98,7 @@ const ManualMovementModal: React.FC<ManualMovementModalProps> = ({ isOpen, onClo
                                     <option key={insumo.id} value={insumo.code}>{insumo.name} ({insumo.code})</option>
                                 ))}
                             </optgroup>
-                             <optgroup label="Produtos Finais">
+                            <optgroup label="Produtos Finais">
                                 {items.filter(i => i.kind === 'PRODUTO').map(produto => (
                                     <option key={produto.id} value={produto.code}>{produto.name} ({produto.code})</option>
                                 ))}
@@ -110,13 +110,13 @@ const ManualMovementModal: React.FC<ManualMovementModalProps> = ({ isOpen, onClo
                         <div className="p-3 bg-blue-50 border border-blue-100 rounded-xl space-y-3">
                             <p className="text-[10px] font-black text-blue-800 uppercase">Tipo de Operação</p>
                             <div className="grid grid-cols-2 gap-2">
-                                <button 
+                                <button
                                     onClick={() => { setIsAdjustmentOnly(true); setReason('Ajuste de Saldo Físico'); setMovementType('entrada'); }}
                                     className={`p-2 text-xs font-black rounded-lg border-2 transition-all ${isAdjustmentOnly ? 'bg-blue-600 text-white border-blue-600 shadow-md' : 'bg-white text-blue-600 border-blue-100'}`}
                                 >
                                     AJUSTE MANUAL
                                 </button>
-                                <button 
+                                <button
                                     onClick={() => { setIsAdjustmentOnly(false); setReason('Produção Interna'); setMovementType('saida'); }}
                                     className={`p-2 text-xs font-black rounded-lg border-2 transition-all ${!isAdjustmentOnly ? 'bg-orange-500 text-white border-orange-500 shadow-md' : 'bg-white text-orange-500 border-orange-100'}`}
                                 >
@@ -124,8 +124,8 @@ const ManualMovementModal: React.FC<ManualMovementModalProps> = ({ isOpen, onClo
                                 </button>
                             </div>
                             <p className="text-[9px] font-bold text-blue-600 leading-tight">
-                                {isAdjustmentOnly 
-                                    ? "Ajuste manual apenas altera o saldo deste item. Use para correções de inventário físico." 
+                                {isAdjustmentOnly
+                                    ? "Ajuste manual apenas altera o saldo deste item. Use para correções de inventário físico."
                                     : "Produção manual dará entrada neste item e BAIXA automática nos insumos da receita."}
                             </p>
                         </div>
@@ -167,7 +167,7 @@ const ManualMovementModal: React.FC<ManualMovementModalProps> = ({ isOpen, onClo
                             />
                         </div>
                     </div>
-                    
+
                     <div>
                         <label htmlFor="reason-input" className="text-[10px] font-black text-gray-400 uppercase">Motivo / Referência</label>
                         <input
@@ -189,7 +189,7 @@ const ManualMovementModal: React.FC<ManualMovementModalProps> = ({ isOpen, onClo
                 </div>
 
                 <div className="mt-6 flex justify-end gap-3 pt-4 border-t">
-                    <button 
+                    <button
                         onClick={onClose}
                         type="button"
                         className="px-6 py-2 bg-gray-100 text-gray-500 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-gray-200 transition-all"

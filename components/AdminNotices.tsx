@@ -92,17 +92,17 @@ const PostIt: React.FC<{ notice: AdminNotice, onDismiss: (id: string) => void, c
 
     if (isHidden) {
         return (
-             <div className={`p-2 rounded-lg shadow-lg flex items-center justify-center cursor-pointer border-2 ${levelClasses[notice.level]}`} onClick={() => setIsHidden(false)}>
+            <div className={`p-2 rounded-lg shadow-lg flex items-center justify-center cursor-pointer border-2 ${levelClasses[notice.level]}`} onClick={() => setIsHidden(false)}>
                 <Eye size={20} />
-             </div>
+            </div>
         )
     }
 
     return (
         <div className={`p-4 rounded-lg shadow-lg flex flex-col border-2 ${levelClasses[notice.level]}`}>
             <div className="flex justify-between items-center mb-2">
-                 <button onClick={() => setIsHidden(true)}><EyeOff size={16} /></button>
-                 {canDismiss && <button onClick={() => onDismiss(notice.id)}><X size={16} /></button>}
+                <button onClick={() => setIsHidden(true)}><EyeOff size={16} /></button>
+                {canDismiss && <button onClick={() => onDismiss(notice.id)}><X size={16} /></button>}
             </div>
             <p className="text-sm font-medium flex-grow">{notice.text}</p>
             <p className="text-xs mt-2 text-right opacity-70">por {notice.createdBy}</p>
@@ -117,15 +117,21 @@ const AdminNotices: React.FC<AdminNoticesProps> = ({ notices, currentUser, onSav
     return (
         <>
             <div className="mb-6">
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
                     <h2 className="text-xl font-bold text-gray-800">Avisos da Administração</h2>
-                    <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 text-sm font-semibold bg-[var(--color-primary-light)] text-[var(--color-primary-dark-text)] px-3 py-1.5 rounded-lg hover:opacity-80">
-                        <Plus size={16}/> Novo Aviso
-                    </button>
                 </div>
             </div>
+
+            <button
+                onClick={() => setIsModalOpen(true)}
+                className="fixed bottom-8 right-8 z-[60] flex items-center gap-2 bg-blue-600 text-white p-4 rounded-full shadow-2xl hover:bg-blue-700 hover:scale-110 active:scale-95 transition-all group"
+                title="Criar Novo Aviso"
+            >
+                <Plus size={24} className="group-hover:rotate-90 transition-transform" />
+                <span className="max-w-0 overflow-hidden group-hover:max-w-xs transition-all duration-300 font-black uppercase text-xs tracking-widest whitespace-nowrap">Novo Aviso</span>
+            </button>
             {postItNotices.length > 0 && (
-                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
                     {postItNotices.map(notice => (
                         <PostIt
                             key={notice.id}

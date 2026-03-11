@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { X, FileUp, Loader2, CheckCircle2, Settings, AlertTriangle, Layers, Database, Globe, Calendar } from 'lucide-react';
 import { GeneralSettings, OrderItem, ProcessedData, Canal } from '../types';
-import { parseExcelFile } from '../lib/parser';
+import { parseExcelFile, extractHeadersAndData } from '../lib/parser';
 import { parseSalesNFeXML, extractXmlsFromZip } from '../lib/xmlParser';
 
 interface FinanceImportModalProps {
@@ -11,21 +11,33 @@ interface FinanceImportModalProps {
     allOrders: OrderItem[];
     generalSettings: GeneralSettings;
     onLaunchOrders: (orders: OrderItem[]) => Promise<void>;
+    onSaveSettings?: (settings: GeneralSettings) => void;
 }
 
 type ImportType = 'finance_only' | 'full_import';
 
-const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose, allOrders, generalSettings, onLaunchOrders }) => {
+const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose, allOrders, generalSettings, onLaunchOrders, onSaveSettings }) => {
     const [files, setFiles] = useState<File[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const [importType, setImportType] = useState<ImportType>('finance_only');
     const [resultSummary, setResultSummary] = useState<{ updated: number, created: number } | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [selectedChannel, setSelectedChannel] = useState<Canal | 'AUTO'>('AUTO');
-    
-    // Novos estados para filtro de data
+    const [importStatus, setImportStatus] = useState<string>('');
+
     const [filterStartDate, setFilterStartDate] = useState('');
     const [filterEndDate, setFilterEndDate] = useState('');
+
+    const [availableHeaders, setAvailableHeaders] = useState<string[]>([]);
+    const [sheetData, setSheetData] = useState<any[]>([]);
+    const [columnMapping, setColumnMapping] = useState({
+        priceGross: '',
+        platformFees: [] as string[],
+        shippingFee: '',
+        priceNet: '',
+        statusColumn: '',
+        acceptedStatusValues: ''
+    });
 
     const resetState = () => {
         setFiles([]);
@@ -36,6 +48,10 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
         setSelectedChannel('AUTO');
         setFilterStartDate('');
         setFilterEndDate('');
+        setImportStatus('');
+        setAvailableHeaders([]);
+        setSheetData([]);
+        setColumnMapping({ priceGross: '', platformFees: [], shippingFee: '', priceNet: '', statusColumn: '', acceptedStatusValues: '' });
     };
 
     const handleClose = () => {
@@ -43,10 +59,45 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
         onClose();
     };
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    React.useEffect(() => {
+        if (selectedChannel === 'AUTO') {
+            setColumnMapping({ priceGross: '', platformFees: [], shippingFee: '', priceNet: '', statusColumn: '', acceptedStatusValues: '' });
+            return;
+        }
+        const canalKey = selectedChannel.toLowerCase() as 'ml' | 'shopee' | 'site';
+        const config = generalSettings.importer[canalKey] || {} as any;
+
+        setColumnMapping({
+            priceGross: config.priceGross || '',
+            platformFees: config.fees || [],
+            shippingFee: config.shippingFee || '',
+            priceNet: config.priceNet || '',
+            statusColumn: config.statusColumn || '',
+            acceptedStatusValues: config.acceptedStatusValues ? config.acceptedStatusValues.join(', ') : ''
+        });
+    }, [selectedChannel, generalSettings.importer]);
+
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
-            setFiles(Array.from(e.target.files));
+            const selectedFiles = Array.from(e.target.files) as File[];
+            setFiles(selectedFiles);
             setError(null);
+
+            const firstFile = selectedFiles[0];
+            const isExcel = !firstFile.name.toLowerCase().endsWith('.xml') && !firstFile.name.toLowerCase().endsWith('.zip');
+            if (isExcel) {
+                try {
+                    const buffer = await firstFile.arrayBuffer();
+                    const { headers, sheetData: data } = extractHeadersAndData(buffer);
+                    setAvailableHeaders(headers);
+                    setSheetData(data);
+                } catch (err) {
+                    console.error("Erro extraindo headers:", err);
+                }
+            } else {
+                setAvailableHeaders([]);
+                setSheetData([]);
+            }
         }
     };
 
@@ -57,14 +108,11 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
 
         try {
             let ordersToProcess: OrderItem[] = [];
-
-            // Verifica se é lote de XMLs ou Planilha ou ZIP
             const firstFile = files[0];
             const isXml = firstFile.name.toLowerCase().endsWith('.xml');
             const isZip = firstFile.name.toLowerCase().endsWith('.zip');
 
             if (isZip) {
-                // Processamento de ZIP
                 for (const file of files) {
                     const extractedXmls = await extractXmlsFromZip(file);
                     for (const { content, fileName } of extractedXmls) {
@@ -73,55 +121,58 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                     }
                 }
             } else if (isXml) {
-                // Processamento em Lote de XMLs (NFe)
                 for (const file of files) {
                     const text = await file.text();
                     const ordersFromXml = await parseSalesNFeXML(text, file.name);
                     ordersToProcess.push(...ordersFromXml);
                 }
             } else {
-                // Processamento de Planilha (Excel/CSV) - Assume 1 arquivo principal
                 const buffer = await firstFile.arrayBuffer();
-                
-                // Determine canal based on selection or auto
                 let canalToUse: Canal | undefined = selectedChannel !== 'AUTO' ? selectedChannel : undefined;
-                
+
                 const data: ProcessedData = parseExcelFile(
-                    buffer, 
-                    firstFile.name, 
-                    allOrders, 
-                    generalSettings, 
-                    { importCpf: false, importName: true },
-                    canalToUse
+                    buffer,
+                    firstFile.name,
+                    allOrders,
+                    generalSettings,
+                    {
+                        importCpf: false,
+                        importName: true,
+                        columnOverrides: {
+                            ...(columnMapping.priceGross ? { priceGross: columnMapping.priceGross } : {}),
+                            ...(columnMapping.platformFees.length > 0 ? { fees: columnMapping.platformFees } : {}),
+                            ...(columnMapping.shippingFee ? { shippingFee: columnMapping.shippingFee } : {}),
+                            ...(columnMapping.priceNet ? { priceNet: columnMapping.priceNet } : {}),
+                            ...(columnMapping.statusColumn ? { statusColumn: columnMapping.statusColumn } : {}),
+                            ...(columnMapping.acceptedStatusValues ? { acceptedStatusValues: columnMapping.acceptedStatusValues.split(',').map(s => s.trim()) } : {})
+                        }
+                    },
+                    canalToUse,
+                    importStatus || undefined
                 );
                 ordersToProcess = data.lists.completa;
             }
 
-            // --- FILTRO DE DATA ---
             if (filterStartDate || filterEndDate) {
                 const start = filterStartDate ? new Date(filterStartDate + "T00:00:00") : null;
                 const end = filterEndDate ? new Date(filterEndDate + "T23:59:59") : null;
 
                 ordersToProcess = ordersToProcess.filter(order => {
                     if (!order.data) return false;
-                    // order.data está em YYYY-MM-DD string
-                    const orderDate = new Date(order.data + "T12:00:00"); 
-                    
+                    const orderDate = new Date(order.data + "T12:00:00");
                     if (start && orderDate < start) return false;
                     if (end && orderDate > end) return false;
-                    
                     return true;
                 });
             }
-            
+
             if (ordersToProcess.length === 0) {
                 throw new Error("Nenhum pedido encontrado no período selecionado.");
             }
-            
-            // Map para busca rápida de pedidos existentes
+
             const existingOrdersMap = new Map<string, OrderItem>();
             allOrders.forEach(o => existingOrdersMap.set(`${o.orderId}|${o.sku}`, o));
-            
+
             const finalOrdersPayload: OrderItem[] = [];
             let updatedCount = 0;
             let createdCount = 0;
@@ -131,7 +182,6 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                 const existing = existingOrdersMap.get(key);
 
                 if (existing) {
-                    // Pedido já existe: Atualiza APENAS campos financeiros e informativos
                     finalOrdersPayload.push({
                         ...existing,
                         price_gross: newOrder.price_gross > 0 ? newOrder.price_gross : existing.price_gross,
@@ -143,22 +193,16 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                         data: newOrder.data || existing.data,
                         customer_name: newOrder.customer_name || existing.customer_name,
                         customer_cpf_cnpj: newOrder.customer_cpf_cnpj || existing.customer_cpf_cnpj,
-                        // Se o usuário selecionou um canal específico, atualizamos o canal também
                         canal: selectedChannel !== 'AUTO' ? newOrder.canal : existing.canal
                     });
                     updatedCount++;
                 } else {
-                    // Pedido novo
                     let finalStatus = newOrder.status;
-
                     if (finalStatus === 'NORMAL') {
-                        // Se for finance_only, força status 'BIPADO' para não gerar pendência de produção
-                        // XMLs geralmente são vendas já faturadas, então já entram como BIPADO
                         if (importType === 'finance_only' || isXml || isZip) {
                             finalStatus = 'BIPADO';
                         }
                     }
-
                     finalOrdersPayload.push({
                         ...newOrder,
                         status: finalStatus
@@ -173,7 +217,6 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
             } else {
                 setError("Nenhum dado válido encontrado para processar.");
             }
-
         } catch (err: any) {
             setError(err.message || "Erro ao processar arquivos.");
         } finally {
@@ -197,11 +240,10 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
 
                 {!resultSummary ? (
                     <div className="space-y-6">
-                        {/* File Upload Area */}
                         <label className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-2xl cursor-pointer transition-all ${files.length > 0 ? 'border-emerald-400 bg-emerald-50' : 'border-slate-300 bg-slate-50 hover:bg-slate-100'}`}>
                             {files.length > 0 ? (
                                 <div className="text-center p-4">
-                                    <FileUp size={32} className="text-emerald-500 mx-auto mb-2"/>
+                                    <FileUp size={32} className="text-emerald-500 mx-auto mb-2" />
                                     <p className="font-bold text-emerald-700 text-xs break-all">
                                         {files.length === 1 ? files[0].name : `${files.length} arquivos selecionados`}
                                     </p>
@@ -209,7 +251,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                                 </div>
                             ) : (
                                 <div className="text-center p-4">
-                                    <FileUp size={32} className="text-slate-400 mx-auto mb-2"/>
+                                    <FileUp size={32} className="text-slate-400 mx-auto mb-2" />
                                     <p className="font-bold text-slate-600 text-xs">Clique para selecionar</p>
                                     <p className="text-[10px] text-slate-400 mt-1">Excel (Vendas), XML (NFe) ou ZIP</p>
                                 </div>
@@ -217,12 +259,11 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                             <input type="file" accept=".xlsx, .xls, .csv, .xml, .zip" onChange={handleFileChange} className="hidden" multiple />
                         </label>
 
-                        {/* Channel Selection for Excel */}
                         {isExcel && (
                             <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
                                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 block">Canal da Planilha</label>
-                                <select 
-                                    value={selectedChannel} 
+                                <select
+                                    value={selectedChannel}
                                     onChange={(e) => setSelectedChannel(e.target.value as any)}
                                     className="w-full p-2 bg-white border border-slate-300 rounded-lg text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none"
                                 >
@@ -234,7 +275,6 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                             </div>
                         )}
 
-                        {/* Date Filter (Shopee/Geral) */}
                         <div className="bg-blue-50 p-3 rounded-xl border border-blue-100">
                             <label className="text-[10px] font-black text-blue-500 uppercase tracking-widest mb-2 flex items-center gap-1">
                                 <Calendar size={12} /> Filtrar por Data (Opcional)
@@ -242,8 +282,8 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                             <div className="flex gap-2">
                                 <div className="flex-1">
                                     <span className="text-[10px] text-blue-400 font-bold block mb-1">De:</span>
-                                    <input 
-                                        type="date" 
+                                    <input
+                                        type="date"
                                         value={filterStartDate}
                                         onChange={(e) => setFilterStartDate(e.target.value)}
                                         className="w-full p-2 border border-blue-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-400"
@@ -251,80 +291,166 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                                 </div>
                                 <div className="flex-1">
                                     <span className="text-[10px] text-blue-400 font-bold block mb-1">Até:</span>
-                                    <input 
-                                        type="date" 
+                                    <input
+                                        type="date"
                                         value={filterEndDate}
                                         onChange={(e) => setFilterEndDate(e.target.value)}
                                         className="w-full p-2 border border-blue-200 rounded-lg text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-400"
                                     />
                                 </div>
                             </div>
-                            <p className="text-[9px] text-blue-400 mt-1 italic">* Útil para planilhas da Shopee com períodos misturados.</p>
                         </div>
 
-                        {/* Options */}
-                        <div className="grid grid-cols-1 gap-2">
-                            <button 
-                                onClick={() => setImportType('finance_only')}
-                                className={`flex items-start p-3 rounded-xl border-2 text-left transition-all ${importType === 'finance_only' ? 'border-blue-500 bg-blue-50' : 'border-slate-100 hover:border-slate-200'}`}
-                            >
-                                <div className={`p-2 rounded-lg mr-3 ${importType === 'finance_only' ? 'bg-blue-200 text-blue-700' : 'bg-slate-200 text-slate-500'}`}>
-                                    <Database size={18}/>
+                        {isExcel && availableHeaders.length > 0 && (
+                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mt-4 space-y-3">
+                                <h3 className="text-xs font-black text-slate-700 uppercase mb-2">Mapeamento Financeiro</h3>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="col-span-1">
+                                        <label className="text-[10px] font-bold text-slate-600 mb-1 block">Valor Bruto</label>
+                                        <select value={columnMapping.priceGross} onChange={(e) => setColumnMapping(p => ({ ...p, priceGross: e.target.value }))} className="w-full p-2 border border-slate-300 rounded text-xs bg-white">
+                                            <option value="">-- Auto --</option>
+                                            {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="col-span-2">
+                                        <label className="text-[10px] font-bold text-slate-600 mb-1 block">Taxas (Seleção Múltipla)</label>
+                                        <div className="flex flex-wrap gap-1.5 p-2 border border-slate-300 rounded bg-white max-h-32 overflow-y-auto">
+                                            {availableHeaders.map(h => {
+                                                const isSelected = columnMapping.platformFees.includes(h);
+                                                return (
+                                                    <button
+                                                        key={h}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setColumnMapping(p => ({
+                                                                ...p,
+                                                                platformFees: isSelected ? p.platformFees.filter(f => f !== h) : [...p.platformFees, h]
+                                                            }));
+                                                        }}
+                                                        className={`px-2 py-1 rounded text-[10px] font-bold border ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-600 border-slate-200'}`}
+                                                    >
+                                                        {h}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-600 mb-1 block">Envio</label>
+                                        <select value={columnMapping.shippingFee} onChange={(e) => setColumnMapping(p => ({ ...p, shippingFee: e.target.value }))} className="w-full p-2 border border-slate-300 rounded text-xs bg-white">
+                                            <option value="">-- Auto --</option>
+                                            {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-600 mb-1 block">Líquido</label>
+                                        <select value={columnMapping.priceNet} onChange={(e) => setColumnMapping(p => ({ ...p, priceNet: e.target.value }))} className="w-full p-2 border border-slate-300 rounded text-xs bg-white">
+                                            <option value="">-- Auto --</option>
+                                            {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-600 mb-1 block">Status (Filtro)</label>
+                                        <select value={columnMapping.statusColumn} onChange={(e) => setColumnMapping(p => ({ ...p, statusColumn: e.target.value }))} className="w-full p-2 border border-slate-300 rounded text-xs bg-white border-blue-300">
+                                            <option value="">-- Ignorar --</option>
+                                            {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="col-span-1">
+                                        <label className="text-[10px] font-bold text-slate-600 mb-1 block">Status Válidos</label>
+                                        {columnMapping.statusColumn && sheetData.length > 0 ? (
+                                            <div className="flex flex-wrap gap-1.5 p-2 border border-slate-300 rounded bg-white max-h-32 overflow-y-auto w-full">
+                                                {Array.from(new Set(sheetData.map(r => String(r[columnMapping.statusColumn] || '').trim().toLowerCase()).filter(Boolean))).sort().map(h => {
+                                                    const currentList = columnMapping.acceptedStatusValues ? columnMapping.acceptedStatusValues.split(',').map(s => s.trim()) : [];
+                                                    const isSelected = currentList.includes(h);
+                                                    return (
+                                                        <button key={h} type="button" onClick={() => {
+                                                            const newList = isSelected ? currentList.filter(f => f !== h) : [...currentList, h];
+                                                            setColumnMapping(p => ({ ...p, acceptedStatusValues: newList.join(', ') }));
+                                                        }} className={`px-2 py-1 rounded text-[10px] font-bold border ${isSelected ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                                                            {h}
+                                                        </button>
+                                                    )
+                                                })}
+                                            </div>
+                                        ) : (
+                                            <input type="text" value={columnMapping.acceptedStatusValues} onChange={(e) => setColumnMapping(p => ({ ...p, acceptedStatusValues: e.target.value }))} placeholder="ex: concluído, pago" className="w-full p-2 border border-slate-300 rounded text-xs bg-white border-blue-300 outline-none focus:ring-1 focus:ring-blue-500" />
+                                        )}
+                                    </div>
                                 </div>
-                                <div>
-                                    <p className={`font-bold text-xs ${importType === 'finance_only' ? 'text-blue-900' : 'text-slate-700'}`}>Atualizar / Histórico (Site/XML)</p>
-                                    <p className="text-[10px] text-slate-500 mt-0.5">Importa vendas já concluídas para relatórios financeiros sem gerar pendência de produção.</p>
-                                </div>
-                            </button>
-
-                            <button 
-                                onClick={() => setImportType('full_import')}
-                                className={`flex items-start p-3 rounded-xl border-2 text-left transition-all ${importType === 'full_import' ? 'border-orange-500 bg-orange-50' : 'border-slate-100 hover:border-slate-200'}`}
-                            >
-                                <div className={`p-2 rounded-lg mr-3 ${importType === 'full_import' ? 'bg-orange-200 text-orange-700' : 'bg-slate-200 text-slate-500'}`}>
-                                    <Layers size={18}/>
-                                </div>
-                                <div>
-                                    <p className={`font-bold text-xs ${importType === 'full_import' ? 'text-orange-900' : 'text-slate-700'}`}>Importação de Produção (Novo Lote)</p>
-                                    <p className="text-[10px] text-slate-500 mt-0.5">Cria novos pedidos como "NORMAL" para entrar na fila de produção.</p>
-                                </div>
-                            </button>
-                        </div>
-                        
-                        {error && (
-                            <div className="p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-center font-bold border border-red-100">
-                                <AlertTriangle size={18} className="mr-2 flex-shrink-0"/> {error}
+                                {selectedChannel !== 'AUTO' && onSaveSettings && (
+                                    <div className="mt-3 flex justify-end">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const canalKey = selectedChannel.toLowerCase() as 'ml' | 'shopee' | 'site';
+                                                const currentConfig = generalSettings.importer[canalKey];
+                                                if (currentConfig) {
+                                                    onSaveSettings({
+                                                        ...generalSettings,
+                                                        importer: {
+                                                            ...generalSettings.importer,
+                                                            [canalKey]: {
+                                                                ...currentConfig,
+                                                                priceGross: columnMapping.priceGross || currentConfig.priceGross,
+                                                                fees: columnMapping.platformFees.length > 0 ? columnMapping.platformFees : currentConfig.fees,
+                                                                shippingFee: columnMapping.shippingFee || currentConfig.shippingFee,
+                                                                priceNet: columnMapping.priceNet || currentConfig.priceNet,
+                                                                statusColumn: columnMapping.statusColumn || currentConfig.statusColumn,
+                                                                acceptedStatusValues: columnMapping.acceptedStatusValues ? columnMapping.acceptedStatusValues.split(',').map(s => s.trim()) : currentConfig.acceptedStatusValues
+                                                            }
+                                                        }
+                                                    });
+                                                    alert(`Mapeamento atualizado e salvo para o canal ${selectedChannel}!`);
+                                                }
+                                            }}
+                                            className="px-3 py-1.5 bg-blue-100 text-blue-700 text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-blue-200 transition-all"
+                                        >
+                                            Salvar Padrão para {selectedChannel}
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
 
-                        <button 
-                            onClick={processFile} 
-                            disabled={files.length === 0 || isProcessing}
-                            className="w-full py-4 bg-blue-600 text-white rounded-xl font-black uppercase text-sm tracking-widest hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-xl shadow-blue-100 transition-all flex justify-center items-center gap-2"
-                        >
-                            {isProcessing ? <Loader2 className="animate-spin"/> : <CheckCircle2 size={18}/>}
+                        <div className="grid grid-cols-2 gap-3 mt-4">
+                            <div>
+                                <label className="text-[10px] font-black text-slate-400 uppercase block mb-1">Status Entrada</label>
+                                <select value={importStatus} onChange={(e) => setImportStatus(e.target.value)} className="w-full p-3 bg-white border border-slate-200 rounded-xl font-bold text-xs">
+                                    <option value="">Padrão</option>
+                                    <option value="NORMAL">NORMAL</option>
+                                    <option value="BIPADO">BIPADO</option>
+                                    <option value="SOLUCIONADO">FINALIZADO</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-2">
+                            <button onClick={() => setImportType('finance_only')} className={`flex items-start p-3 rounded-xl border-2 transition-all ${importType === 'finance_only' ? 'border-blue-500 bg-blue-50' : 'border-slate-100'}`}>
+                                <div className={`p-2 rounded-lg mr-3 ${importType === 'finance_only' ? 'bg-blue-200 text-blue-700' : 'bg-slate-200 text-slate-500'}`}><Database size={18} /></div>
+                                <div><p className="font-bold text-xs uppercase">Atualizar Histórico</p></div>
+                            </button>
+                            <button onClick={() => setImportType('full_import')} className={`flex items-start p-3 rounded-xl border-2 transition-all ${importType === 'full_import' ? 'border-orange-500 bg-orange-50' : 'border-slate-100'}`}>
+                                <div className={`p-2 rounded-lg mr-3 ${importType === 'full_import' ? 'bg-orange-200 text-orange-700' : 'bg-slate-200 text-slate-500'}`}><Layers size={18} /></div>
+                                <div><p className="font-bold text-xs uppercase">Nova Produção</p></div>
+                            </button>
+                        </div>
+
+                        {error && <div className="p-3 bg-red-50 text-red-700 rounded-lg text-xs font-bold border border-red-100 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
+
+                        <button onClick={processFile} disabled={files.length === 0 || isProcessing} className="w-full py-4 bg-blue-600 text-white rounded-xl font-black uppercase text-sm tracking-widest hover:bg-blue-700 disabled:opacity-50 flex justify-center items-center gap-2 shadow-xl">
+                            {isProcessing ? <Loader2 className="animate-spin" /> : <CheckCircle2 size={18} />}
                             {isProcessing ? 'Processando...' : 'Confirmar Importação'}
                         </button>
                     </div>
                 ) : (
                     <div className="text-center py-8">
-                        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
-                            <CheckCircle2 size={40} className="text-green-600"/>
-                        </div>
-                        <h3 className="text-2xl font-black text-slate-800 mb-2">Importação Concluída!</h3>
-                        <p className="text-slate-500 mb-6">Os dados foram sincronizados com sucesso.</p>
-                        
+                        <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6"><CheckCircle2 size={40} className="text-green-600" /></div>
+                        <h3 className="text-2xl font-black text-slate-800 mb-2">Concluído!</h3>
                         <div className="grid grid-cols-2 gap-4 mb-8">
-                            <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
-                                <p className="text-3xl font-black text-blue-600">{resultSummary.updated}</p>
-                                <p className="text-xs font-bold text-blue-400 uppercase">Atualizados (Reconciliados)</p>
-                            </div>
-                            <div className="p-4 bg-green-50 rounded-xl border border-green-100">
-                                <p className="text-3xl font-black text-green-600">{resultSummary.created}</p>
-                                <p className="text-xs font-bold text-green-400 uppercase">Novos Criados</p>
-                            </div>
+                            <div className="p-4 bg-blue-50 rounded-xl"><p className="text-3xl font-black text-blue-600">{resultSummary.updated}</p><p className="text-[10px] font-bold uppercase text-blue-400">Atualizados</p></div>
+                            <div className="p-4 bg-green-50 rounded-xl"><p className="text-3xl font-black text-green-600">{resultSummary.created}</p><p className="text-[10px] font-bold uppercase text-green-400">Novos</p></div>
                         </div>
-
                         <button onClick={handleClose} className="px-8 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-all">Fechar</button>
                     </div>
                 )}

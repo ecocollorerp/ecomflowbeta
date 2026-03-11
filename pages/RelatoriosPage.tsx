@@ -57,8 +57,8 @@ const getPeriodDates = (period: ReportPeriod) => {
 
 // --- Report Table Components ---
 
-const ReportTable: React.FC<{headers: string[], children: React.ReactNode}> = ({ headers, children }) => (
-     <table className="min-w-full bg-white dark:bg-gray-800 text-sm">
+const ReportTable: React.FC<{ headers: string[], children: React.ReactNode }> = ({ headers, children }) => (
+    <table className="min-w-full bg-white dark:bg-gray-800 text-sm">
         <thead className="bg-gray-50 dark:bg-gray-700">
             <tr>
                 {headers.map(h =>
@@ -154,6 +154,18 @@ const MovimentacoesReport: React.FC<{ movements: StockMovement[] }> = ({ movemen
     </ReportTable>
 );
 
+const MaterialGastoReport: React.FC<{ data: { itemCode: string, itemName: string, qtyUsada: number }[] }> = ({ data }) => (
+    <ReportTable headers={['Código Insumo/Material', 'Nome', 'Quantidade Total Gasta']}>
+        {data.length > 0 ? data.map(item => (
+            <tr key={item.itemCode}>
+                <td className="py-2 px-3 font-mono text-gray-500 dark:text-gray-400">{item.itemCode}</td>
+                <td className="py-2 px-3 font-medium text-gray-900 dark:text-gray-50">{item.itemName}</td>
+                <td className="py-2 px-3 font-bold text-center text-red-600 dark:text-red-400">{item.qtyUsada.toFixed(2)}</td>
+            </tr>
+        )) : <NoData />}
+    </ReportTable>
+);
+
 const PedidosReport: React.FC<{ orders: { isGroup: boolean; items: OrderItem[]; bipadoPor?: string }[], generalSettings: GeneralSettings }> = ({ orders, generalSettings }) => {
     const [expandedGroups, setExpandedGroups] = useState(new Set<string>());
     const toggleGroup = (key: string) => {
@@ -171,56 +183,57 @@ const PedidosReport: React.FC<{ orders: { isGroup: boolean; items: OrderItem[]; 
     }
 
     return (
-    <ReportTable headers={headers}>
-        {orders.length > 0 ? orders.map((group, index) => {
-            const first = group.items[0];
-            const isExpanded = expandedGroups.has(first.orderId);
-            if(group.isGroup) {
-                return (<React.Fragment key={`${first.orderId}-${index}`}>
-                    <tr className="bg-gray-50 dark:bg-gray-700">
+        <ReportTable headers={headers}>
+            {orders.length > 0 ? orders.map((group, index) => {
+                const first = group.items[0];
+                const isExpanded = expandedGroups.has(first.orderId);
+                if (group.isGroup) {
+                    return (<React.Fragment key={`${first.orderId}-${index}`}>
+                        <tr className="bg-gray-50 dark:bg-gray-700">
+                            <td className="py-2 px-3">{first.data}</td>
+                            <td className="py-2 px-3">{first.canal}</td>
+                            <td className="py-2 px-3 font-mono">{first.orderId}</td>
+                            {generalSettings.pedidos.displayCustomerIdentifier && <td className="py-2 px-3 font-mono text-xs">{first.customer_cpf_cnpj || '-'}</td>}
+                            <td className="py-2 px-3">
+                                <button onClick={() => toggleGroup(first.orderId)} className="flex items-center text-blue-600">
+                                    {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Múltiplos ({group.items.length})
+                                </button>
+                            </td>
+                            <td className="py-2 px-3 text-center font-bold">{group.items.reduce((sum, i) => sum + i.qty_final, 0)}</td>
+                            <td className="py-2 px-3">Diversas</td>
+                            <td className="py-2 px-3 font-semibold">{first.status}</td>
+                            <td className="py-2 px-3">{group.bipadoPor || '-'}</td>
+                        </tr>
+                        {isExpanded && group.items.map(order => (
+                            <tr key={order.id} className="bg-gray-200 dark:bg-gray-600">
+                                <td colSpan={3 + (generalSettings.pedidos.displayCustomerIdentifier ? 1 : 0)}></td>
+                                <td className="py-1 px-3 pl-8">{order.sku}</td>
+                                <td className="py-1 px-3 text-center font-bold">{order.qty_final}</td>
+                                <td className="py-1 px-3" colSpan={3}>{order.color}</td>
+                            </tr>
+                        ))}
+                    </React.Fragment>);
+                } else {
+                    return (<tr key={first.id}>
                         <td className="py-2 px-3">{first.data}</td>
                         <td className="py-2 px-3">{first.canal}</td>
                         <td className="py-2 px-3 font-mono">{first.orderId}</td>
                         {generalSettings.pedidos.displayCustomerIdentifier && <td className="py-2 px-3 font-mono text-xs">{first.customer_cpf_cnpj || '-'}</td>}
-                        <td className="py-2 px-3">
-                            <button onClick={() => toggleGroup(first.orderId)} className="flex items-center text-blue-600">
-                                {isExpanded ? <ChevronDown size={14}/> : <ChevronRight size={14}/>} Múltiplos ({group.items.length})
-                            </button>
-                        </td>
-                        <td className="py-2 px-3 text-center font-bold">{group.items.reduce((sum, i) => sum + i.qty_final, 0)}</td>
-                        <td className="py-2 px-3">Diversas</td>
+                        <td className="py-2 px-3">{first.sku}</td>
+                        <td className="py-2 px-3 text-center font-bold">{first.qty_final}</td>
+                        <td className="py-2 px-3">{first.color}</td>
                         <td className="py-2 px-3 font-semibold">{first.status}</td>
                         <td className="py-2 px-3">{group.bipadoPor || '-'}</td>
-                    </tr>
-                    {isExpanded && group.items.map(order => (
-                        <tr key={order.id} className="bg-gray-200 dark:bg-gray-600">
-                            <td colSpan={3 + (generalSettings.pedidos.displayCustomerIdentifier ? 1 : 0)}></td>
-                            <td className="py-1 px-3 pl-8">{order.sku}</td>
-                            <td className="py-1 px-3 text-center font-bold">{order.qty_final}</td>
-                            <td className="py-1 px-3" colSpan={3}>{order.color}</td>
-                        </tr>
-                    ))}
-                </React.Fragment>);
-            } else {
-                 return (<tr key={first.id}>
-                    <td className="py-2 px-3">{first.data}</td>
-                    <td className="py-2 px-3">{first.canal}</td>
-                    <td className="py-2 px-3 font-mono">{first.orderId}</td>
-                    {generalSettings.pedidos.displayCustomerIdentifier && <td className="py-2 px-3 font-mono text-xs">{first.customer_cpf_cnpj || '-'}</td>}
-                    <td className="py-2 px-3">{first.sku}</td>
-                    <td className="py-2 px-3 text-center font-bold">{first.qty_final}</td>
-                    <td className="py-2 px-3">{first.color}</td>
-                    <td className="py-2 px-3 font-semibold">{first.status}</td>
-                    <td className="py-2 px-3">{group.bipadoPor || '-'}</td>
-                </tr>)
-            }
-        }) : <NoData />}
-    </ReportTable>
-)};
+                    </tr>)
+                }
+            }) : <NoData />}
+        </ReportTable>
+    )
+};
 
 
 const DevolucoesReport: React.FC<{ returns: ReturnItem[] }> = ({ returns }) => (
-     <ReportTable headers={['Data', 'Rastreio', 'Nome do Cliente', 'Registrado por']}>
+    <ReportTable headers={['Data', 'Rastreio', 'Nome do Cliente', 'Registrado por']}>
         {returns.length > 0 ? returns.map(item => (
             <tr key={item.id}>
                 <td className="py-2 px-3">{item.loggedAt && !isNaN(item.loggedAt.getTime()) ? item.loggedAt.toLocaleString('pt-BR') : 'Data inválida'}</td>
@@ -248,14 +261,14 @@ const BipagemAgregadaReport: React.FC<{ data: { id: string, name: string, total:
 );
 
 const BipagemTimelineReport: React.FC<{ scans: ScanLogItem[] }> = ({ scans }) => (
-     <ReportTable headers={['Horário', 'Operador', 'Dispositivo', 'Item Bipado', 'Status']}>
+    <ReportTable headers={['Horário', 'Operador', 'Dispositivo', 'Item Bipado', 'Status']}>
         {scans.length > 0 ? scans.map(item => (
             <tr key={item.id}>
-                 <td className="py-2 px-3">{item.time && !isNaN(item.time.getTime()) ? item.time.toLocaleString('pt-BR') : 'Data inválida'}</td>
-                 <td className="py-2 px-3">{item.user}</td>
-                 <td className="py-2 px-3">{item.device}</td>
-                 <td className="py-2 px-3 font-mono text-xs">{item.displayKey}</td>
-                 <td className="py-2 px-3"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800`}>{item.status}</span></td>
+                <td className="py-2 px-3">{item.time && !isNaN(item.time.getTime()) ? item.time.toLocaleString('pt-BR') : 'Data inválida'}</td>
+                <td className="py-2 px-3">{item.user}</td>
+                <td className="py-2 px-3">{item.device}</td>
+                <td className="py-2 px-3 font-mono text-xs">{item.displayKey}</td>
+                <td className="py-2 px-3"><span className={`text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800`}>{item.status}</span></td>
             </tr>
         )) : <NoData />}
     </ReportTable>
@@ -341,7 +354,7 @@ const PontoDiarioReport: React.FC<{ data: { user: User, record: AttendanceRecord
                     if (item.record.overtime) observations.push(`Hora Extra (${item.record.overtime})`);
                 }
                 if (item.record.hasDoctorsNote) observations.push('Com Atestado');
-                
+
                 return (
                     <tr key={`${item.user.id}-${item.record.date}`}>
                         <td className="py-2 px-3">{formatDate(item.record.date)}</td>
@@ -408,42 +421,59 @@ interface RelatoriosPageProps {
 }
 
 const reportCategories = [
-    { id: 'estoque', name: 'Estoque', icon: <Package size={18} />, reports: [
-        { id: 'estoque/posicao', name: 'Posição Atual' },
-        { id: 'estoque/movimentos', name: 'Movimentações' },
-        { id: 'estoque/alertas', name: 'Alertas de Estoque' },
-    ]},
-    { id: 'pedidos', name: 'Pedidos', icon: <ShoppingCart size={18} />, reports: [
-        { id: 'pedidos/importados', name: 'Pedidos Importados' },
-        { id: 'pedidos/atrasados', name: 'Pedidos Atrasados' },
-        { id: 'pedidos/com-erro', name: 'Pedidos com Erro' },
-        { id: 'pedidos/devolucoes', name: 'Devoluções' },
-    ]},
-    { id: 'producao', name: 'Produção', icon: <Factory size={18} />, reports: [
-        { id: 'producao/por-cor', name: 'Produção por Cor' },
-        { id: 'producao/por-sku', name: 'Produção por SKU' },
-    ]},
-    { id: 'pesagem', name: 'Pesagem', icon: <Weight size={18} />, reports: [
-        { id: 'pesagem/totais', name: 'Totais de Pesagem' },
-    ]},
-    { id: 'moagem', name: 'Moagem', icon: <Recycle size={18} />, reports: [
-        { id: 'moagem/lotes', name: 'Lotes de Moagem' },
-        { id: 'moagem/producao-operador', name: 'Produção por Operador' },
-    ]},
-    { id: 'bipagem', name: 'Bipagem', icon: <QrCode size={18} />, reports: [
-        { id: 'bipagem/por-operador', name: 'Por Operador' },
-        { id: 'bipagem/por-dispositivo', name: 'Por Dispositivo' },
-        { id: 'bipagem/timeline', name: 'Timeline de Bipagens' },
-    ]},
-    { id: 'funcionarios', name: 'Funcionários', icon: <Users size={18}/>, reports: [
-        { id: 'funcionarios/ponto-diario', name: 'Ponto Diário' },
-        { id: 'funcionarios/faltas', name: 'Faltas e Atestados' },
-        { id: 'funcionarios/pesagem', name: 'Pesagem por Funcionário'},
-    ]},
-    { id: 'erros', name: 'Diagnóstico de Erros', icon: <Bug size={18} />, reports: [
-        { id: 'erros/bom-faltante', name: 'Produtos sem BOM' },
-        { id: 'erros/bip-sem-pedido', name: 'Bipagens sem Pedido' },
-    ]},
+    {
+        id: 'estoque', name: 'Estoque', icon: <Package size={18} />, reports: [
+            { id: 'estoque/posicao', name: 'Posição Atual' },
+            { id: 'estoque/movimentos', name: 'Movimentações' },
+            { id: 'estoque/alertas', name: 'Alertas de Estoque' },
+        ]
+    },
+    {
+        id: 'pedidos', name: 'Pedidos', icon: <ShoppingCart size={18} />, reports: [
+            { id: 'pedidos/importados', name: 'Pedidos Importados' },
+            { id: 'pedidos/atrasados', name: 'Pedidos Atrasados' },
+            { id: 'pedidos/com-erro', name: 'Pedidos com Erro' },
+            { id: 'pedidos/devolucoes', name: 'Devoluções' },
+        ]
+    },
+    {
+        id: 'producao', name: 'Produção', icon: <Factory size={18} />, reports: [
+            { id: 'producao/por-cor', name: 'Produção por Cor' },
+            { id: 'producao/por-sku', name: 'Produção por SKU' },
+            { id: 'producao/material-gasto', name: 'Material Gasto do Período' },
+        ]
+    },
+    {
+        id: 'pesagem', name: 'Pesagem', icon: <Weight size={18} />, reports: [
+            { id: 'pesagem/totais', name: 'Totais de Pesagem' },
+        ]
+    },
+    {
+        id: 'moagem', name: 'Moagem', icon: <Recycle size={18} />, reports: [
+            { id: 'moagem/lotes', name: 'Lotes de Moagem' },
+            { id: 'moagem/producao-operador', name: 'Produção por Operador' },
+        ]
+    },
+    {
+        id: 'bipagem', name: 'Bipagem', icon: <QrCode size={18} />, reports: [
+            { id: 'bipagem/por-operador', name: 'Por Operador' },
+            { id: 'bipagem/por-dispositivo', name: 'Por Dispositivo' },
+            { id: 'bipagem/timeline', name: 'Timeline de Bipagens' },
+        ]
+    },
+    {
+        id: 'funcionarios', name: 'Funcionários', icon: <Users size={18} />, reports: [
+            { id: 'funcionarios/ponto-diario', name: 'Ponto Diário' },
+            { id: 'funcionarios/faltas', name: 'Faltas e Atestados' },
+            { id: 'funcionarios/pesagem', name: 'Pesagem por Funcionário' },
+        ]
+    },
+    {
+        id: 'erros', name: 'Diagnóstico de Erros', icon: <Bug size={18} />, reports: [
+            { id: 'erros/bom-faltante', name: 'Produtos sem BOM' },
+            { id: 'erros/bip-sem-pedido', name: 'Bipagens sem Pedido' },
+        ]
+    },
 ];
 
 const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
@@ -469,7 +499,7 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
     };
 
     const toggleCategory = (category: string) => {
-        setOpenCategories(prev => ({...prev, [category]: !prev[category]}));
+        setOpenCategories(prev => ({ ...prev, [category]: !prev[category] }));
     };
 
     const relevantOperators = useMemo(() => {
@@ -478,7 +508,7 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
         if (reportCategory === 'pesagem' || activeReport === 'funcionarios/pesagem') sector = 'PESAGEM';
         if (reportCategory === 'bipagem') sector = 'EMBALAGEM';
         if (reportCategory === 'moagem') sector = 'MOAGEM';
-        
+
         if (sector) {
             return users.filter(u => Array.isArray(u.setor) && u.setor.includes(sector));
         }
@@ -491,8 +521,8 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
         const dateFilter = (dateInput: string | Date | undefined) => {
             if (!dateInput) return false;
             // Handle date strings like "YYYY-MM-DD" from attendance records
-            const date = typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateInput) 
-                ? new Date(dateInput + 'T12:00:00Z') 
+            const date = typeof dateInput === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateInput)
+                ? new Date(dateInput + 'T12:00:00Z')
                 : new Date(dateInput);
             if (isNaN(date.getTime())) return false;
             return date >= start && date <= end;
@@ -504,7 +534,7 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
         const data: { [key: string]: any } = {};
 
         // --- ESTOQUE ---
-        data['estoque/posicao'] = stockItems.filter(i => 
+        data['estoque/posicao'] = stockItems.filter(i =>
             (filters.stockKindFilter === 'ALL' || i.kind === filters.stockKindFilter) &&
             (i.name.toLowerCase().includes(searchLower) || i.code.toLowerCase().includes(searchLower))
         );
@@ -512,7 +542,7 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
             .filter(m => dateFilter(m.createdAt))
             .filter(m => !filters.insumoCode || m.stockItemCode === filters.insumoCode);
         data['estoque/alertas'] = stockItems.filter(i => i.kind !== 'PRODUTO' && i.current_qty < i.min_qty);
-        
+
         // --- PEDIDOS ---
         const scanMap = new Map<string, string>();
         scanHistory.forEach(s => {
@@ -528,29 +558,29 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
                 (filters.canal === 'ALL' || o.canal === filters.canal) &&
                 (filters.orderStatusFilter === 'ALL' || o.status === filters.orderStatusFilter);
         });
-        
+
         const groupedOrders = new Map<string, OrderItem[]>();
         allPedidos.forEach(order => {
             const key = order.orderId || order.tracking;
-            if(key) {
+            if (key) {
                 if (!groupedOrders.has(key)) groupedOrders.set(key, []);
                 groupedOrders.get(key)!.push(order);
             }
         });
-        
+
         data['pedidos/importados'] = Array.from(groupedOrders.values()).map(items => ({
             isGroup: items.length > 1,
             items,
             bipadoPor: scanMap.get(items[0].orderId) || scanMap.get(items[0].tracking),
         }));
-        
+
         data['pedidos/atrasados'] = data['pedidos/importados'].filter((group: any) => {
-            const today = new Date(); today.setHours(0,0,0,0);
+            const today = new Date(); today.setHours(0, 0, 0, 0);
             const orderDateStr = String(group.items[0].data || '').split('/').reverse().join('-');
             if (!/^\d{4}-\d{2}-\d{2}$/.test(orderDateStr)) return false;
-            const orderDate = new Date(orderDateStr + "T12:00:00Z"); 
+            const orderDate = new Date(orderDateStr + "T12:00:00Z");
             if (isNaN(orderDate.getTime())) return false;
-            orderDate.setHours(0,0,0,0);
+            orderDate.setHours(0, 0, 0, 0);
             return group.items[0].status === 'NORMAL' && orderDate < today;
         });
 
@@ -561,7 +591,7 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
         const scansNoPeriodo = scanHistory.filter(s => dateFilter(s.time) && operatorFilter(s));
         data['bipagem/timeline'] = scansNoPeriodo;
         data['erros/bip-sem-pedido'] = scansNoPeriodo.filter(s => s.status === 'NOT_FOUND');
-        
+
         const operatorStats = new Map<string, { id: string, name: string, total: number, ok: number, duplicate: number, not_found: number }>();
         scansNoPeriodo.forEach(s => {
             if (!operatorStats.has(s.userId)) operatorStats.set(s.userId, { id: s.userId, name: s.user, total: 0, ok: 0, duplicate: 0, not_found: 0 });
@@ -578,13 +608,13 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
         const totaisPesagemMap = new Map<string, { userId: string, userName: string, itemCode: string, itemName: string, total: number, count: number }>();
         weighingBatchesNoPeriodo.forEach(batch => {
             const key = `${batch.userId}-${batch.stockItemCode}`;
-            const stats = totaisPesagemMap.get(key) || { 
-                userId: batch.userId, 
-                userName: batch.createdBy, 
+            const stats = totaisPesagemMap.get(key) || {
+                userId: batch.userId,
+                userName: batch.createdBy,
                 itemCode: batch.stockItemCode,
                 itemName: batch.stockItemName,
-                total: 0, 
-                count: 0 
+                total: 0,
+                count: 0
             };
             stats.total += batch.initialQty;
             stats.count++;
@@ -605,9 +635,26 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
             producaoMoagemPorOperador.set(userId, stats);
         });
         data['moagem/producao-operador'] = Array.from(producaoMoagemPorOperador.values());
-        
+
+        // --- MATERIAL GASTO (PRODUCAO) ---
+        const materialGastoMap = new Map<string, { itemCode: string; itemName: string; qtyUsada: number; }>();
+        stockMovements.forEach(m => {
+            // Filtro por movimentos negativos (saída de material/volátil) dentro do período
+            if (m.qty_delta < 0 && dateFilter(m.createdAt)) {
+                // Filtrar apenas se houver pesquisa ou codigo
+                if (filters.insumoCode && m.stockItemCode !== filters.insumoCode) return;
+                if (searchLower && !m.stockItemName?.toLowerCase().includes(searchLower) && !m.stockItemCode?.toLowerCase().includes(searchLower)) return;
+
+                const key = m.stockItemCode;
+                const stats = materialGastoMap.get(key) || { itemCode: m.stockItemCode, itemName: m.stockItemName, qtyUsada: 0 };
+                stats.qtyUsada += Math.abs(m.qty_delta);
+                materialGastoMap.set(key, stats);
+            }
+        });
+        data['producao/material-gasto'] = Array.from(materialGastoMap.values());
+
         // --- FUNCIONARIOS ---
-        const attendanceInPeriod = users.flatMap(u => u.attendance.filter(a => dateFilter(a.date)).map(record => ({user: u, record})));
+        const attendanceInPeriod = users.flatMap(u => u.attendance.filter(a => dateFilter(a.date)).map(record => ({ user: u, record })));
         data['funcionarios/ponto-diario'] = attendanceInPeriod;
         data['funcionarios/faltas'] = attendanceInPeriod.filter(item => item.record.status === 'ABSENT');
 
@@ -624,7 +671,7 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
 
         return data;
     }, [filters, stockItems, stockMovements, orders, scanHistory, returns, users, weighingBatches, produtosCombinados, grindingBatches]);
-    
+
     const getReportDataForExport = (reportId: string) => {
         const title = getReportTitle(reportId);
         let headers: string[] = [];
@@ -659,6 +706,10 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
                 headers = ['Operador', 'Total Produzido (kg)'];
                 body = (data as { userName: string, totalProduzido: number }[]).map(d => [d.userName, d.totalProduzido]);
                 break;
+            case 'producao/material-gasto':
+                headers = ['Código Insumo/Material', 'Nome', 'Quantidade Total Gasta'];
+                body = (data as { itemCode: string, itemName: string, qtyUsada: number }[]).map(d => [d.itemCode, d.itemName, d.qtyUsada.toFixed(2)]);
+                break;
             case 'pesagem/totais':
                 headers = ['Operador', 'Insumo', 'Total Pesado (kg)', 'Nº de Lotes'];
                 body = (data as { userName: string, itemName: string, total: number, count: number }[]).map(d => [d.userName, d.itemName, d.total.toFixed(3), d.count]);
@@ -681,7 +732,7 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
     const renderReportContent = () => {
         const data = filteredData[activeReport];
         if (!data) return <div className="p-4 bg-gray-50 text-center text-gray-500">Relatório não implementado.</div>;
-        
+
         switch (activeReport) {
             case 'estoque/posicao': return <PosicaoEstoqueReport items={data} />;
             case 'estoque/movimentos': return <MovimentacoesReport movements={data} />;
@@ -693,6 +744,7 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
             case 'bipagem/por-operador': return <BipagemAgregadaReport data={data} title="Operador" />;
             case 'bipagem/timeline': return <BipagemTimelineReport scans={data} />;
             case 'pesagem/totais': return <TotaisPesagemReport data={data} />;
+            case 'producao/material-gasto': return <MaterialGastoReport data={data} />;
             case 'moagem/lotes': return <LotesDeMoagemReport batches={data} />;
             case 'moagem/producao-operador': return <ProducaoMoagemOperadorReport data={data} />;
             case 'funcionarios/ponto-diario': return <PontoDiarioReport data={data} />;
@@ -741,29 +793,29 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
                     <div className="flex justify-between items-center mb-6 flex-wrap gap-4">
                         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-50">{getReportTitle(activeReport)}</h1>
                         <button onClick={handleExport} className="flex items-center gap-2 py-2 px-4 bg-green-600 text-white font-semibold rounded-lg shadow-sm hover:bg-green-700">
-                            <FileDown size={16}/> Exportar para Excel
+                            <FileDown size={16} /> Exportar para Excel
                         </button>
                     </div>
 
                     {/* Filters */}
                     <div className="flex flex-wrap gap-4 items-center mb-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-700">
-                         <div className="flex items-center gap-2">
-                             <label className="text-sm font-semibold text-gray-500 dark:text-gray-400">Período:</label>
-                             <select value={filters.period} onChange={(e) => handleFilterChange('period', e.target.value)} className="p-2 border border-gray-200 dark:border-gray-700 rounded-md text-sm bg-white dark:bg-gray-800">
-                                 <option value="today">Hoje</option>
-                                 <option value="yesterday">Ontem</option>
-                                 <option value="last7days">Últimos 7 dias</option>
-                                 <option value="thisMonth">Este Mês</option>
-                                 <option value="custom">Customizado</option>
-                             </select>
-                         </div>
-                         {filters.period === 'custom' && (
-                             <div className="flex items-center gap-2">
-                                 <input type="date" value={filters.startDate} onChange={(e) => handleFilterChange('startDate', e.target.value)} className="p-2 border border-gray-200 dark:border-gray-700 rounded-md text-sm bg-white dark:bg-gray-800" />
-                                 <span className="text-gray-500 dark:text-gray-400">até</span>
-                                 <input type="date" value={filters.endDate} onChange={(e) => handleFilterChange('endDate', e.target.value)} className="p-2 border border-gray-200 dark:border-gray-700 rounded-md text-sm bg-white dark:bg-gray-800" />
-                             </div>
-                         )}
+                        <div className="flex items-center gap-2">
+                            <label className="text-sm font-semibold text-gray-500 dark:text-gray-400">Período:</label>
+                            <select value={filters.period} onChange={(e) => handleFilterChange('period', e.target.value)} className="p-2 border border-gray-200 dark:border-gray-700 rounded-md text-sm bg-white dark:bg-gray-800">
+                                <option value="today">Hoje</option>
+                                <option value="yesterday">Ontem</option>
+                                <option value="last7days">Últimos 7 dias</option>
+                                <option value="thisMonth">Este Mês</option>
+                                <option value="custom">Customizado</option>
+                            </select>
+                        </div>
+                        {filters.period === 'custom' && (
+                            <div className="flex items-center gap-2">
+                                <input type="date" value={filters.startDate} onChange={(e) => handleFilterChange('startDate', e.target.value)} className="p-2 border border-gray-200 dark:border-gray-700 rounded-md text-sm bg-white dark:bg-gray-800" />
+                                <span className="text-gray-500 dark:text-gray-400">até</span>
+                                <input type="date" value={filters.endDate} onChange={(e) => handleFilterChange('endDate', e.target.value)} className="p-2 border border-gray-200 dark:border-gray-700 rounded-md text-sm bg-white dark:bg-gray-800" />
+                            </div>
+                        )}
                         {relevantOperators && (
                             <div className="flex items-center gap-2">
                                 <label className="text-sm font-semibold text-gray-500 dark:text-gray-400">Operador:</label>
@@ -775,12 +827,12 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
                                 </select>
                             </div>
                         )}
-                         <div className="relative flex-grow">
+                        <div className="relative flex-grow">
                             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" />
-                            <input type="text" placeholder="Buscar..." value={filters.search} onChange={(e) => handleFilterChange('search', e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md"/>
-                         </div>
+                            <input type="text" placeholder="Buscar..." value={filters.search} onChange={(e) => handleFilterChange('search', e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md" />
+                        </div>
                     </div>
-                    
+
                     <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
                         {renderReportContent()}
                     </div>

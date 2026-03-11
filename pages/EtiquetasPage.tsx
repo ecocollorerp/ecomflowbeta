@@ -12,26 +12,26 @@ import { loadPendingZpl, removePendingZplItem, clearPendingZpl, type PendingZplI
 type ProcessingMode = 'completo' | 'rapido';
 
 interface EtiquetasPageProps {
-  settings: ZplSettings;
-  onSettingsSave: (newSettings: ZplSettings) => void;
-  generalSettings: GeneralSettings;
-  uiSettings: UiSettings;
-  onSetUiSettings: (settings: (prev: UiSettings) => UiSettings) => void;
-  stockItems: StockItem[];
-  skuLinks: SkuLink[];
-  onLinkSku: (importedSku: string, masterProductSku: string) => Promise<boolean>;
-  onUnlinkSku: (importedSku: string) => Promise<boolean>;
-  onAddNewItem: (item: Omit<StockItem, 'id'>) => Promise<StockItem | null>;
-  etiquetasState: EtiquetasState;
-  setEtiquetasState: React.Dispatch<React.SetStateAction<EtiquetasState>>;
-  currentUser: User;
-  allOrders: OrderItem[];
-  etiquetasHistory: EtiquetaHistoryItem[];
-  onSaveHistory: (item: Omit<EtiquetaHistoryItem, 'id' | 'created_at'>) => void;
-  onGetHistoryDetails: (id: string) => Promise<EtiquetaHistoryItem | null>;
-  onProcessZpl: (mode: ProcessingMode) => Promise<void>;
-  isProcessing: boolean;
-  progressMessage: string;
+    settings: ZplSettings;
+    onSettingsSave: (newSettings: ZplSettings) => void;
+    generalSettings: GeneralSettings;
+    uiSettings: UiSettings;
+    onSetUiSettings: (settings: (prev: UiSettings) => UiSettings) => void;
+    stockItems: StockItem[];
+    skuLinks: SkuLink[];
+    onLinkSku: (importedSku: string, masterProductSku: string) => Promise<boolean>;
+    onUnlinkSku: (importedSku: string) => Promise<boolean>;
+    onAddNewItem: (item: Omit<StockItem, 'id'>) => Promise<StockItem | null>;
+    etiquetasState: EtiquetasState;
+    setEtiquetasState: React.Dispatch<React.SetStateAction<EtiquetasState>>;
+    currentUser: User;
+    allOrders: OrderItem[];
+    etiquetasHistory: EtiquetaHistoryItem[];
+    onSaveHistory: (item: Omit<EtiquetaHistoryItem, 'id' | 'created_at'>) => void;
+    onGetHistoryDetails: (id: string) => Promise<EtiquetaHistoryItem | null>;
+    onProcessZpl: (mode: ProcessingMode) => Promise<void>;
+    isProcessing: boolean;
+    progressMessage: string;
 }
 
 // ... DraggableFooterEditor e SettingsModal permanecem inalterados, copiados do original ...
@@ -74,13 +74,13 @@ const DraggableFooterEditor: React.FC<{
     };
 
     const handleMouseUp = () => setIsDragging(false);
-    
+
     const containerWidth = 200; // Fixed width for preview
     const containerHeight = (pageHeight_mm / pageWidth_mm) * containerWidth;
     const x_px = (settings.x_position_mm / pageWidth_mm) * containerWidth;
     const y_px = (settings.y_position_mm / pageHeight_mm) * containerHeight;
     const imageAreaHeight_px = containerHeight * (imageAreaPercentage / 100);
-    
+
     const placeholderText = settings.template
         .replace('{sku}', 'SKU-EXEMPLO')
         .replace('{name}', 'PRODUTO EXEMPLO')
@@ -97,19 +97,19 @@ const DraggableFooterEditor: React.FC<{
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseUp}
             >
-                 {previewImageUrl ? (
-                    <img 
-                        src={previewImageUrl} 
+                {previewImageUrl ? (
+                    <img
+                        src={previewImageUrl}
                         alt="Preview da etiqueta"
                         className="absolute top-0 left-1/2 -translate-x-1/2 object-contain object-top pointer-events-none"
                         style={{ height: `${imageAreaHeight_px}px`, width: '100%' }}
                     />
                 ) : (
-                    <div className="absolute top-0 left-0 w-full bg-white flex items-center justify-center text-gray-400 text-xs" style={{height: `${imageAreaHeight_px}px`}}>
+                    <div className="absolute top-0 left-0 w-full bg-white flex items-center justify-center text-gray-400 text-xs" style={{ height: `${imageAreaHeight_px}px` }}>
                         Área da Imagem
                     </div>
                 )}
-                <div 
+                <div
                     className="absolute p-1 bg-blue-500 bg-opacity-70 text-white text-xs rounded-sm pointer-events-none whitespace-nowrap"
                     style={{ left: `${x_px}px`, top: `${y_px}px` }}
                 >
@@ -136,10 +136,10 @@ const SettingsModal: React.FC<{
     React.useEffect(() => {
         if (isOpen) setSettings(currentSettings);
     }, [isOpen, currentSettings]);
-    
+
     const previewImageUrl = useMemo(() => {
         if (previews.length === 0 || extractedData.size === 0) return undefined;
-        
+
         const targetIsMercadoLivre = activeTab === 'mercadoLivre';
 
         for (let i = 0; i < previews.length; i += 2) {
@@ -162,19 +162,19 @@ const SettingsModal: React.FC<{
     if (!isOpen) return null;
 
     const handlePlatformChange = (platform: 'shopee' | 'mercadoLivre', key: keyof ZplPlatformSettings, value: any) => {
-        setSettings(prev => ({ ...prev, [platform]: { ...prev[platform], [key]: value }}));
+        setSettings(prev => ({ ...prev, [platform]: { ...prev[platform], [key]: value } }));
     };
-    
+
     const handlePlatformFooterChange = (platform: 'shopee' | 'mercadoLivre', key: keyof ZplPlatformSettings['footer'], value: any) => {
-        setSettings(prev => ({...prev, [platform]: { ...prev[platform], footer: { ...prev[platform].footer, [key]: value }}}));
+        setSettings(prev => ({ ...prev, [platform]: { ...prev[platform], footer: { ...prev[platform].footer, [key]: value } } }));
     };
-    
+
     const handlePresetChange = (platform: 'shopee' | 'mercadoLivre', preset: 'below' | 'above' | 'custom') => {
         handlePlatformFooterChange(platform, 'positionPreset', preset);
     };
-    
+
     const handleRegexChange = (key: keyof ZplSettings['regex'], value: any) => {
-         setSettings(prev => ({...prev, regex: { ...prev.regex, [key]: value } }));
+        setSettings(prev => ({ ...prev, regex: { ...prev.regex, [key]: value } }));
     };
 
     const renderPlatformSettings = (platform: 'shopee' | 'mercadoLivre') => (
@@ -182,7 +182,7 @@ const SettingsModal: React.FC<{
             <div>
                 <h3 className="text-lg font-semibold mb-3">Layout da Etiqueta</h3>
                 <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-700">
-                    <div><label className="text-sm font-medium">Área da Imagem da Etiqueta (%)</label><input type="number" value={settings[platform].imageAreaPercentage_even} onChange={e => handlePlatformChange(platform, 'imageAreaPercentage_even', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"/></div>
+                    <div><label className="text-sm font-medium">Área da Imagem da Etiqueta (%)</label><input type="number" value={settings[platform].imageAreaPercentage_even} onChange={e => handlePlatformChange(platform, 'imageAreaPercentage_even', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" /></div>
                 </div>
             </div>
             <div>
@@ -190,7 +190,7 @@ const SettingsModal: React.FC<{
                 <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-700">
                     <div>
                         <label className="text-sm font-medium">Posição Padrão</label>
-                        <select 
+                        <select
                             value={settings[platform].footer.positionPreset}
                             onChange={e => handlePresetChange(platform, e.target.value as any)}
                             className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"
@@ -203,7 +203,7 @@ const SettingsModal: React.FC<{
 
                     {settings[platform].footer.positionPreset === 'custom' ? (
                         <>
-                            <DraggableFooterEditor 
+                            <DraggableFooterEditor
                                 settings={settings[platform].footer}
                                 pageWidth_mm={settings.pageWidth}
                                 pageHeight_mm={settings.pageHeight}
@@ -214,25 +214,25 @@ const SettingsModal: React.FC<{
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-sm font-medium">Posição X (mm)</label>
-                                    <input type="number" value={settings[platform].footer.x_position_mm.toFixed(0)} onChange={e => handlePlatformFooterChange(platform, 'x_position_mm', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"/>
+                                    <input type="number" value={settings[platform].footer.x_position_mm.toFixed(0)} onChange={e => handlePlatformFooterChange(platform, 'x_position_mm', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" />
                                 </div>
-                                 <div>
+                                <div>
                                     <label className="text-sm font-medium">Posição Y (mm)</label>
-                                    <input type="number" value={settings[platform].footer.y_position_mm.toFixed(0)} onChange={e => handlePlatformFooterChange(platform, 'y_position_mm', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"/>
+                                    <input type="number" value={settings[platform].footer.y_position_mm.toFixed(0)} onChange={e => handlePlatformFooterChange(platform, 'y_position_mm', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" />
                                 </div>
                             </div>
                         </>
                     ) : (
-                         <div>
+                        <div>
                             <label className="text-sm font-medium">Espaçamento (mm)</label>
-                            <input type="number" value={settings[platform].footer.spacing_mm} onChange={e => handlePlatformFooterChange(platform, 'spacing_mm', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"/>
-                             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Distância entre a imagem da etiqueta e o texto do rodapé.</p>
+                            <input type="number" value={settings[platform].footer.spacing_mm} onChange={e => handlePlatformFooterChange(platform, 'spacing_mm', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" />
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Distância entre a imagem da etiqueta e o texto do rodapé.</p>
                         </div>
                     )}
-                    
+
                     <div className="grid grid-cols-2 gap-4">
-                        <div><label className="text-sm font-medium">Tam. Fonte (pt)</label><input type="number" value={settings[platform].footer.fontSize_pt} onChange={e => handlePlatformFooterChange(platform, 'fontSize_pt', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"/></div>
-                        <div><label className="text-sm font-medium">Espaçamento (pt)</label><input type="number" value={settings[platform].footer.lineSpacing_pt} onChange={e => handlePlatformFooterChange(platform, 'lineSpacing_pt', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"/></div>
+                        <div><label className="text-sm font-medium">Tam. Fonte (pt)</label><input type="number" value={settings[platform].footer.fontSize_pt} onChange={e => handlePlatformFooterChange(platform, 'fontSize_pt', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" /></div>
+                        <div><label className="text-sm font-medium">Espaçamento (pt)</label><input type="number" value={settings[platform].footer.lineSpacing_pt} onChange={e => handlePlatformFooterChange(platform, 'lineSpacing_pt', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" /></div>
                     </div>
                     <div><label className="text-sm font-medium">Fonte</label><select value={settings[platform].footer.fontFamily} onChange={e => handlePlatformFooterChange(platform, 'fontFamily', e.target.value as any)} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"><option value="helvetica">Helvetica</option><option value="times">Times</option><option value="courier">Courier</option></select></div>
                     <div>
@@ -243,8 +243,8 @@ const SettingsModal: React.FC<{
                             <button onClick={() => handlePlatformFooterChange(platform, 'textAlign', 'right')} className={`px-3 py-1 text-sm rounded-md border ${settings[platform].footer.textAlign === 'right' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Direita</button>
                         </div>
                     </div>
-                     <div><label className="flex items-center"><input type="checkbox" checked={settings[platform].footer.multiColumn} onChange={e => handlePlatformFooterChange(platform, 'multiColumn', e.target.checked)} className="h-4 w-4 rounded"/><span className="ml-2 text-sm">Dividir SKUs em colunas se necessário</span></label></div>
-                    <div><label className="text-sm font-medium">Template</label><input type="text" value={settings[platform].footer.template} onChange={e => handlePlatformFooterChange(platform, 'template', e.target.value)} className="mt-1 w-full p-2 border rounded-md font-mono text-sm bg-white dark:bg-gray-800"/><p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Variáveis: {'{sku}'}, {'{name}'}, {'{qty}'}.</p></div>
+                    <div><label className="flex items-center"><input type="checkbox" checked={settings[platform].footer.multiColumn} onChange={e => handlePlatformFooterChange(platform, 'multiColumn', e.target.checked)} className="h-4 w-4 rounded" /><span className="ml-2 text-sm">Dividir SKUs em colunas se necessário</span></label></div>
+                    <div><label className="text-sm font-medium">Template</label><input type="text" value={settings[platform].footer.template} onChange={e => handlePlatformFooterChange(platform, 'template', e.target.value)} className="mt-1 w-full p-2 border rounded-md font-mono text-sm bg-white dark:bg-gray-800" /><p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Variáveis: {'{sku}'}, {'{name}'}, {'{qty}'}.</p></div>
                 </div>
             </div>
         </div>
@@ -254,7 +254,7 @@ const SettingsModal: React.FC<{
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
             <div className="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-50 rounded-lg shadow-2xl p-6 w-full max-w-3xl flex flex-col max-h-[90vh]">
                 <div className="flex justify-between items-center mb-6"><h2 className="text-2xl font-bold">Configurações de Etiquetas</h2><button onClick={onClose}><X size={24} /></button></div>
-                
+
                 <div className="border-b border-gray-200 dark:border-gray-700">
                     <div className="flex -mb-px">
                         <button onClick={() => setActiveTab('general')} className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 ${activeTab === 'general' ? 'border-blue-500 text-blue-600' : 'border-transparent'}`}>Geral</button>
@@ -273,23 +273,23 @@ const SettingsModal: React.FC<{
                                         <div>
                                             <label className="text-sm font-medium">Layout do Par (DANFE + Etiqueta)</label>
                                             <div className="flex gap-2 mt-1">
-                                                <button onClick={() => setSettings(p => ({...p, pairLayout: 'vertical'}))} className={`px-3 py-1 text-sm rounded-md border ${settings.pairLayout === 'vertical' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Vertical</button>
-                                                <button onClick={() => setSettings(p => ({...p, pairLayout: 'horizontal'}))} className={`px-3 py-1 text-sm rounded-md border ${settings.pairLayout === 'horizontal' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Horizontal</button>
+                                                <button onClick={() => setSettings(p => ({ ...p, pairLayout: 'vertical' }))} className={`px-3 py-1 text-sm rounded-md border ${settings.pairLayout === 'vertical' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Vertical</button>
+                                                <button onClick={() => setSettings(p => ({ ...p, pairLayout: 'horizontal' }))} className={`px-3 py-1 text-sm rounded-md border ${settings.pairLayout === 'horizontal' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Horizontal</button>
                                             </div>
                                         </div>
                                         <div className="grid grid-cols-2 gap-4">
-                                            <div><label className="text-sm font-medium">Largura (mm)</label><input type="number" value={settings.pageWidth} onChange={e => setSettings(p => ({...p, pageWidth: Number(e.target.value)}))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"/></div>
-                                            <div><label className="text-sm font-medium">Altura (mm)</label><input type="number" value={settings.pageHeight} onChange={e => setSettings(p => ({...p, pageHeight: Number(e.target.value)}))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"/></div>
+                                            <div><label className="text-sm font-medium">Largura (mm)</label><input type="number" value={settings.pageWidth} onChange={e => setSettings(p => ({ ...p, pageWidth: Number(e.target.value) }))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" /></div>
+                                            <div><label className="text-sm font-medium">Altura (mm)</label><input type="number" value={settings.pageHeight} onChange={e => setSettings(p => ({ ...p, pageHeight: Number(e.target.value) }))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" /></div>
                                         </div>
                                     </div>
                                 </div>
                                 <div>
                                     <h3 className="text-lg font-semibold mb-3">Renderização e Processamento</h3>
                                     <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-700">
-                                        <div><label className="text-sm font-medium">Qualidade (DPI)</label><select value={settings.dpi} onChange={e => setSettings(p => ({...p, dpi: e.target.value as ZplSettings['dpi']}))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"><option value="Auto">Auto</option><option value="203">203 DPI</option><option value="300">300 DPI</option></select></div>
-                                        <div><label className="text-sm font-medium">Escala da DANFE (%)</label><input type="number" value={settings.sourcePageScale_percent} onChange={e => setSettings(p => ({...p, sourcePageScale_percent: Number(e.target.value)}))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"/></div>
-                                        <div><label className="text-sm font-medium">Modo de Pareamento</label><select value={settings.pairingMode} onChange={e => setSettings(p => ({...p, pairingMode: e.target.value as ZplSettings['pairingMode']}))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"><option value="Odd/Even Sequential">Ímpar/Par Sequencial</option></select></div>
-                                        <div><label className="flex items-center"><input type="checkbox" checked={settings.combineMultiPageDanfe} onChange={e => setSettings(p => ({...p, combineMultiPageDanfe: e.target.checked}))} className="h-4 w-4 rounded"/><span className="ml-2 text-sm">Combinar DANFEs de múltiplas páginas</span></label></div>
+                                        <div><label className="text-sm font-medium">Qualidade (DPI)</label><select value={settings.dpi} onChange={e => setSettings(p => ({ ...p, dpi: e.target.value as ZplSettings['dpi'] }))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"><option value="Auto">Auto</option><option value="203">203 DPI</option><option value="300">300 DPI</option></select></div>
+                                        <div><label className="text-sm font-medium">Escala da DANFE (%)</label><input type="number" value={settings.sourcePageScale_percent} onChange={e => setSettings(p => ({ ...p, sourcePageScale_percent: Number(e.target.value) }))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" /></div>
+                                        <div><label className="text-sm font-medium">Modo de Pareamento</label><select value={settings.pairingMode} onChange={e => setSettings(p => ({ ...p, pairingMode: e.target.value as ZplSettings['pairingMode'] }))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"><option value="Odd/Even Sequential">Ímpar/Par Sequencial</option></select></div>
+                                        <div><label className="flex items-center"><input type="checkbox" checked={settings.combineMultiPageDanfe} onChange={e => setSettings(p => ({ ...p, combineMultiPageDanfe: e.target.checked }))} className="h-4 w-4 rounded" /><span className="ml-2 text-sm">Combinar DANFEs de múltiplas páginas</span></label></div>
                                     </div>
                                 </div>
                             </div>
@@ -297,9 +297,9 @@ const SettingsModal: React.FC<{
                                 <div>
                                     <h3 className="text-lg font-semibold mb-3">Padrões de Extração (RegEx)</h3>
                                     <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-700">
-                                        <div><label className="text-sm font-medium">ID do Pedido</label><input type="text" value={settings.regex.orderId} onChange={e => handleRegexChange('orderId', e.target.value)} className="mt-1 w-full p-2 border rounded-md font-mono text-sm bg-white dark:bg-gray-800"/></div>
-                                        <div><label className="text-sm font-medium">SKU</label><input type="text" value={settings.regex.sku} onChange={e => handleRegexChange('sku', e.target.value)} className="mt-1 w-full p-2 border rounded-md font-mono text-sm bg-white dark:bg-gray-800"/></div>
-                                        <div><label className="text-sm font-medium">Quantidade</label><input type="text" value={settings.regex.quantity} onChange={e => handleRegexChange('quantity', e.target.value)} className="mt-1 w-full p-2 border rounded-md font-mono text-sm bg-white dark:bg-gray-800"/></div>
+                                        <div><label className="text-sm font-medium">ID do Pedido</label><input type="text" value={settings.regex.orderId} onChange={e => handleRegexChange('orderId', e.target.value)} className="mt-1 w-full p-2 border rounded-md font-mono text-sm bg-white dark:bg-gray-800" /></div>
+                                        <div><label className="text-sm font-medium">SKU</label><input type="text" value={settings.regex.sku} onChange={e => handleRegexChange('sku', e.target.value)} className="mt-1 w-full p-2 border rounded-md font-mono text-sm bg-white dark:bg-gray-800" /></div>
+                                        <div><label className="text-sm font-medium">Quantidade</label><input type="text" value={settings.regex.quantity} onChange={e => handleRegexChange('quantity', e.target.value)} className="mt-1 w-full p-2 border rounded-md font-mono text-sm bg-white dark:bg-gray-800" /></div>
                                     </div>
                                 </div>
                             </div>
@@ -308,7 +308,7 @@ const SettingsModal: React.FC<{
                     {activeTab === 'shopee' && renderPlatformSettings('shopee')}
                     {activeTab === 'mercadoLivre' && renderPlatformSettings('mercadoLivre')}
                 </div>
-                <div className="mt-6 flex justify-end gap-3 border-t pt-4"><button onClick={onClose} className="px-4 py-2 rounded-md bg-gray-50 dark:bg-gray-700">Cancelar</button><button onClick={() => {onSave(settings); onClose();}} className="px-4 py-2 rounded-md bg-blue-600 dark:bg-blue-500 text-white font-semibold">Salvar</button></div>
+                <div className="mt-6 flex justify-end gap-3 border-t pt-4"><button onClick={onClose} className="px-4 py-2 rounded-md bg-gray-50 dark:bg-gray-700">Cancelar</button><button onClick={() => { onSave(settings); onClose(); }} className="px-4 py-2 rounded-md bg-blue-600 dark:bg-blue-500 text-white font-semibold">Salvar</button></div>
             </div>
         </div>
     );
@@ -365,10 +365,10 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
     const { zplInput, includeDanfe, zplPages, previews, extractedData, printedIndices, warnings } = etiquetasState;
 
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-    const [linkModalState, setLinkModalState] = useState<{isOpen: boolean, skus: string[], color: string}>({isOpen: false, skus: [], color: ''});
-    const [createModalState, setCreateModalState] = useState<{isOpen: boolean, data: { sku: string; colorSugerida: string } | null}>({isOpen: false, data: null});
+    const [linkModalState, setLinkModalState] = useState<{ isOpen: boolean, skus: string[], color: string }>({ isOpen: false, skus: [], color: '' });
+    const [createModalState, setCreateModalState] = useState<{ isOpen: boolean, data: { sku: string; colorSugerida: string } | null }>({ isOpen: false, data: null });
     const [isModeModalOpen, setIsModeModalOpen] = useState(false);
-    
+
     // We handle the loading display via props now, but keep this for PDF generation blocking
     const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
@@ -407,7 +407,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
     };
 
     const handleCopyZpl = (item: PendingZplItem) => {
-        navigator.clipboard.writeText(item.zplContent).catch(() => {});
+        navigator.clipboard.writeText(item.zplContent).catch(() => { });
     };
 
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -423,14 +423,14 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
     }, [extractedData, skuLinkMap, stockItemMap]);
 
     // Função helper para agrupar SKUs por produto principal
-    const groupSkusByMasterProduct = useCallback((skus: Array<{sku: string, qty: number}>) => {
-        const grouped = new Map<string, { product: StockItem | null, totalQty: number, originalSkus: Array<{sku: string, qty: number}> }>();
-        
+    const groupSkusByMasterProduct = useCallback((skus: Array<{ sku: string, qty: number }>) => {
+        const grouped = new Map<string, { product: StockItem | null, totalQty: number, originalSkus: Array<{ sku: string, qty: number }> }>();
+
         skus.forEach(s => {
             const masterSku = skuLinkMap.get(s.sku.toUpperCase());
             const productKey = masterSku || s.sku.toUpperCase();
             const product = stockItemMap.get(productKey);
-            
+
             if (grouped.has(productKey)) {
                 const existing = grouped.get(productKey)!;
                 existing.totalQty += s.qty;
@@ -443,7 +443,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                 });
             }
         });
-        
+
         return Array.from(grouped.values());
     }, [skuLinkMap, stockItemMap]);
 
@@ -500,7 +500,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
 
             const pdfBlob = await buildPdf(previews, extractedData, settings, includeDanfe, stockItems, skuLinks);
             const url = URL.createObjectURL(pdfBlob);
-            
+
             window.open(url, '_blank');
 
             // Se há pendentes, perguntar se já imprimiu
@@ -512,19 +512,19 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
             const indicesToMark = new Set<number>(printedIndices);
             previews.forEach((p, index) => {
                 if (p && p !== 'SKIPPED' && p !== 'ERROR') {
-                     if (includeDanfe) {
+                    if (includeDanfe) {
                         indicesToMark.add(index);
-                    } else if (index % 2 !== 0) { 
+                    } else if (index % 2 !== 0) {
                         indicesToMark.add(index);
                     }
                 }
             });
             setEtiquetasState(prev => ({ ...prev, printedIndices: indicesToMark }));
 
-        } catch (error) { 
-            alert(`Falha ao gerar PDF: ${error instanceof Error ? error.message : 'Erro desconhecido'}`); 
-        } finally { 
-            setIsGeneratingPdf(false); 
+        } catch (error) {
+            alert(`Falha ao gerar PDF: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+        } finally {
+            setIsGeneratingPdf(false);
         }
     }, [previews, extractedData, settings, includeDanfe, stockItems, skuLinks, onSaveHistory, currentUser, zplInput, zplPages, printedIndices, setEtiquetasState, pendingItems, setShowPrintedConfirm]);
 
@@ -547,7 +547,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
         console.log(`🔗 [EtiquetasPage] Iniciando vínc ulo de ${linkModalState.skus.length} SKU(s) com produto mestre: ${masterSku}`);
         let sucessos = 0;
         let erros = 0;
-        
+
         for (const importedSku of linkModalState.skus) {
             try {
                 const resultado = await onLinkSku(importedSku, masterSku);
@@ -563,7 +563,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                 console.error(`❌ [EtiquetasPage] Erro ao vincular ${importedSku}:`, err);
             }
         }
-        
+
         console.log(`📊 [EtiquetasPage] Resultado: ${sucessos} vínc ulo(s) bem-sucedido(s), ${erros} erro(s)`);
         setLinkModalState({ isOpen: false, skus: [], color: '' });
     };
@@ -571,15 +571,15 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
     const handleConfirmCreateAndLink = async (newItemData: Omit<StockItem, 'id'>) => {
         console.log('🆕 [EtiquetasPage] Criando novo produto e vinculando SKU...');
         const newItem = await onAddNewItem(newItemData);
-        
+
         if (!newItem) {
             console.error('❌ [EtiquetasPage] Falha ao criar novo produto');
             setCreateModalState({ isOpen: false, data: null });
             return;
         }
-        
+
         console.log(`✅ [EtiquetasPage] Produto criado: ${newItem.code} - ${newItem.name}`);
-        
+
         if (createModalState.data) {
             const resultadoVinculo = await onLinkSku(createModalState.data.sku, newItem.code);
             if (resultadoVinculo) {
@@ -588,7 +588,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                 console.error(`❌ [EtiquetasPage] Falha ao vincular SKU ${createModalState.data.sku}`);
             }
         }
-        
+
         setCreateModalState({ isOpen: false, data: null });
     };
 
@@ -634,7 +634,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                         className="w-full flex items-center justify-between px-4 py-3 hover:bg-orange-100 transition-colors cursor-pointer"
                     >
                         <div className="flex items-center gap-2">
-                            <Clock size={16} className="text-orange-600"/>
+                            <Clock size={16} className="text-orange-600" />
                             <span className="text-sm font-black text-orange-700 uppercase tracking-tight">
                                 Fila de Impressão ZPL
                             </span>
@@ -652,7 +652,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                             >
                                 Limpar tudo
                             </button>
-                            {pendingPanelOpen ? <ChevronDown size={16} className="text-orange-500"/> : <ChevronRight size={16} className="text-orange-500"/>}
+                            {pendingPanelOpen ? <ChevronDown size={16} className="text-orange-500" /> : <ChevronRight size={16} className="text-orange-500" />}
                         </div>
                     </div>
                     {pendingPanelOpen && (
@@ -660,7 +660,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                             {/* busca */}
                             <div className="border-t border-orange-200 px-4 py-2 bg-orange-50/80">
                                 <div className="relative">
-                                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-orange-400"/>
+                                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-orange-400" />
                                     <input
                                         type="text"
                                         value={pendSearch}
@@ -698,21 +698,21 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                                                     className="flex items-center gap-1 text-[9px] font-black uppercase px-2 py-1.5 rounded-lg bg-slate-50 text-slate-600 hover:bg-slate-100 border border-slate-200 transition-all"
                                                     title="Copiar ZPL para área de transferência"
                                                 >
-                                                    <Copy size={10}/> Copiar
+                                                    <Copy size={10} /> Copiar
                                                 </button>
                                                 <button
                                                     onClick={() => handleReopenZpl(item)}
                                                     className="flex items-center gap-1 text-[9px] font-black uppercase px-2 py-1.5 rounded-lg bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-all"
                                                     title="Abrir ZPL em nova aba"
                                                 >
-                                                    <ExternalLink size={10}/> Reabrir
+                                                    <ExternalLink size={10} /> Reabrir
                                                 </button>
                                                 <button
                                                     onClick={() => handleConfirmPrinted(item.id)}
                                                     className="flex items-center gap-1 text-[9px] font-black uppercase px-2 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 transition-all"
                                                     title="Confirmar que já foi impresso"
                                                 >
-                                                    <CheckCircle2 size={10}/> Confirmar
+                                                    <CheckCircle2 size={10} /> Confirmar
                                                 </button>
                                             </div>
                                         </div>
@@ -723,91 +723,91 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                     )}
                 </div>
             )}
-            
+
             <div className="flex flex-col md:flex-row gap-6 h-full">
-                
+
                 <div className="flex-1 flex flex-col gap-6">
                     <div className="flex flex-col bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm flex-1 min-h-0">
                         <div className="flex-shrink-0 flex justify-between items-center p-3 gap-2 border-b border-gray-200 dark:border-gray-700">
                             <div className="flex items-center gap-2">
-                                <input type="file" ref={fileInputRef} onChange={(e) => { const file = e.target.files?.[0]; if (file) file.text().then(text => setEtiquetasState(p => ({...p, zplInput: text}))); e.target.value = ''; }} accept=".txt,.zpl" className="hidden" />
+                                <input type="file" ref={fileInputRef} onChange={(e) => { const file = e.target.files?.[0]; if (file) file.text().then(text => setEtiquetasState(p => ({ ...p, zplInput: text }))); e.target.value = ''; }} accept=".txt,.zpl" className="hidden" />
                                 <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-md bg-gray-50 dark:bg-gray-700 hover:bg-gray-200 dark:bg-gray-600"><FileText size={16} /> Importar</button>
                                 <button onClick={handleClear} className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-md bg-gray-50 dark:bg-gray-700 hover:bg-gray-200 dark:bg-gray-600"><Trash2 size={16} /> Limpar</button>
                             </div>
                             <div className="flex items-center gap-2">
                                 <button onClick={() => setIsSettingsModalOpen(true)} className="p-2 rounded-full hover:bg-gray-50 dark:bg-gray-700"><Settings size={20} /></button>
-                                <button onClick={handleProcessRequest} disabled={!zplInput.trim() || isProcessing} className="flex items-center gap-2 text-sm px-4 py-1.5 rounded-md bg-blue-600 dark:bg-blue-500 text-white font-semibold disabled:opacity-50"><Zap size={16}/> Processar</button>
+                                <button onClick={handleProcessRequest} disabled={!zplInput.trim() || isProcessing} className="flex items-center gap-2 text-sm px-4 py-1.5 rounded-md bg-blue-600 dark:bg-blue-500 text-white font-semibold disabled:opacity-50"><Zap size={16} /> Processar</button>
                             </div>
                         </div>
-                        <textarea value={zplInput} onChange={(e) => setEtiquetasState(p => ({ ...p, zplInput: e.target.value }))} placeholder="Cole seu código ZPL aqui ou clique em 'Importar'..." className="h-full w-full p-4 font-mono text-sm resize-none focus:outline-none bg-white dark:bg-gray-800"/>
+                        <textarea value={zplInput} onChange={(e) => setEtiquetasState(p => ({ ...p, zplInput: e.target.value }))} placeholder="Cole seu código ZPL aqui ou clique em 'Importar'..." className="h-full w-full p-4 font-mono text-sm resize-none focus:outline-none bg-white dark:bg-gray-800" />
                     </div>
-                     {(previews.length > 0) && (
+                    {(previews.length > 0) && (
                         <div className="flex-1 flex flex-col gap-4 overflow-hidden">
-                            {warnings.length > 0 && <div className="flex-shrink-0 p-3 border-l-4 border-orange-500 bg-orange-50 rounded-r-lg shadow-sm"><h3 className="font-bold text-orange-800 flex items-center gap-2"><AlertTriangle size={18}/> {warnings.join(' ')}</h3></div>}
-                            {unlinkedSkusData.length > 0 && <div className="flex-shrink-0 p-3 border-l-4 border-yellow-500 bg-yellow-50 rounded-r-lg shadow-sm"><h3 className="font-bold text-yellow-800 flex items-center gap-2"><AlertTriangle size={18}/> Vínculo de SKUs Pendentes ({unlinkedSkusData.length})</h3><div className="space-y-2 mt-2 max-h-32 overflow-y-auto pr-2">{unlinkedSkusData.map(({ sku }) => (<div key={sku} className="flex items-center justify-between bg-white p-2 rounded border border-yellow-200 text-sm"><span className="font-mono text-xs">{sku}</span><div className="flex gap-3"><button onClick={() => setLinkModalState({isOpen: true, skus: [sku], color: 'Padrão'})} className="font-semibold text-blue-600 hover:underline flex items-center gap-1"><LinkIcon size={14}/> Vincular</button><button onClick={() => setCreateModalState({isOpen: true, data: { sku, colorSugerida: 'Padrão' }})} className="font-semibold text-green-600 hover:underline flex items-center gap-1"><PlusCircle size={14}/> Criar</button></div></div>))}</div></div>}
+                            {warnings.length > 0 && <div className="flex-shrink-0 p-3 border-l-4 border-orange-500 bg-orange-50 rounded-r-lg shadow-sm"><h3 className="font-bold text-orange-800 flex items-center gap-2"><AlertTriangle size={18} /> {warnings.join(' ')}</h3></div>}
+                            {unlinkedSkusData.length > 0 && <div className="flex-shrink-0 p-3 border-l-4 border-yellow-500 bg-yellow-50 rounded-r-lg shadow-sm"><h3 className="font-bold text-yellow-800 flex items-center gap-2"><AlertTriangle size={18} /> Vínculo de SKUs Pendentes ({unlinkedSkusData.length})</h3><div className="space-y-2 mt-2 max-h-32 overflow-y-auto pr-2">{unlinkedSkusData.map(({ sku }) => (<div key={sku} className="flex items-center justify-between bg-white p-2 rounded border border-yellow-200 text-sm"><span className="font-mono text-xs">{sku}</span><div className="flex gap-3"><button onClick={() => setLinkModalState({ isOpen: true, skus: [sku], color: 'Padrão' })} className="font-semibold text-blue-600 hover:underline flex items-center gap-1"><LinkIcon size={14} /> Vincular</button><button onClick={() => setCreateModalState({ isOpen: true, data: { sku, colorSugerida: 'Padrão' } })} className="font-semibold text-green-600 hover:underline flex items-center gap-1"><PlusCircle size={14} /> Criar</button></div></div>))}</div></div>}
 
                             <div className="flex-1 flex flex-col bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 overflow-hidden">
-                                <div className="flex-shrink-0 flex justify-between items-center mb-4"><h2 className="text-lg font-semibold">Pré-visualização ({previews.filter(p => p && p !== 'SKIPPED').length}/{zplPages.length})</h2><div className="flex items-center gap-4"><label className="flex items-center text-sm"><input type="checkbox" checked={includeDanfe} onChange={(e) => setEtiquetasState(p => ({ ...p, includeDanfe: e.target.checked }))} className="h-4 w-4 rounded"/> <span className="ml-2">Incluir DANFE</span></label><button onClick={handlePdfAction} disabled={previews.length === 0 || previews.every(p => !p) || isProcessing} className="flex items-center gap-2 text-sm px-4 py-2 rounded-md bg-blue-600 dark:bg-blue-500 text-white font-semibold disabled:opacity-50"><Printer size={16} /> Gerar PDF</button></div></div>
-                                <div className="flex-1 overflow-y-auto pr-2"><div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">{previews.map((src, index) => {
-                                            if (!includeDanfe && index % 2 === 0) return null;
-                                            const isEvenPage = index % 2 !== 0;
-                                            const pairData = extractedData.get(Math.floor(index / 2) * 2);
-                                            const platformSettings = pairData?.isMercadoLivre ? settings.mercadoLivre : settings.shopee;
-                                            
-                                            // Prepara as linhas de pré-visualização para o rodapé usando agrupamento por mestre
-                                            const previewLines: string[] = [];
-                                            if (pairData && pairData.skus.length > 0) {
-                                                const grouped = groupSkusByMasterProduct(pairData.skus);
-                                                grouped.forEach(({ product, totalQty }) => {
-                                                    const finalSku = product ? product.code : 'SKU-UNKNOWN';
-                                                    const finalName = product ? product.name : 'Produto não encontrado';
-                                                    const line = platformSettings.footer.template
-                                                        .replace('{sku}', finalSku)
-                                                        .replace('{name}', finalName)
-                                                        .replace('{qty}', String(totalQty));
-                                                    previewLines.push(line);
-                                                });
-                                            }
+                                <div className="flex-shrink-0 flex justify-between items-center mb-4"><h2 className="text-lg font-semibold">Pré-visualização ({previews.filter(p => p && p !== 'SKIPPED').length}/{zplPages.length})</h2><div className="flex items-center gap-4"><label className="flex items-center text-sm"><input type="checkbox" checked={includeDanfe} onChange={(e) => setEtiquetasState(p => ({ ...p, includeDanfe: e.target.checked }))} className="h-4 w-4 rounded" /> <span className="ml-2">Incluir DANFE</span></label><button onClick={handlePdfAction} disabled={previews.length === 0 || previews.every(p => !p) || isProcessing} className="flex items-center gap-2 text-sm px-4 py-2 rounded-md bg-blue-600 dark:bg-blue-500 text-white font-semibold disabled:opacity-50"><Printer size={16} /> Gerar PDF</button></div></div>
+                                <div className="flex-1 overflow-y-auto pr-2"><div className="grid grid-cols-3 gap-6">{previews.map((src, index) => {
+                                    if (!includeDanfe && index % 2 === 0) return null;
+                                    const isEvenPage = index % 2 !== 0;
+                                    const pairData = extractedData.get(Math.floor(index / 2) * 2);
+                                    const platformSettings = pairData?.isMercadoLivre ? settings.mercadoLivre : settings.shopee;
+
+                                    // Prepara as linhas de pré-visualização para o rodapé usando agrupamento por mestre
+                                    const previewLines: string[] = [];
+                                    if (pairData && pairData.skus.length > 0) {
+                                        const grouped = groupSkusByMasterProduct(pairData.skus);
+                                        grouped.forEach(({ product, totalQty }) => {
+                                            const finalSku = product ? product.code : 'SKU-UNKNOWN';
+                                            const finalName = product ? product.name : 'Produto não encontrado';
+                                            const line = platformSettings.footer.template
+                                                .replace('{sku}', finalSku)
+                                                .replace('{name}', finalName)
+                                                .replace('{qty}', String(totalQty));
+                                            previewLines.push(line);
+                                        });
+                                    }
 
 
-                                            return (
-                                                <div key={index} className="space-y-2 relative">
-                                                    {printedIndices.has(index) && (
-                                                        <div className="absolute inset-0 bg-green-900 bg-opacity-75 flex items-center justify-center z-10 rounded-lg pointer-events-none">
-                                                            <span className="text-white font-bold text-lg rotate-[-15deg] border-2 border-white px-4 py-1 rounded">IMPRESSO</span>
-                                                        </div>
-                                                    )}
-                                                    <div className="bg-gray-50 dark:bg-gray-700 p-2 rounded-lg shadow-md flex flex-col aspect-[100/150] justify-center items-center overflow-hidden">
-                                                        {src === 'SKIPPED' ? (
-                                                            <div className="text-center p-4 text-gray-500">
-                                                                <Eye size={24} className="mx-auto mb-2"/>
-                                                                <p className="font-semibold">DANFE Omitida</p>
-                                                                <p className="text-xs">(Modo Rápido)</p>
-                                                            </div>
-                                                        ) : src === 'ERROR' ? (
-                                                            <div className="text-red-500 text-center p-4">Erro ao renderizar</div>
-                                                        ) : src ? (
-                                                            <img src={src} alt={`Preview ${index + 1}`} className="max-w-full max-h-full object-contain" />
-                                                        ) : (
-                                                            <Loader2 className="animate-spin text-gray-400" />
-                                                        )}
-                                                    </div>
-                                                    {isEvenPage && pairData && (
-                                                        <div className="text-center font-semibold text-xs text-gray-800 dark:text-gray-100 p-2 border-t mt-1 bg-gray-50 dark:bg-gray-800/50 rounded-b">
-                                                            {previewLines.length > 0 ? (
-                                                                previewLines.map((line, lIdx) => (
-                                                                    <div key={lIdx} className="truncate" title={line}>{line}</div>
-                                                                ))
-                                                            ) : (
-                                                                <p className="text-red-600 font-bold">Sem dados de SKU</p>
-                                                            )}
-                                                        </div>
-                                                    )}
-                                                    <p className="text-xs text-center text-gray-500 dark:text-gray-400">Página {index + 1}</p>
+                                    return (
+                                        <div key={index} className="space-y-2 relative">
+                                            {printedIndices.has(index) && (
+                                                <div className="absolute inset-0 bg-green-900 bg-opacity-75 flex items-center justify-center z-10 rounded-lg pointer-events-none">
+                                                    <span className="text-white font-bold text-lg rotate-[-15deg] border-2 border-white px-4 py-1 rounded">IMPRESSO</span>
                                                 </div>
-                                            );
-                                        })}
-                                    </div>
+                                            )}
+                                            <div className="bg-gray-50 dark:bg-gray-700 p-2 rounded-lg shadow-md flex flex-col aspect-[100/150] justify-center items-center overflow-hidden">
+                                                {src === 'SKIPPED' ? (
+                                                    <div className="text-center p-4 text-gray-500">
+                                                        <Eye size={24} className="mx-auto mb-2" />
+                                                        <p className="font-semibold">DANFE Omitida</p>
+                                                        <p className="text-xs">(Modo Rápido)</p>
+                                                    </div>
+                                                ) : src === 'ERROR' ? (
+                                                    <div className="text-red-500 text-center p-4">Erro ao renderizar</div>
+                                                ) : src ? (
+                                                    <img src={src} alt={`Preview ${index + 1}`} className="max-w-full max-h-full object-contain" />
+                                                ) : (
+                                                    <Loader2 className="animate-spin text-gray-400" />
+                                                )}
+                                            </div>
+                                            {isEvenPage && pairData && (
+                                                <div className="text-center font-semibold text-xs text-gray-800 dark:text-gray-100 p-2 border-t mt-1 bg-gray-50 dark:bg-gray-800/50 rounded-b">
+                                                    {previewLines.length > 0 ? (
+                                                        previewLines.map((line, lIdx) => (
+                                                            <div key={lIdx} className="truncate" title={line}>{line}</div>
+                                                        ))
+                                                    ) : (
+                                                        <p className="text-red-600 font-bold">Sem dados de SKU</p>
+                                                    )}
+                                                </div>
+                                            )}
+                                            <p className="text-xs text-center text-gray-500 dark:text-gray-400">Página {index + 1}</p>
+                                        </div>
+                                    );
+                                })}
+                                </div>
                                 </div>
                             </div>
                         </div>
@@ -818,7 +818,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                     {/* header */}
                     <div className="flex-shrink-0 px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700">
                         <div className="flex items-center gap-2 mb-3">
-                            <History size={16} className="text-blue-600 dark:text-blue-400"/>
+                            <History size={16} className="text-blue-600 dark:text-blue-400" />
                             <h2 className="text-sm font-black text-gray-900 dark:text-gray-50 uppercase tracking-tight">Histórico de Impressões</h2>
                         </div>
                         {/* stats cards */}
@@ -841,7 +841,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                     <div className="overflow-y-auto flex-grow p-3">
                         {etiquetasHistory.length === 0 ? (
                             <div className="flex flex-col items-center justify-center py-10 text-gray-500 dark:text-gray-400">
-                                <LayoutList size={28} className="mb-2 opacity-30"/>
+                                <LayoutList size={28} className="mb-2 opacity-30" />
                                 <p className="text-sm">Nenhum histórico encontrado.</p>
                             </div>
                         ) : (() => {
@@ -857,8 +857,8 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                                 const diffMins = Math.floor(diffMs / 60000);
                                 const relTime = diffMins < 1 ? 'agora mesmo'
                                     : diffMins < 60 ? `há ${diffMins}min`
-                                    : diffMins < 1440 ? `há ${Math.floor(diffMins/60)}h`
-                                    : ts.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                                        : diffMins < 1440 ? `há ${Math.floor(diffMins / 60)}h`
+                                            : ts.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
                                 return (
                                     <div key={item.id} className="bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-700 p-3 mb-2 hover:border-blue-600 dark:border-blue-500 transition-colors">
                                         <div className="flex items-center gap-2 mb-2">
@@ -874,14 +874,14 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                                             </span>
                                         </div>
                                         <div className="flex items-center gap-1 mb-2">
-                                            <CalendarDays size={10} className="text-gray-500 dark:text-gray-400"/>
+                                            <CalendarDays size={10} className="text-gray-500 dark:text-gray-400" />
                                             <p className="text-[10px] text-gray-500 dark:text-gray-400">{ts.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
                                         </div>
                                         <button
                                             onClick={() => handleReloadHistory(item)}
                                             className="w-full px-3 py-1.5 text-[10px] font-black uppercase bg-blue-600 dark:bg-blue-500 text-white rounded-md hover:opacity-90 transition-all flex items-center justify-center gap-1"
                                         >
-                                            <History size={10}/> Recarregar ZPL
+                                            <History size={10} /> Recarregar ZPL
                                         </button>
                                     </div>
                                 );
@@ -891,7 +891,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                                     {todayItems.length > 0 && (
                                         <div className="mb-3">
                                             <p className="text-[10px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"/>
+                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
                                                 Hoje ({todayItems.length})
                                             </p>
                                             {todayItems.map(renderItem)}
@@ -900,7 +900,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                                     {olderItems.length > 0 && (
                                         <div>
                                             <p className="text-[10px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                                                <span className="w-1.5 h-1.5 rounded-full bg-slate-400 inline-block"/>
+                                                <span className="w-1.5 h-1.5 rounded-full bg-slate-400 inline-block" />
                                                 Anteriores ({olderItems.length})
                                             </p>
                                             {olderItems.map(renderItem)}
@@ -913,8 +913,8 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                 </div>
             </div>
             <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} currentSettings={settings} onSave={onSettingsSave} previews={previews} extractedData={extractedData} />
-            <LinkSkuModal isOpen={linkModalState.isOpen} onClose={() => setLinkModalState({isOpen: false, skus: [], color: ''})} skusToLink={linkModalState.skus} colorSugerida={linkModalState.color} onConfirmLink={handleConfirmLink} products={stockItems.filter(i => i.kind === 'PRODUTO' || i.kind === 'PROCESSADO')} skuLinks={skuLinks} onTriggerCreate={() => { setLinkModalState(p => ({ ...p, isOpen: false })); setCreateModalState({isOpen: true, data: { sku: linkModalState.skus[0], colorSugerida: linkModalState.color }}); }} />
-            <CreateProductFromImportModal isOpen={createModalState.isOpen} onClose={() => setCreateModalState({isOpen: false, data: null})} unlinkedSkuData={createModalState.data ? {skus: [createModalState.data.sku], colorSugerida: createModalState.data.colorSugerida} : null} onConfirm={handleConfirmCreateAndLink} generalSettings={generalSettings}/>
+            <LinkSkuModal isOpen={linkModalState.isOpen} onClose={() => setLinkModalState({ isOpen: false, skus: [], color: '' })} skusToLink={linkModalState.skus} colorSugerida={linkModalState.color} onConfirmLink={handleConfirmLink} products={stockItems.filter(i => i.kind === 'PRODUTO' || i.kind === 'PROCESSADO')} skuLinks={skuLinks} onTriggerCreate={() => { setLinkModalState(p => ({ ...p, isOpen: false })); setCreateModalState({ isOpen: true, data: { sku: linkModalState.skus[0], colorSugerida: linkModalState.color } }); }} />
+            <CreateProductFromImportModal isOpen={createModalState.isOpen} onClose={() => setCreateModalState({ isOpen: false, data: null })} unlinkedSkuData={createModalState.data ? { skus: [createModalState.data.sku], colorSugerida: createModalState.data.colorSugerida } : null} onConfirm={handleConfirmCreateAndLink} generalSettings={generalSettings} />
             <ProcessingModeModal isOpen={isModeModalOpen} onClose={() => setIsModeModalOpen(false)} onSelectMode={startProcessing} />
         </>
     );

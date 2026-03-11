@@ -176,6 +176,7 @@ export interface StockItem {
     expedition_items?: { stockItemCode: string; qty_per_pack: number }[];
     barcode?: string;
     is_volatile_infinite?: boolean;
+    base_type?: 'branca' | 'preta' | 'especial';
 }
 
 export type StockMovementOrigin = 'AJUSTE_MANUAL' | 'PRODUCAO_MANUAL' | 'BIP' | 'PESAGEM' | 'MOAGEM' | 'IMPORT_XML' | 'PRODUCAO_INTERNA';
@@ -294,6 +295,7 @@ export interface OrderItem {
     vinculado_bling?: boolean;
     etiqueta_gerada?: boolean;
     lote_id?: string;
+    descontar_volatil?: boolean;
 }
 
 export interface ScanLogItem {
@@ -962,6 +964,7 @@ export interface ColumnMapping {
     shippingFee: string;
     shippingPaidByCustomer?: string;
     fees: string[];
+    priceNet?: string;
     customerName: string;
     customerCpf: string;
     statusColumn?: string;

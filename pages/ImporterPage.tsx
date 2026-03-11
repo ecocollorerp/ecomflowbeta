@@ -59,6 +59,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         importCpf: false,
         importName: true,
         trackingFilter: 'all' as any,
+        descontarVolatil: false,
     });
     const [importAsHistory, setImportAsHistory] = useState(false);
     const [selectedChannel, setSelectedChannel] = useState<Canal | 'AUTO'>('AUTO');
@@ -369,6 +370,13 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                                             <p className="text-xs text-gray-500 font-medium">Exibe o nome do comprador no painel de pedidos.</p>
                                         </div>
                                     </label>
+                                    <label className="flex items-start gap-3 p-4 bg-gray-50 rounded-xl cursor-pointer border-2 border-transparent hover:border-orange-500 transition-all sm:col-span-2">
+                                        <input type="checkbox" checked={importOptions.descontarVolatil} onChange={e => setImportOptions(p => ({ ...p, descontarVolatil: e.target.checked }))} className="w-6 h-6 text-orange-600 rounded mt-0.5 shadow-sm" />
+                                        <div className="text-sm">
+                                            <p className="font-black text-orange-800">Descontar do Estoque Volátil</p>
+                                            <p className="text-xs text-orange-600 font-medium">Se marcado, a bipagem destes itens irá priorizar o abatimento do estoque volátil dos pacotes prontos.</p>
+                                        </div>
+                                    </label>
                                 </div>
                                 <div className="p-4 bg-gray-50 border border-gray-100 rounded-2xl flex gap-3 items-center">
                                     <Info size={24} className="text-gray-400 flex-shrink-0" />
@@ -415,7 +423,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                             products={products}
                             onLinkSku={async (sku, master) => await onLinkSku(sku.toUpperCase(), master.toUpperCase())}
                             onOpenLinkModal={(skus, color) => setLinkModalState({ isOpen: true, skus, color })}
-                            onOpenCreateProductModal={(data) => { setCreateModalState({ isOpen: true, data: { sku: data.sku, colorSugerida: data.colorSugerida } }); }}
+                            onOpenCreateProductModal={(data) => { setCreateModalState({ isOpen: true, data: { skus: [data.sku], colorSugerida: data.colorSugerida, baseSugerida: data.baseSugerida, isMiudoSugerido: data.isMiudoSugerido } }); }}
                             produtosCombinados={produtosCombinados}
                             stockItems={stockItems}
                             generalSettings={generalSettings}

@@ -153,6 +153,37 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                             />
                         </div>
                     )}
+                    {/* Tipo de Produto e Tipo de Base */}
+                    {isProduct && (
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="text-sm font-medium text-[var(--modal-text-secondary)] mb-1 block">Tipo de Produto</label>
+                                <select
+                                    name="product_type"
+                                    value={newItem.product_type}
+                                    onChange={handleInputChange}
+                                    className="w-full p-2 border-[var(--modal-border)] rounded-md bg-[var(--modal-surface-secondary)] text-sm font-bold"
+                                >
+                                    <option value="papel_de_parede">Papel de Parede</option>
+                                    <option value="miudos">Itens Menores (Miúdos)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="text-sm font-medium text-[var(--modal-text-secondary)] mb-1 block">Tipo de Base</label>
+                                <select
+                                    name="base_type"
+                                    value={newItem.base_type || 'branca'}
+                                    onChange={handleInputChange}
+                                    className="w-full p-2 border-[var(--modal-border)] rounded-md bg-[var(--modal-surface-secondary)] text-sm font-bold"
+                                >
+                                    <option value="branca">⚪ Base Branca</option>
+                                    <option value="preta">⚫ Base Preta</option>
+                                    <option value="especial">🎨 Base Especial</option>
+                                </select>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Tipo de Estoque para Produtos */}
                     {isProduct && (
                         <div>
@@ -162,8 +193,8 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                                     type="button"
                                     onClick={() => setTipoEstoque('PRODUTO_PRINCIPAL')}
                                     className={`p-3 rounded-xl border-2 text-left transition-all ${tipoEstoque === 'PRODUTO_PRINCIPAL'
-                                            ? 'border-blue-500 bg-blue-50'
-                                            : 'border-gray-200 bg-white hover:border-blue-300'
+                                        ? 'border-blue-500 bg-blue-50'
+                                        : 'border-gray-200 bg-white hover:border-blue-300'
                                         }`}
                                 >
                                     <p className="text-xs font-black text-slate-800 uppercase">📦 Estoque Tradicional</p>
@@ -173,8 +204,8 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                                     type="button"
                                     onClick={() => setTipoEstoque('VOLATIL')}
                                     className={`p-3 rounded-xl border-2 text-left transition-all ${tipoEstoque === 'VOLATIL'
-                                            ? 'border-orange-500 bg-orange-50'
-                                            : 'border-gray-200 bg-white hover:border-orange-300'
+                                        ? 'border-orange-500 bg-orange-50'
+                                        : 'border-gray-200 bg-white hover:border-orange-300'
                                         }`}
                                 >
                                     <p className="text-xs font-black text-slate-800 uppercase">⚡ Estoque Volátil</p>

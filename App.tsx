@@ -341,41 +341,58 @@ const App: React.FC = () => {
                 if (masterSku) {
                     const product = stockItems.find(i => i.code === masterSku);
                     if (product) {
-                        // Apply deduction logic
-                        if (deductionMode === 'STOCK') {
-                            // Simple deduction from shelf stock
-                            await dbClient.rpc('adjust_stock_quantity', {
-                                item_code: masterSku,
-                                quantity_delta: -1,
-                                origin_text: 'BIP',
-                                ref_text: `Pedido ${result.order_key} (Estoque)`,
-                                user_name: actingUser.name
-                            });
-                        } else if (deductionMode === 'PRODUCTION') {
-                            // "Daily Production": Record production (consumes BOM, adds +1) then deduct (-1)
-                            // This ensures raw materials are consumed but finished stock count remains net 0 change (made & shipped)
-                            // Step 1: Record Production (Consumes Insumos, Adds 1 Product)
-                            await dbClient.rpc('record_production_run', {
-                                item_code: masterSku,
-                                quantity_to_produce: 1,
-                                ref_text: `Produção Pedido ${result.order_key}`,
-                                user_name: actingUser.name
-                            });
-                            // Step 2: Deduct Product (Ships 1 Product)
-                            await dbClient.rpc('adjust_stock_quantity', {
-                                item_code: masterSku,
-                                quantity_delta: -1,
-                                origin_text: 'BIP',
-                                ref_text: `Envio Pedido ${result.order_key}`,
-                                user_name: actingUser.name
-                            });
+                        const scannedOrder = allOrders.find(o => o.orderId === result.order_key && o.sku === result.sku_key);
+                        let deductedFromVolatil = false;
+
+                        if (scannedOrder?.descontar_volatil) {
+                            const volatilGroup = packGroups.find(g => g.tipo === 'volatil' && g.item_codes.includes(masterSku) && (g.quantidade_volatil || 0) > 0);
+                            if (volatilGroup) {
+                                await dbClient.from('stock_pack_groups')
+                                    .update({ quantidade_volatil: (volatilGroup.quantidade_volatil || 0) - 1 })
+                                    .eq('id', volatilGroup.id);
+
+                                setPackGroups(prev => prev.map(g => g.id === volatilGroup.id ? { ...g, quantidade_volatil: (g.quantidade_volatil || 0) - 1 } : g));
+                                deductedFromVolatil = true;
+                            }
+                        }
+
+                        if (!deductedFromVolatil) {
+                            // Apply deduction logic
+                            if (deductionMode === 'STOCK') {
+                                // Simple deduction from shelf stock
+                                await dbClient.rpc('adjust_stock_quantity', {
+                                    item_code: masterSku,
+                                    quantity_delta: -1,
+                                    origin_text: 'BIP',
+                                    ref_text: `Pedido ${result.order_key} (Estoque)`,
+                                    user_name: actingUser.name
+                                });
+                            } else if (deductionMode === 'PRODUCTION') {
+                                // "Daily Production": Record production (consumes BOM, adds +1) then deduct (-1)
+                                // This ensures raw materials are consumed but finished stock count remains net 0 change (made & shipped)
+                                // Step 1: Record Production (Consumes Insumos, Adds 1 Product)
+                                await dbClient.rpc('record_production_run', {
+                                    item_code: masterSku,
+                                    quantity_to_produce: 1,
+                                    ref_text: `Produção Pedido ${result.order_key}`,
+                                    user_name: actingUser.name
+                                });
+                                // Step 2: Deduct Product (Ships 1 Product)
+                                await dbClient.rpc('adjust_stock_quantity', {
+                                    item_code: masterSku,
+                                    quantity_delta: -1,
+                                    origin_text: 'BIP',
+                                    ref_text: `Envio Pedido ${result.order_key}`,
+                                    user_name: actingUser.name
+                                });
+                            }
                         }
                     }
                 }
             }
         }
         return result;
-    }, [currentUser, users, generalSettings.bipagem, zplToSaveOnScan, skuLinks, stockItems, allOrders, addToast]);
+    }, [currentUser, users, generalSettings.bipagem, zplToSaveOnScan, skuLinks, stockItems, allOrders, addToast, packGroups]);
 
     const handleStageZplForSaving = (zplMap: Map<string, string>) => {
         setZplToSaveOnScan(prev => new Map([...prev, ...zplMap]));
@@ -1160,18 +1177,74 @@ const App: React.FC = () => {
 
     const handleDeleteOrders = useCallback(async (orderIds: string[]) => {
         if (orderIds.length === 0) return;
-        const { error } = await dbClient.rpc('delete_orders', { order_ids: orderIds });
-        if (!error) {
-            await loadData(); // Force reload to update UI
-            addToast(`${orderIds.length} pedidos excluídos.`, 'success');
-        } else {
-            addToast(`Erro ao excluir pedidos: ${error.message}`, 'error');
-            // Try to recover if RPC is missing (rare case but good fallback)
-            if (error.code === '42883') { // Undefined function
-                addToast('Função de exclusão não encontrada. Sincronize o banco nas configurações.', 'error');
+        try {
+            const { error } = await dbClient.rpc('delete_orders', { order_ids: orderIds });
+            if (error) {
+                // Fallback para delete direto se for erro de ambiguidade (RPC candidate) ou outros
+                if (error.message?.includes('candidate') || error.code === '42883') {
+                    const { error: directError } = await dbClient.from('orders').delete().in('id', orderIds);
+                    if (directError) throw directError;
+                } else {
+                    throw error;
+                }
             }
+            await loadData();
+            addToast(`${orderIds.length} pedidos excluídos.`, 'success');
+        } catch (err: any) {
+            addToast(`Erro ao excluir pedidos: ${err.message}`, 'error');
         }
     }, [addToast, loadData]);
+
+    const handleExportDailyLog = useCallback(() => {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const todayLogs = scanHistory.filter(log => {
+            const logDate = new Date(log.scanned_at || '').toISOString().split('T')[0];
+            return logDate === todayStr;
+        });
+
+        if (todayLogs.length === 0) {
+            addToast('Nenhum log encontrado para hoje.', 'warning');
+            return;
+        }
+
+        // Agrupar logs por setor do usuário
+        const logsPorSetor: Record<string, typeof todayLogs> = {};
+
+        todayLogs.forEach(log => {
+            const user = users.find(u => u.name === log.user_name);
+            const setor = user?.setor?.[0] || 'OUTROS';
+            if (!logsPorSetor[setor]) logsPorSetor[setor] = [];
+            logsPorSetor[setor].push(log);
+        });
+
+        let content = `LOG DIÁRIO - ${generalSettings.companyName || 'ECOMFLOW'} - ${new Date().toLocaleDateString('pt-BR')}\n`;
+        content += '='.repeat(80) + '\n';
+        content += `GERADO EM: ${new Date().toLocaleTimeString('pt-BR')}\n\n`;
+
+        Object.entries(logsPorSetor).forEach(([setor, logs]) => {
+            content += `\n>>> SETOR: ${setor.toUpperCase()} (${logs.length} registros)\n`;
+            content += '-'.repeat(80) + '\n';
+            content += `${'HORA'.padEnd(10)} | ${'USUÁRIO'.padEnd(15)} | ${'STATUS'.padEnd(10)} | ${'DESCRIÇÃO'}\n`;
+            content += '-'.repeat(80) + '\n';
+
+            logs.forEach(l => {
+                const time = new Date(l.scanned_at || '').toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                const user = (l.user_name || 'Sistema').substring(0, 15).padEnd(15);
+                const status = (l.status || 'OK').padEnd(10);
+                const desc = l.notes || `Pedido ${l.order_id || l.display_key} (${l.sku || 'N/A'})`;
+                content += `${time.padEnd(10)} | ${user} | ${status} | ${desc}\n`;
+            });
+            content += '\n';
+        });
+
+        const blob = new Blob([content], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `log_diario_${todayStr}.txt`;
+        link.click();
+        URL.revokeObjectURL(url);
+    }, [scanHistory, generalSettings.companyName, addToast, users]);
 
     const handleUpdateStatus = useCallback(async (orderIds: string[], newStatus: OrderStatusValue): Promise<boolean> => {
         const { error } = await dbClient.from('orders').update({ status: newStatus }).in('id', orderIds);
@@ -1591,10 +1664,14 @@ const App: React.FC = () => {
                 status: o.status,
                 customer_name: o.customer_name,
                 customer_cpf_cnpj: o.customer_cpf_cnpj,
-                price_gross: o.price_gross,
-                platform_fees: o.platform_fees,
-                shipping_fee: o.shipping_fee,
-                price_net: o.price_net,
+                price_gross: Number(o.price_gross) || 0,
+                price_total: Number(o.price_total) || 0,
+                platform_fees: Number(o.platform_fees) || 0,
+                shipping_fee: Number(o.shipping_fee) || 0,
+                shipping_paid_by_customer: Number(o.shipping_paid_by_customer) || 0,
+                price_net: (o.price_net !== undefined && o.price_net !== null && !isNaN(Number(o.price_net)))
+                    ? Number(o.price_net)
+                    : (Number(o.price_gross) || 0) - (Number(o.platform_fees) || 0) - (Number(o.shipping_fee) || 0),
                 data_prevista_envio: o.data_prevista_envio,
                 vinculado_bling: o.vinculado_bling || false,
                 etiqueta_gerada: o.etiqueta_gerada || false,
@@ -1602,86 +1679,45 @@ const App: React.FC = () => {
                 id_pedido_loja: o.id_pedido_loja || null,
                 venda_origem: o.venda_origem || null
             };
-            // Só inclui tracking se não estiver vazio (evita sobrescrever rastreio existente)
             if (o.tracking) rowData.tracking = o.tracking;
-            uniqueOrdersMap.set(`${orderId}|${sku}`, rowData);
+            uniqueOrdersMap.set(deterministicId, rowData);
         });
 
-        // Batching for robustness
-        const BATCH_SIZE = 500;
+        const BATCH_SIZE = 100;
         const uniqueOrders = Array.from(uniqueOrdersMap.values());
         let successCount = 0;
         let errorCount = 0;
 
-        const doUpsert = async (batch: any[]) => {
-            let { error } = await dbClient.from('orders').upsert(batch, { onConflict: 'order_id,sku' });
-            if (error && (error.code === '42P10' || error.message?.includes('no unique or exclusion constraint'))) {
-                const fallback = await dbClient.from('orders').upsert(batch, { ignoreDuplicates: true });
-                error = fallback.error;
-            }
-            if (error && (error.code === '42703' || error.message?.includes('column'))) {
-                const reducedBatch = batch.map((o: any) => ({
-                    id: o.id,
-                    order_id: o.order_id,
-                    ...(o.tracking ? { tracking: o.tracking } : {}),
-                    sku: o.sku,
-                    qty_original: o.qty_original,
-                    multiplicador: o.multiplicador,
-                    qty_final: o.qty_final,
-                    color: o.color,
-                    canal: o.canal,
-                    data: o.data,
-                    status: o.status,
-                    customer_name: o.customer_name,
-                    customer_cpf_cnpj: o.customer_cpf_cnpj,
-                    price_gross: o.price_gross,
-                    platform_fees: o.platform_fees,
-                    shipping_fee: o.shipping_fee,
-                    price_net: o.price_net,
-                    lote_id: o.lote_id,
-                    bling_numero: o.bling_numero,
-                    id_pedido_loja: o.id_pedido_loja,
-                    venda_origem: o.venda_origem
-                }));
-                const fallbackReduced = await dbClient.from('orders').upsert(reducedBatch, { onConflict: 'order_id,sku' });
-                error = fallbackReduced.error;
-            }
-            return error;
-        };
+        setIsProcessing(true);
+        addToast(`Iniciando salvamento de ${uniqueOrders.length} pedido(s)...`, 'info');
 
         for (let i = 0; i < uniqueOrders.length; i += BATCH_SIZE) {
             const batch = uniqueOrders.slice(i, i + BATCH_SIZE);
-            // Separa pedidos com e sem tracking para não sobrescrever rastreio existente no banco
-            const withTracking = batch.filter((o: any) => o.tracking);
-            const withoutTracking = batch.filter((o: any) => !o.tracking)
-                .map(({ tracking, ...rest }: any) => rest);
+            try {
+                let { error } = await dbClient.from('orders').upsert(batch, { onConflict: 'id' });
 
-            let batchError = null;
-            if (withoutTracking.length > 0) {
-                batchError = await doUpsert(withoutTracking);
-                if (!batchError) successCount += withoutTracking.length;
-                else errorCount += withoutTracking.length;
-            }
-            if (withTracking.length > 0) {
-                const tErr = await doUpsert(withTracking);
-                if (!tErr) successCount += withTracking.length;
-                else { errorCount += withTracking.length; batchError = tErr; }
-            }
-            if (batchError) {
-                const detail = [batchError.message, batchError.details, batchError.hint].filter(Boolean).join(' | ');
-                console.error('Batch upload error:', detail || batchError);
+                if (error) {
+                    console.error(`❌ Erro no lote ${i / BATCH_SIZE}:`, error);
+                    errorCount += batch.length;
+                } else {
+                    successCount += batch.length;
+                }
+            } catch (err: any) {
+                console.error(`❌ Falha crítica no lote ${i / BATCH_SIZE}:`, err);
+                errorCount += batch.length;
             }
         }
 
+        setIsProcessing(false);
         if (successCount > 0) {
             await loadData();
-            addToast(`Sucesso! ${successCount} pedidos salvos.${errorCount > 0 ? ` (${errorCount} falhas)` : ''}`, errorCount > 0 ? 'info' : 'success');
-            if (uiSettings.soundOnSuccess) playSound('success');
+            addToast(`Sucesso! ${successCount} pedido(s) salvos.${errorCount > 0 ? ` (${errorCount} falhas)` : ''}`, errorCount > 0 ? 'info' : 'success');
+            if (currentUser?.ui_settings?.soundOnSuccess) playSound('success');
         } else if (errorCount > 0) {
-            addToast(`Erro ao salvar ${errorCount} pedido(s) no banco. Verifique o console ou rode a migration.sql.`, 'error');
-            if (uiSettings.soundOnError) playSound('error');
+            addToast(`Erro ao salvar ${errorCount} pedido(s). Verifique o console.`, 'error');
+            if (currentUser?.ui_settings?.soundOnError) playSound('error');
         }
-    }, [addToast, loadData, uiSettings]);
+    }, [loadData, addToast, setIsProcessing, currentUser]);
 
     const handleLinkSku = useCallback(async (importedSku: string, masterProductSku: string): Promise<boolean> => {
         try {
@@ -1949,7 +1985,7 @@ const App: React.FC = () => {
 
     const renderPage = () => {
         switch (currentPage) {
-            case 'dashboard': return <DashboardPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} allOrders={allOrders} scanHistory={scanHistory} stockItems={stockItems} produtosCombinados={produtosCombinados} users={users} lowStockCount={lowStockCount} uiSettings={uiSettings} onSaveUiSettings={handleSaveUiSettings} adminNotices={adminNotices} onSaveNotice={handleSaveNotice} onDeleteNotice={handleDeleteNotice} currentUser={currentUser!} skuLinks={skuLinks} onSaveDashboardConfig={handleSaveDashboardConfig} packGroups={packGroups} onSavePackGroup={async (g, id) => { await dbClient.from('stock_pack_groups').upsert(id ? { ...g, id } : g); loadData(); }} />
+            case 'dashboard': return <DashboardPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} allOrders={allOrders} scanHistory={scanHistory} stockItems={stockItems} produtosCombinados={produtosCombinados} users={users} lowStockCount={lowStockCount} uiSettings={uiSettings} onSaveUiSettings={handleSaveUiSettings} adminNotices={adminNotices} onSaveNotice={handleSaveNotice} onDeleteNotice={handleDeleteNotice} currentUser={currentUser!} skuLinks={skuLinks} onSaveDashboardConfig={handleSaveDashboardConfig} packGroups={packGroups} onSavePackGroup={async (g, id) => { await dbClient.from('stock_pack_groups').upsert(id ? { ...g, id } : g); loadData(); }} onExportDailyLog={handleExportDailyLog} />
             case 'importer': return <ImporterPage
                 allOrders={allOrders}
                 selectedFile={selectedFile}
@@ -1989,7 +2025,7 @@ const App: React.FC = () => {
             case 'estoque': return <EstoquePage stockItems={stockItems} stockMovements={stockMovements} onStockAdjustment={handleStockAdjustment} produtosCombinados={produtosCombinados} onSaveProdutoCombinado={handleSaveProdutoCombinado} onAddNewItem={handleAddNewItem} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} onProductionRun={handleProductionRun} onRegisterReadyStock={handleRegisterReadyStock} currentUser={currentUser!} onEditItem={handleEditItem} onDeleteItem={handleDeleteItem} onBulkDeleteItems={handleBulkDeleteItems} onDeleteMovement={async () => false} onDeleteWeighingBatch={handleDeleteWeighingBatch} generalSettings={generalSettings} setGeneralSettings={setGeneralSettings as any} onConfirmImportFromXml={handleConfirmImportFromXml} onSaveExpeditionItems={handleSaveExpeditionItems} users={users} onUpdateInsumoCategory={async () => { }} onBulkInventoryUpdate={handleBulkSetInitialStock} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} />
             case 'funcionarios': return <FuncionariosPage users={users} onSetAttendance={handleSetAttendance} onAddNewUser={handleAddNewUser} onUpdateAttendanceDetails={handleUpdateAttendanceDetails} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} currentUser={currentUser!} onDeleteUser={handleDeleteUser} />
             case 'relatorios': return <RelatoriosPage stockItems={stockItems} stockMovements={stockMovements} orders={allOrders} weighingBatches={weighingBatches} scanHistory={scanHistory} produtosCombinados={produtosCombinados} users={users} returns={returns} generalSettings={generalSettings} grindingBatches={grindingBatches} />
-            case 'financeiro': return <FinancePage allOrders={allOrders} stockItems={stockItems} skuLinks={skuLinks} produtosCombinados={produtosCombinados} generalSettings={generalSettings} onDeleteOrders={handleDeleteOrders} onLaunchOrders={handleLaunchSuccess} onNavigateToSettings={() => { _setCurrentPage('configuracoes-gerais'); localStorage.setItem('erp_current_page', 'configuracoes-gerais'); }} />
+            case 'financeiro': return <FinancePage allOrders={allOrders} stockItems={stockItems} skuLinks={skuLinks} produtosCombinados={produtosCombinados} generalSettings={generalSettings} onDeleteOrders={handleDeleteOrders} onLaunchOrders={handleLaunchSuccess} onSaveSettings={handleSaveGeneralSettings} onNavigateToSettings={() => { _setCurrentPage('configuracoes-gerais'); localStorage.setItem('erp_current_page', 'configuracoes-gerais'); }} />
             case 'etiquetas': return <EtiquetasPage settings={etiquetasSettings} onSettingsSave={handleSaveEtiquetasSettings} generalSettings={generalSettings} uiSettings={uiSettings} onSetUiSettings={setUiSettings as any} stockItems={stockItems} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} onAddNewItem={handleAddNewItem} etiquetasState={etiquetasState} setEtiquetasState={setEtiquetasState} currentUser={currentUser!} allOrders={allOrders} etiquetasHistory={etiquetasHistory} onSaveHistory={handleSaveEtiquetaHistory} onGetHistoryDetails={handleGetEtiquetaHistoryDetails} onProcessZpl={handleProcessZpl} isProcessing={isProcessingLabels} progressMessage={labelProgressMessage} />
             case 'bling': return <BlingPage generalSettings={generalSettings} onLaunchSuccess={handleLaunchSuccess} onUpdateOrdersBatch={handleUpdateOrdersBatch} addToast={addToast} setCurrentPage={setCurrentPage} onLoadZpl={handleLoadZplFromBling} onSaveSettings={handleSaveGeneralSettings} stockItems={stockItems} skuLinks={skuLinks} allOrders={allOrders} onLinkSku={handleLinkSku} />;
             case 'integracoes': return <IntegracoesPage generalSettings={generalSettings} onSaveSettings={handleSaveGeneralSettings} onLaunchSuccess={handleLaunchSuccess} addToast={addToast} setCurrentPage={setCurrentPage} />;
@@ -1999,7 +2035,7 @@ const App: React.FC = () => {
             case 'powerbi-templates': return <PowerBiTemplatesPage setCurrentPage={setCurrentPage} />
             case 'configuracoes': return <ConfiguracoesPage users={users} setCurrentPage={setCurrentPage} onDeleteUser={handleDeleteUser} onAddNewUser={handleAddNewUser} currentUser={currentUser!} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} stockItems={stockItems} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} onClearScanHistory={handleClearScanHistory} onSaveGeneralSettings={handleSaveGeneralSettings} addToast={addToast} />
             case 'configuracoes-gerais': return <ConfiguracoesGeraisPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} onSaveGeneralSettings={handleSaveGeneralSettings} currentUser={currentUser} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} addToast={addToast} stockItems={stockItems} onClearScanHistory={handleClearScanHistory} users={users} />
-            default: return <DashboardPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} allOrders={allOrders} scanHistory={scanHistory} stockItems={stockItems} produtosCombinados={produtosCombinados} users={users} lowStockCount={lowStockCount} uiSettings={uiSettings} onSaveUiSettings={handleSaveUiSettings} adminNotices={adminNotices} onSaveNotice={handleSaveNotice} onDeleteNotice={handleDeleteNotice} currentUser={currentUser!} skuLinks={skuLinks} onSaveDashboardConfig={handleSaveDashboardConfig} packGroups={packGroups} onSavePackGroup={async (g, id) => { await dbClient.from('stock_pack_groups').upsert(id ? { ...g, id } : g); loadData(); }} />
+            default: return <DashboardPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} allOrders={allOrders} scanHistory={scanHistory} stockItems={stockItems} produtosCombinados={produtosCombinados} users={users} lowStockCount={lowStockCount} uiSettings={uiSettings} onSaveUiSettings={handleSaveUiSettings} adminNotices={adminNotices} onSaveNotice={handleSaveNotice} onDeleteNotice={handleDeleteNotice} currentUser={currentUser!} skuLinks={skuLinks} onSaveDashboardConfig={handleSaveDashboardConfig} packGroups={packGroups} onSavePackGroup={async (g, id) => { await dbClient.from('stock_pack_groups').upsert(id ? { ...g, id } : g); loadData(); }} onRefreshData={loadData} />
         }
     };
 

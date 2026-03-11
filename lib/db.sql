@@ -182,11 +182,15 @@ CREATE TABLE IF NOT EXISTS orders (
     created_at                TIMESTAMPTZ      DEFAULT NOW()
 );
 
-ALTER TABLE orders
     ADD COLUMN IF NOT EXISTS data_prevista_envio       TEXT,
     ADD COLUMN IF NOT EXISTS resolution_details        JSONB,
     ADD COLUMN IF NOT EXISTS shipping_paid_by_customer REAL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS price_total               REAL DEFAULT 0;
+    ADD COLUMN IF NOT EXISTS price_total               REAL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS vinculado_bling           BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS etiqueta_gerada           BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS lote_id                   TEXT,
+    ADD COLUMN IF NOT EXISTS id_pedido_loja            TEXT,
+    ADD COLUMN IF NOT EXISTS venda_origem              TEXT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS orders_order_id_sku_idx ON orders (order_id, sku);
 CREATE INDEX IF NOT EXISTS idx_orders_order_id  ON orders (order_id);
@@ -824,7 +828,9 @@ BEGIN
 END;
 $$;
 
--- ── 22.8  delete_orders (text[], não uuid[]) ─────────────────────────────────
+-- ── 22.8  delete_orders (DROP agressivo para evitar ambiguidade) ────────────────
+DROP FUNCTION IF EXISTS public.delete_orders(text[]);
+DROP FUNCTION IF EXISTS public.delete_orders(uuid[]);
 CREATE OR REPLACE FUNCTION delete_orders(order_ids TEXT[])
 RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER AS $$

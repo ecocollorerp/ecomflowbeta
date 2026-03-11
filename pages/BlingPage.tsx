@@ -1208,12 +1208,20 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 }
             };
 
-            runAutoSync();
-            interval = setInterval(runAutoSync, 60 * 1000); // 60 seconds
+            // Aplica um atraso na inicialização para n\u00e3o estourar o limite assim que entra na p\u00e1gina
+            const initialTimeout = setTimeout(() => {
+                runAutoSync();
+                interval = setInterval(runAutoSync, 60 * 1000); // 60 seconds
+            }, 15000);
+
+            return () => {
+                clearTimeout(initialTimeout);
+                if (interval) clearInterval(interval);
+            };
         }
 
-        return () => clearInterval(interval);
-    }, [settings?.autoSync, activeTab]); // Remove apiKey from dependency to rely on getValidToken
+        return () => { if (interval) clearInterval(interval); };
+    }, [settings?.autoSync, activeTab]);
 
     // ── Fetch canais de venda do Bling (para detecção dinâmica de canal) ──
     useEffect(() => {

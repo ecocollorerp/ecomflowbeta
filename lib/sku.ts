@@ -47,9 +47,9 @@ export function getMultiplicadorFromSku(rawSku: string): number {
 
 // Prioritized list of colors to check
 export const COLOR_KEYWORDS = [
-    'BPD', 'ROSEGOLD', 'VINHO', 'SALMÃO', 'ROSA PINK', 'ROSA CLARO', 'ROSA',
-    'CINZA CHUMBO', 'CINZA CLARO', 'CINZA', 'PRETO', 'BRANCO', 'CARAMELO', 'BEGE',
-    'AZUL MARINHO', 'AZUL', 'MARROM', 'LILÁS', 'LAVANDA', 'VERDE AGUA CLARO', 'VERDE AGUA', 'VERDE', 'AMARELO', 'VERMELHO', 'GLITTER'
+  'BPD', 'ROSEGOLD', 'VINHO', 'SALMÃO', 'ROSA PINK', 'ROSA CLARO', 'ROSA',
+  'CINZA CHUMBO', 'CINZA CLARO', 'CINZA', 'PRETO', 'BRANCO', 'CARAMELO', 'BEGE',
+  'AZUL MARINHO', 'AZUL', 'MARROM', 'LILÁS', 'LAVANDA', 'VERDE AGUA CLARO', 'VERDE AGUA', 'VERDE', 'AMARELO', 'VERMELHO', 'GLITTER'
 ];
 
 
@@ -59,15 +59,34 @@ export const COLOR_KEYWORDS = [
  * @returns A color string, defaulting to "Diversos".
  */
 export const classificarCor = (sku: string): string => {
-    const normalizedSku = sku.toUpperCase();
+  const normalizedSku = sku.toUpperCase();
 
-    for (const cor of COLOR_KEYWORDS) {
-        // Replace space for checks like 'VERDE AGUA' vs 'VERDEAGUA'
-        if (normalizedSku.includes(cor.replace(' ', ''))) {
-            // Capitalize first letter of each word for display
-            return cor.toLowerCase().split(' ').map(s => s.charAt(0).toUpperCase() + s.substring(1)).join(' ');
-        }
+  for (const cor of COLOR_KEYWORDS) {
+    // Replace space for checks like 'VERDE AGUA' vs 'VERDEAGUA'
+    if (normalizedSku.includes(cor.replace(' ', ''))) {
+      // Capitalize first letter of each word for display
+      return cor.toLowerCase().split(' ').map(s => s.charAt(0).toUpperCase() + s.substring(1)).join(' ');
     }
+  }
 
-    return 'Diversos';
+  return 'Diversos';
+};
+
+/**
+ * Classifica o tipo de base do papel a partir do SKU.
+ */
+export const classificarTipoBase = (sku: string): 'branca' | 'preta' | 'especial' => {
+  const s = sku.toUpperCase();
+  if (s.includes('-PRE') || s.includes('PRETA') || s.includes('BLACK')) return 'preta';
+  if (s.includes('-ESP') || s.includes('ESPECIAL')) return 'especial';
+  return 'branca'; // Padrão
+};
+
+/**
+ * Detecta se o item é um "miúdo" (item menor) com base no SKU ou padrões.
+ */
+export const isItemMenor = (sku: string): boolean => {
+  const s = sku.toUpperCase();
+  // Padrões comuns para miúdos (ajustar conforme necessidade)
+  return s.startsWith('MID-') || s.includes('MIUDO') || s.includes('MINI');
 };

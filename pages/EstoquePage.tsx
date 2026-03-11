@@ -1,9 +1,11 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { StockItem, StockMovement, ProdutoCombinado, WeighingBatch, WeighingType, StockMovementOrigin, StockItemKind, User, GeneralSettings, ParsedNfeItem, SkuLink, StockPackGroup } from '../types';
-import { Package, Factory, History, Search, PlusCircle, Weight, Cog, SlidersHorizontal, Edit3, Trash2, ChevronDown, ChevronRight, FileUp, ArrowLeft, Settings, Box, Plus, Save, X, Link, ArrowRight, Loader2, ChevronUp, AlertTriangle, ArrowDownCircle, ArrowUpCircle, Layers, TrendingUp, TrendingDown, BarChart2, Filter, Calendar, RefreshCw } from 'lucide-react';
+import { Package, Factory, History, Search, PlusCircle, Weight, Cog, SlidersHorizontal, Edit3, Trash2, ChevronDown, ChevronRight, FileUp, ArrowLeft, Settings, Box, Plus, Save, X, Link, ArrowRight, Loader2, ChevronUp, AlertTriangle, ArrowDownCircle, ArrowUpCircle, Layers, TrendingUp, TrendingDown, BarChart2, Filter, Calendar, RefreshCw, FileText } from 'lucide-react';
 import { PesagemPage } from './PesagemPage';
 import { dbClient } from '../lib/supabaseClient';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 // Modals
 import BomConfigModal from '../components/BomConfigModal';
@@ -308,6 +310,8 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
     const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
     const [transferState, setTransferState] = useState<{ sku: string, currentMaster: StockItem } | null>(null);
     const [showOnlyWithoutBom, setShowOnlyWithoutBom] = useState(false);
+    const [viewModePacks, setViewModePacks] = useState<'list' | 'grid'>('grid');
+    const [selectedPacks, setSelectedPacks] = useState<string[]>([]);
 
     const [packGroupColumnsExist, setPackGroupColumnsExist] = useState(false);
 
@@ -640,6 +644,230 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
         return { entradas, saidas, total: filtered.length };
     }, [stockMovements, histSearch, histOriginFilter, histDateFilter]);
 
+    const relatorioProdutosProntos = useMemo(() => {
+        let totalGeral = 0;
+        const individuaisMap = new Map<string, { nome: string, sku: string, total: number, size: number }>();
+        const packageSizeMap = new Map<number, number>();
+
+        packGroups.forEach(group => {
+            const currentTotal = group.tipo === 'volatil'
+                ? (group.quantidade_volatil || 0)
+                : stockItems.filter(i => group.item_codes.includes(i.code)).reduce((sum, i) => sum + i.current_qty, 0);
+
+            totalGeral += currentTotal;
+
+            // Tenta detectar o tamanho do pacote pelo nome ou min_pack_qty
+            let size = 1;
+            const nameMatch = group.name.match(/(\d+)\s*un/i);
+            if (nameMatch) {
+                size = parseInt(nameMatch[1], 10);
+            } else if (group.name.toLowerCase().includes('duplo') || group.name.toLowerCase().includes('par')) {
+                size = 2;
+            } else if (group.min_pack_qty > 1) {
+                size = group.min_pack_qty;
+            }
+
+            // Soma no breakdown por tamanho
+            const currentSizeTotal = packageSizeMap.get(size) || 0;
+            packageSizeMap.set(size, currentSizeTotal + currentTotal);
+
+            let repName = group.name;
+            let repSku = group.barcode || "N/A";
+
+            if (group.item_codes.length > 0) {
+                const skuCode = group.item_codes[0];
+                const matchedItem = stockItems.find(i => i.code === skuCode);
+                repName = matchedItem ? matchedItem.name : group.name;
+                repSku = skuCode;
+            }
+
+            const mapKey = repSku + '-' + repName + '-' + size;
+            const existing = individuaisMap.get(mapKey);
+            individuaisMap.set(mapKey, {
+                nome: repName,
+                sku: repSku,
+                total: (existing?.total || 0) + currentTotal,
+                size
+            });
+        });
+
+        const individuais = Array.from(individuaisMap.values());
+        const packageSizes = Array.from(packageSizeMap.entries())
+            .map(([size, total]) => ({ size, total }))
+            .sort((a, b) => a.size - b.size);
+
+        const packMovements = stockMovements.filter(m => m.stockItemCode?.startsWith('PACK:'));
+
+        // Agrupar por setor (usando o setor do usuário que criou o log)
+        const setorMap = new Map<string, { entradas: number, saidas: number }>();
+        const usersMap = new Map(users.map(u => [u.name, u]));
+
+        packMovements.forEach(m => {
+            const user = usersMap.get(m.createdBy) as User | undefined;
+            const setor = user?.setor?.[0] || 'Geral';
+            const stats = setorMap.get(setor) || { entradas: 0, saidas: 0 };
+            if (m.qty_delta > 0) stats.entradas += m.qty_delta;
+            else stats.saidas += Math.abs(m.qty_delta);
+            setorMap.set(setor, stats);
+        });
+
+        const setores = Array.from(setorMap.entries()).map(([name, stats]) => ({ name, ...stats }));
+
+        const entradas = packMovements.filter(m => m.qty_delta > 0);
+        const saidas = packMovements.filter(m => m.qty_delta < 0);
+
+        const ultimaEntrada = entradas.length > 0 ? new Date(Math.max(...entradas.map(m => new Date(m.createdAt).getTime()))) : null;
+        const ultimaSaida = saidas.length > 0 ? new Date(Math.max(...saidas.map(m => new Date(m.createdAt).getTime()))) : null;
+
+        return { totalGeral, individuais, packageSizes, setores, ultimaEntrada, ultimaSaida, packMovements, entradas, saidas };
+    }, [packGroups, stockItems, stockMovements, users]);
+
+    const generateProdutosProntosPDF = () => {
+        const doc = new jsPDF();
+        const startY = 20;
+
+        doc.setFontSize(22);
+        doc.setTextColor(41, 128, 185);
+        doc.text('Relatório de Fluxo de Produção', 14, startY);
+
+        doc.setFontSize(10);
+        doc.setTextColor(100);
+        const hojeObj = new Date();
+        doc.text(`Gerado em: ${hojeObj.toLocaleString()}`, 14, startY + 8);
+        doc.line(14, startY + 12, 196, startY + 12);
+
+        let yPos = startY + 25;
+
+        // --- Totais do Dia ---
+        const hoje = hojeObj.toISOString().split('T')[0];
+        const entradasDoDia = relatorioProdutosProntos.entradas.filter(m => m.createdAt.startsWith(hoje));
+        const saidasDoDia = relatorioProdutosProntos.saidas.filter(m => m.createdAt.startsWith(hoje));
+        const sumEntradas = entradasDoDia.reduce((acc, m) => acc + m.qty_delta, 0);
+        const sumSaidas = saidasDoDia.reduce((acc, m) => acc + Math.abs(m.qty_delta), 0);
+
+        autoTable(doc, {
+            startY: yPos,
+            head: [['Resumo Diário', 'Total']],
+            body: [
+                ['Total Geral em Estoque', `${relatorioProdutosProntos.totalGeral} UN`],
+                ['Entradas Hoje', `${sumEntradas} UN`],
+                ['Saídas Hoje', `${sumSaidas} UN`],
+                ['Saldo do Dia', `${sumEntradas - sumSaidas} UN`]
+            ],
+            theme: 'grid',
+            styles: { fontSize: 10, halign: 'center' },
+            headStyles: { fillColor: [41, 128, 185] }
+        });
+
+        yPos = (doc as any).lastAutoTable.finalY + 15;
+
+        // --- Mini Gráfico (Barras por Pacote) ---
+        doc.setFontSize(14);
+        doc.setTextColor(52, 73, 94);
+        doc.text('Distribuição por Tamanho de Pacote', 14, yPos);
+        yPos += 10;
+
+        const maxTotal = Math.max(...relatorioProdutosProntos.packageSizes.map(p => p.total), 1);
+        const chartWidth = 100;
+        const chartHeight = 40;
+
+        doc.setDrawColor(200);
+        doc.line(14, yPos, 14, yPos + chartHeight); // Eixo Y
+        doc.line(14, yPos + chartHeight, 14 + chartWidth, yPos + chartHeight); // Eixo X
+
+        relatorioProdutosProntos.packageSizes.forEach((p, idx) => {
+            const barWidth = 15;
+            const barSpacing = 10;
+            const barHeight = (p.total / maxTotal) * (chartHeight - 5);
+            const x = 14 + 5 + (idx * (barWidth + barSpacing));
+
+            doc.setFillColor(52, 152, 219);
+            doc.rect(x, yPos + chartHeight - barHeight, barWidth, barHeight, 'F');
+
+            doc.setFontSize(8);
+            doc.text(`${p.size} UN`, x + (barWidth / 2) - 3, yPos + chartHeight + 5);
+            doc.text(`${p.total}`, x + (barWidth / 2) - 2, yPos + chartHeight - barHeight - 2);
+        });
+
+        yPos += chartHeight + 15;
+
+        // --- Setores ---
+        doc.setFontSize(14);
+        doc.text('Movimentação por Setor', 14, yPos);
+        yPos += 10;
+
+        autoTable(doc, {
+            startY: yPos,
+            head: [['Setor', 'Entradas', 'Saídas', 'Total Líquido']],
+            body: relatorioProdutosProntos.setores.map(s => [
+                s.name,
+                `${s.entradas} UN`,
+                `${s.saidas} UN`,
+                `${s.entradas - s.saidas} UN`
+            ]),
+            theme: 'striped',
+            headStyles: { fillColor: [52, 73, 94] }
+        });
+
+        yPos = (doc as any).lastAutoTable.finalY + 15;
+
+        // --- Lista Completa ---
+        doc.setFontSize(14);
+        doc.text('Inventário Atual Detalhado', 14, yPos);
+        yPos += 10;
+
+        const itensData = relatorioProdutosProntos.individuais.map(i => [i.nome, i.sku, `Pacote ${i.size} UN`, `${i.total} UN`]);
+        autoTable(doc, {
+            startY: yPos,
+            head: [['Nome do Item', 'Código SKU', 'Tamanho', 'Saldo']],
+            body: itensData,
+            theme: 'striped',
+            headStyles: { fillColor: [52, 73, 94] }
+        });
+
+        yPos = (doc as any).lastAutoTable.finalY + 15;
+
+        // --- Histórico ---
+        if (yPos > 240) { doc.addPage(); yPos = 20; }
+        doc.setFontSize(14);
+        doc.text('Todas as Movimentações do Período', 14, yPos);
+        yPos += 10;
+
+        const movData = [...relatorioProdutosProntos.packMovements].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map(m => {
+            const date = new Date(m.createdAt).toLocaleString();
+            const tipo = m.qty_delta > 0 ? 'Entrada' : 'Saída';
+            let itemNome = m.stockItemName || m.stockItemCode;
+            let itemSku = m.stockItemCode || 'N/A';
+
+            if (m.stockItemCode?.startsWith('PACK:')) {
+                const groupId = m.stockItemCode.replace('PACK:', '');
+                const group = packGroups.find(g => g.id === groupId);
+                if (group) {
+                    itemNome = group.name;
+                    if (group.item_codes.length > 0) {
+                        const matchedItem = stockItems.find(i => i.code === group.item_codes[0]);
+                        if (matchedItem) {
+                            itemNome = matchedItem.name;
+                            itemSku = matchedItem.code;
+                        }
+                    }
+                }
+            }
+            return [date, String(itemNome), String(itemSku), tipo, `${Math.abs(m.qty_delta)} UN`, m.createdBy || 'Sistema', m.ref || ''];
+        });
+
+        autoTable(doc, {
+            startY: yPos,
+            head: [['Data/Hora', 'Nome do Item', 'Código SKU', 'Tipo', 'Qtd', 'Responsável', 'Referência']],
+            body: movData,
+            theme: 'striped',
+            headStyles: { fillColor: [149, 165, 166] },
+            styles: { fontSize: 7 }
+        });
+
+        doc.save(`Relatorio_EcomFlow_${hoje}.pdf`);
+    };
+
     const renderContent = () => {
         const commonTableProps = {
             searchTerm, currentUser,
@@ -675,82 +903,218 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
             case 'pacotes':
                 return (
                     <div className="space-y-6">
-                        <div className="flex justify-end">
-                            <button onClick={() => setModalState(prev => ({ ...prev, updatePacksFromSheet: true }))} className="flex items-center text-xs font-black bg-emerald-600 text-white px-4 py-2.5 rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 uppercase tracking-widest">
-                                <FileUp size={16} className="mr-2" /> Importar via Excel
-                            </button>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                            {packGroups.map(group => {
-                                const isVolatil = group.tipo === 'volatil';
-                                const currentTotal = isVolatil
-                                    ? (group.quantidade_volatil || 0)
-                                    : stockItems
-                                        .filter(i => group.item_codes.includes(i.code))
-                                        .reduce((sum, i) => sum + i.current_qty, 0);
-                                const isBelowMin = currentTotal < group.min_pack_qty;
-                                return (
-                                    <div key={group.id} className={`bg-white p-6 rounded-2xl border-2 shadow-xl transition-all ${isBelowMin ? 'border-red-500 bg-red-50' : 'border-gray-100 hover:border-blue-300'}`}>
-                                        <div className="flex justify-between items-start mb-4">
-                                            <div className="flex-1">
-                                                <div className="flex items-center gap-2 mb-1">
-                                                    <h3 className="font-black text-slate-800 uppercase tracking-tighter">{group.name}</h3>
-                                                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest ${isVolatil ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
-                                                        }`}>
-                                                        {isVolatil ? '⚡ Volátil' : '📊 Tradicional'}
-                                                    </span>
-                                                </div>
-                                                <p className="text-[10px] font-bold text-gray-400 mt-1 uppercase">Monitorando {group.item_codes.length} SKUs</p>
-                                                {group.barcode && <p className="text-[9px] font-mono font-bold text-slate-500 mt-1 bg-white inline-block px-1 rounded border border-slate-200">{group.barcode}</p>}
-                                            </div>
-                                            <div className="flex gap-1">
-                                                <button
-                                                    onClick={() => setModalState(p => ({ ...p, bulkUpdate: { isOpen: true, preselectedCodes: group.item_codes, title: `Ajuste Rápido: ${group.name}` } }))}
-                                                    title="Ajustar Estoque dos Itens"
-                                                    className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg"
-                                                >
-                                                    <SlidersHorizontal size={16} />
-                                                </button>
-                                                <button onClick={() => setModalState(p => ({ ...p, packGroup: group, isPackModalOpen: true }))} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg"><Edit3 size={16} /></button>
-                                                <button onClick={() => setItemToDelete({ item: group, type: 'pack_group' })} className="p-2 text-red-600 hover:bg-red-100 rounded-lg"><Trash2 size={16} /></button>
-                                            </div>
-                                        </div>
-                                        <div className="flex justify-between items-end">
-                                            <div>
-                                                <p className="text-[10px] font-black text-gray-400 uppercase mb-1">{isVolatil ? 'Qtd. Manual' : 'Estoque Calculado'}</p>
-                                                <p className={`text-4xl font-black ${isBelowMin ? 'text-red-600' : 'text-emerald-600'}`}>{currentTotal.toFixed(0)} <span className="text-sm">UN</span></p>
-                                            </div>
-                                            <div className="text-right">
-                                                <p className="text-[10px] font-black text-gray-400 uppercase mb-1">Meta Mínima</p>
-                                                <p className="text-xl font-black text-slate-600">{group.min_pack_qty} <span className="text-xs">UN</span></p>
-                                            </div>
-                                        </div>
-                                        <div className="w-full bg-slate-200 h-1.5 rounded-full mt-2 overflow-hidden">
-                                            <div
-                                                className={`h-full transition-all duration-700 ${isBelowMin ? 'bg-red-500' : 'bg-emerald-500'}`}
-                                                style={{ width: `${Math.min(100, (currentTotal / (group.min_pack_qty || 1)) * 100)}%` }}
-                                            />
-                                        </div>
-                                        {isVolatil && (
-                                            <div className="flex gap-2 mt-4 pt-3 border-t border-slate-100">
-                                                <button
-                                                    onClick={() => setVolatilModal({ isOpen: true, group, type: 'entrada' })}
-                                                    className="flex-1 flex items-center justify-center gap-1 py-2 bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-emerald-200 transition-all"
-                                                >
-                                                    <ArrowDownCircle size={14} /> Entrada
-                                                </button>
-                                                <button
-                                                    onClick={() => setVolatilModal({ isOpen: true, group, type: 'saida' })}
-                                                    className="flex-1 flex items-center justify-center gap-1 py-2 bg-red-100 text-red-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-red-200 transition-all"
-                                                >
-                                                    <ArrowUpCircle size={14} /> Saída
-                                                </button>
-                                            </div>
-                                        )}
+                        {/* Relatório de Produtos Prontos */}
+                        <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col md:flex-row gap-6">
+                            <div className="flex-1">
+                                <h3 className="text-lg font-black text-slate-800 uppercase tracking-tighter mb-4 flex items-center gap-2">
+                                    <Box className="text-blue-500" size={20} /> Relatório de Produtos Prontos
+                                </h3>
+                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                    <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
+                                        <p className="text-[10px] font-black text-blue-500 uppercase">Total Geral Adicionado</p>
+                                        <p className="text-3xl font-black text-blue-700">{relatorioProdutosProntos.totalGeral} <span className="text-xs">UN</span></p>
                                     </div>
-                                );
-                            })}
+                                    <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
+                                        <p className="text-[10px] font-black text-emerald-500 uppercase">Última Entrada</p>
+                                        <p className="text-sm font-bold text-emerald-700 mt-1">{relatorioProdutosProntos.ultimaEntrada ? relatorioProdutosProntos.ultimaEntrada.toLocaleString() : 'N/A'}</p>
+                                    </div>
+                                    <div className="bg-red-50 p-4 rounded-xl border border-red-100">
+                                        <p className="text-[10px] font-black text-red-500 uppercase">Última Saída</p>
+                                        <p className="text-sm font-bold text-red-700 mt-1">{relatorioProdutosProntos.ultimaSaida ? relatorioProdutosProntos.ultimaSaida.toLocaleString() : 'N/A'}</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="w-full md:w-64 bg-slate-50 p-4 rounded-xl border border-slate-100 max-h-40 overflow-y-auto">
+                                <p className="text-[10px] font-black text-slate-500 uppercase mb-2">Resumo de Seleção</p>
+                                <div className="space-y-2">
+                                    <div className="flex justify-between items-center text-xs pb-1 border-b">
+                                        <span className="font-bold text-slate-700">Total Pacotes</span>
+                                        <span className="font-black text-blue-600">{packGroups.length}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs pb-1 border-b">
+                                        <span className="font-bold text-slate-700">Selecionados</span>
+                                        <span className="font-black text-blue-600">{selectedPacks.length}</span>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
+
+                        {/* Controles de Visualização e Filtro */}
+                        <div className="flex justify-between items-center bg-white p-4 rounded-xl border mb-4">
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => setViewModePacks('grid')}
+                                    className={`p-2 rounded-lg transition-all ${viewModePacks === 'grid' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}
+                                >
+                                    <Layers size={18} />
+                                </button>
+                                <button
+                                    onClick={() => setViewModePacks('list')}
+                                    className={`p-2 rounded-lg transition-all ${viewModePacks === 'list' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}
+                                >
+                                    <FileText size={18} />
+                                </button>
+                            </div>
+
+                            {selectedPacks.length > 0 && (
+                                <div className="flex items-center gap-3">
+                                    <span className="text-xs font-bold text-gray-500 uppercase">{selectedPacks.length} Selecionados</span>
+                                    <button
+                                        onClick={() => setSelectedPacks([])}
+                                        className="text-xs font-bold text-red-500 uppercase hover:underline"
+                                    >
+                                        Limpar
+                                    </button>
+                                </div>
+                            )}
+
+                            <div className="flex gap-2">
+                                <button onClick={generateProdutosProntosPDF} className="flex items-center text-xs font-black bg-blue-600 text-white px-4 py-2.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 uppercase tracking-widest">
+                                    <FileText size={16} className="mr-2" /> Gerar PDF
+                                </button>
+                                <button onClick={() => setModalState(prev => ({ ...prev, updatePacksFromSheet: true }))} className="flex items-center text-xs font-black bg-emerald-600 text-white px-4 py-2.5 rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 uppercase tracking-widest">
+                                    <FileUp size={16} className="mr-2" /> Importar via Excel
+                                </button>
+                            </div>
+                        </div>
+
+                        {viewModePacks === 'grid' ? (
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                                {packGroups.map(group => {
+                                    const isVolatil = group.tipo === 'volatil';
+                                    const currentTotal = isVolatil
+                                        ? (group.quantidade_volatil || 0)
+                                        : stockItems
+                                            .filter(i => group.item_codes.includes(i.code))
+                                            .reduce((sum, i) => sum + i.current_qty, 0);
+                                    const isBelowMin = currentTotal < group.min_pack_qty;
+                                    return (
+                                        <div key={group.id} className={`bg-white p-6 rounded-2xl border-2 shadow-xl transition-all ${isBelowMin ? 'border-red-500 bg-red-50' : 'border-gray-100 hover:border-blue-300'}`}>
+                                            <div className="flex justify-between items-start mb-4">
+                                                <div className="flex-1">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <h3 className="font-black text-slate-800 uppercase tracking-tighter">{group.name}</h3>
+                                                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest ${isVolatil ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
+                                                            }`}>
+                                                            {isVolatil ? '⚡ Volátil' : '📊 Tradicional'}
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-[10px] font-bold text-gray-400 mt-1 uppercase">Monitorando {group.item_codes.length} SKUs</p>
+                                                    {group.barcode && <p className="text-[9px] font-mono font-bold text-slate-500 mt-1 bg-white inline-block px-1 rounded border border-slate-200">{group.barcode}</p>}
+                                                </div>
+                                                <div className="flex gap-1">
+
+                                                    <button onClick={() => setModalState(p => ({ ...p, packGroup: group, isPackModalOpen: true }))} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg"><Edit3 size={16} /></button>
+                                                    <button onClick={() => setItemToDelete({ item: group, type: 'pack_group' })} className="p-2 text-red-600 hover:bg-red-100 rounded-lg"><Trash2 size={16} /></button>
+                                                </div>
+                                            </div>
+                                            <div className="flex justify-between items-end">
+                                                <div>
+                                                    <p className="text-[10px] font-black text-gray-400 uppercase mb-1">{isVolatil ? 'Qtd. Manual' : 'Estoque Calculado'}</p>
+                                                    <p className={`text-4xl font-black ${isBelowMin ? 'text-red-600' : 'text-emerald-600'}`}>{currentTotal.toFixed(0)} <span className="text-sm">UN</span></p>
+                                                </div>
+                                                <div className="text-right">
+                                                    <p className="text-[10px] font-black text-gray-400 uppercase mb-1">Meta Mínima</p>
+                                                    <p className="text-xl font-black text-slate-600">{group.min_pack_qty} <span className="text-xs">UN</span></p>
+                                                </div>
+                                            </div>
+                                            <div className="w-full bg-slate-200 h-1.5 rounded-full mt-2 overflow-hidden">
+                                                <div
+                                                    className={`h-full transition-all duration-700 ${isBelowMin ? 'bg-red-500' : 'bg-emerald-500'}`}
+                                                    style={{ width: `${Math.min(100, (currentTotal / (group.min_pack_qty || 1)) * 100)}%` }}
+                                                />
+                                            </div>
+                                            {isVolatil && (
+                                                <div className="flex gap-2 mt-4 pt-3 border-t border-slate-100">
+                                                    <button
+                                                        onClick={() => setVolatilModal({ isOpen: true, group, type: 'entrada' })}
+                                                        className="flex-1 flex items-center justify-center gap-1 py-2 bg-emerald-100 text-emerald-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-emerald-200 transition-all"
+                                                    >
+                                                        <ArrowDownCircle size={14} /> Entrada
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setVolatilModal({ isOpen: true, group, type: 'saida' })}
+                                                        className="flex-1 flex items-center justify-center gap-1 py-2 bg-red-100 text-red-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-red-200 transition-all"
+                                                    >
+                                                        <ArrowUpCircle size={14} /> Saída
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="bg-white border rounded-2xl overflow-hidden shadow-sm">
+                                <table className="w-full text-left">
+                                    <thead className="bg-slate-50 border-b">
+                                        <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                                            <th className="px-6 py-4 w-10">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedPacks.length === packGroups.length && packGroups.length > 0}
+                                                    onChange={(e) => setSelectedPacks(e.target.checked ? packGroups.map(g => g.id) : [])}
+                                                    className="h-4 w-4 rounded border-gray-300"
+                                                />
+                                            </th>
+                                            <th className="px-6 py-4">Status</th>
+                                            <th className="px-6 py-4">Nome do Pacote</th>
+                                            <th className="px-6 py-4">Estoque</th>
+                                            <th className="px-6 py-4 text-right">Ações</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100">
+                                        {packGroups.map(group => {
+                                            const isSelected = selectedPacks.includes(group.id);
+                                            const isVolatil = group.tipo === 'volatil';
+                                            const currentTotal = isVolatil
+                                                ? (group.quantidade_volatil || 0)
+                                                : stockItems
+                                                    .filter(i => group.item_codes.includes(i.code))
+                                                    .reduce((sum, i) => sum + i.current_qty, 0);
+                                            const isBelowMin = currentTotal < group.min_pack_qty;
+
+                                            return (
+                                                <tr key={group.id} className={`hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50/50' : ''}`}>
+                                                    <td className="px-6 py-4">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={isSelected}
+                                                            onChange={() => {
+                                                                setSelectedPacks(prev => isSelected ? prev.filter(id => id !== group.id) : [...prev, group.id]);
+                                                            }}
+                                                            className="h-4 w-4 rounded border-gray-300 text-blue-600"
+                                                        />
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest ${isVolatil ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'}`}>
+                                                            {isVolatil ? '⚡' : '📊'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <span className="text-sm font-black text-slate-700 uppercase">{group.name}</span>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <span className={`text-sm font-black ${isBelowMin ? 'text-red-600' : 'text-emerald-600'}`}>{currentTotal.toFixed(0)} UN</span>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-right">
+                                                        <div className="flex justify-end gap-1">
+                                                            {isVolatil && (
+                                                                <>
+                                                                    <button onClick={() => setVolatilModal({ isOpen: true, group, type: 'entrada' })} className="p-2 bg-emerald-50 text-emerald-600 rounded-lg hover:bg-emerald-600 hover:text-white transition-all"><ArrowDownCircle size={14} /></button>
+                                                                    <button onClick={() => setVolatilModal({ isOpen: true, group, type: 'saida' })} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-all"><ArrowUpCircle size={14} /></button>
+                                                                </>
+                                                            )}
+                                                            <button onClick={() => setModalState(prev => ({ ...prev, packDetail: group }))} className="p-2 text-slate-400 hover:text-blue-600 transition-all"><ArrowRight size={18} /></button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
                     </div>
                 );
             case 'pesagem': return (

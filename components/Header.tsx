@@ -8,9 +8,10 @@ interface HeaderProps {
   onFilterChange: (filters: DashboardFilters) => void;
   onSettingsClick: () => void;
   generalSettings: GeneralSettings;
+  onExportDailyLog: () => void;
 }
 
-const Header: React.FC<HeaderProps> = ({ filters, onFilterChange, onSettingsClick, generalSettings }) => {
+const Header: React.FC<HeaderProps> = ({ filters, onFilterChange, onSettingsClick, generalSettings, onExportDailyLog }) => {
   const setPeriod = (period: Period) => {
     onFilterChange({ ...filters, period });
   };
@@ -71,9 +72,7 @@ const Header: React.FC<HeaderProps> = ({ filters, onFilterChange, onSettingsClic
             Último sync: {new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
           </div>
           <button
-            onClick={() => {
-              alert('A exportação do log diário TXT compila dados reais no final do dia. Coleta em andamento...');
-            }}
+            onClick={onExportDailyLog}
             className="flex items-center text-sm text-green-700 bg-green-50 px-3 py-2 rounded-lg border border-green-200 shadow-sm hover:bg-green-100 transition-colors font-bold"
           >
             {/* Ícone Download inline pra não encavalar dependencias */}

@@ -1,8 +1,8 @@
 
 import React, { useMemo, useState } from 'react';
 import { OrderItem, Canal, StockItem, ProdutoCombinado, SkuLink, GeneralSettings, MaterialItem, TaxEntry } from '../types';
-import { 
-    DollarSign, TrendingUp, 
+import {
+    DollarSign, TrendingUp,
     FileUp, FileDown, Calendar, ArrowRight, Loader2, ShoppingBag, Box, Trash2, Settings, CheckCircle, RefreshCw, ChevronDown, ChevronRight, FileSpreadsheet, AlertCircle, Percent, PieChart, Landmark, Plus, Minus, FileCode, AlertTriangle
 } from 'lucide-react';
 import { calculateMaterialList } from '../lib/estoque';
@@ -16,9 +16,10 @@ interface FinancePageProps {
     skuLinks: SkuLink[];
     produtosCombinados: ProdutoCombinado[];
     generalSettings: GeneralSettings;
-    onDeleteOrders: (orderIds: string[]) => Promise<void>;
+    onDeleteOrders: (ids: string[]) => Promise<void>;
     onLaunchOrders: (orders: OrderItem[]) => Promise<void>;
-    onNavigateToSettings?: () => void;
+    onSaveSettings?: (settings: GeneralSettings) => void;
+    onNavigateToSettings: () => void;
 }
 
 interface FinanceStatCardProps {
@@ -39,16 +40,16 @@ const FinanceStatCard: React.FC<FinanceStatCardProps> = ({ label, value, color, 
         purple: 'bg-purple-50 text-purple-700 border-purple-100',
         slate: 'bg-slate-50 text-slate-700 border-slate-100'
     };
-    
+
     const baseClass = `p-5 rounded-2xl border ${colors[color]} flex flex-col justify-between h-full relative overflow-hidden transition-all hover:shadow-md`;
     const highlightClass = highlight ? 'ring-2 ring-emerald-500 shadow-lg' : 'shadow-sm';
-    
+
     return (
         <div className={`${baseClass} ${highlightClass}`}>
             <div className="z-10 relative w-full">
                 <p className="text-[10px] font-black uppercase tracking-widest opacity-70 mb-1">{label}</p>
                 <p className="text-2xl font-black tracking-tight">{value}</p>
-                
+
                 {breakdown ? (
                     <div className="mt-3 space-y-1 border-t border-black/5 pt-2">
                         {breakdown.map((item, idx) => (
@@ -66,21 +67,31 @@ const FinanceStatCard: React.FC<FinanceStatCardProps> = ({ label, value, color, 
     );
 };
 
-const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLinks, produtosCombinados, generalSettings, onDeleteOrders, onLaunchOrders, onNavigateToSettings }) => {
+const FinancePage: React.FC<FinancePageProps> = ({
+    allOrders,
+    stockItems,
+    skuLinks,
+    produtosCombinados,
+    generalSettings,
+    onDeleteOrders,
+    onLaunchOrders,
+    onSaveSettings,
+    onNavigateToSettings
+}) => {
     const [activeTab, setActiveTab] = useState<'overview' | 'reports' | 'materials'>('overview');
-    
+
     // Novo: Lista de impostos
     const [taxes, setTaxes] = useState<TaxEntry[]>([
         { id: '1', name: 'Simples Nacional', type: 'percent', value: 6 }
     ]);
-    
+
     const [rankingMetric, setRankingMetric] = useState<'revenue' | 'quantity'>('revenue');
     const [period, setPeriod] = useState<'today' | 'last7days' | 'thisMonth' | 'lastMonth' | 'custom' | 'last_upload'>('thisMonth');
     const [canalFilter, setCanalFilter] = useState<Canal | 'ALL'>('ALL');
     const [customDates, setCustomDates] = useState({ start: '', end: '' });
     const [considerarInvalidos, setConsiderarInvalidos] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
-    
+
     // Modal states
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [isDeleteAllModalOpen, setIsDeleteAllModalOpen] = useState(false); // Novo modal para apagar tudo
@@ -116,7 +127,7 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
             startLimit = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
             endLimit = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
         } else if (period === 'last7days') {
-            startLimit = new Date(); startLimit.setDate(now.getDate() - 7); startLimit.setHours(0,0,0,0);
+            startLimit = new Date(); startLimit.setDate(now.getDate() - 7); startLimit.setHours(0, 0, 0, 0);
         } else if (period === 'thisMonth') {
             startLimit = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
         } else if (period === 'lastMonth') {
@@ -151,7 +162,7 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
         groups.forEach((group) => {
             const first = group[0];
             const isRep = generalSettings.isRepeatedValue;
-            
+
             const gGross = isRep ? Number(first.price_total || 0) : group.reduce((s, i) => s + (i.price_total || 0), 0);
             const gFees = isRep ? Number(first.platform_fees || 0) : group.reduce((s, i) => s + (i.platform_fees || 0), 0);
             const gShip = isRep ? Number(first.shipping_fee || 0) : group.reduce((s, i) => s + (i.shipping_fee || 0), 0);
@@ -161,7 +172,7 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
             base.fees += gFees;
             base.shipping += gShip;
             base.net += (gGross - gFees - gShip - gCustomerShip);
-            
+
             if (first.canal === 'ML') comparison.ml += gGross;
             else if (first.canal === 'SHOPEE') comparison.shopee += gGross;
             else comparison.site += gGross;
@@ -186,7 +197,7 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
         const finalNetProfit = base.net - totalTaxCalculated;
 
         base.ranking = Array.from(skuMap.entries()).map(([code, d]) => ({ code, ...d }))
-            .sort((a,b) => rankingMetric === 'revenue' ? b.revenue - a.revenue : b.qty - a.qty);
+            .sort((a, b) => rankingMetric === 'revenue' ? b.revenue - a.revenue : b.qty - a.qty);
 
         const dailyMap = new Map<string, number>();
         groups.forEach((group) => {
@@ -199,7 +210,7 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
             dailyMap.set(key, (dailyMap.get(key) || 0) + gGross);
         });
         const dailyChart = Array.from(dailyMap.entries())
-            .sort(([a],[b]) => a.localeCompare(b))
+            .sort(([a], [b]) => a.localeCompare(b))
             .map(([date, value]) => ({ date, value }));
 
         const totalPedidos = groups.size;
@@ -226,7 +237,7 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
         try {
             const materialList = calculateMaterialList(filteredOrders, skuLinks, stockItems, produtosCombinados, generalSettings.expeditionRules, generalSettings);
             const periodLabel = period === 'custom' ? `${customDates.start} a ${customDates.end}` : period;
-            
+
             await exportFinanceReport({
                 period: periodLabel,
                 canal: canalFilter,
@@ -284,7 +295,7 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
                         <FileUp size={16} /> Importar Planilha
                     </button>
                     <button onClick={handleExport} disabled={isExporting} className="bg-red-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-red-100 hover:bg-red-700 transition-all flex items-center gap-2 disabled:opacity-50">
-                         {isExporting ? <Loader2 className="animate-spin" size={16}/> : <FileDown size={16} />} Exportar PDF
+                        {isExporting ? <Loader2 className="animate-spin" size={16} /> : <FileDown size={16} />} Exportar PDF
                     </button>
                 </div>
             </div>
@@ -296,10 +307,10 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
                         <div>
                             <h3 className="text-lg font-bold text-amber-800">Atenção: Faturamento Zerado</h3>
                             <p className="text-sm text-amber-700">
-                                Existem {filteredOrders.length} pedidos neste período, mas o valor total é R$ 0,00. 
-                                <br/>Isso indica que as colunas financeiras (Valor Total, Preço) não foram mapeadas corretamente na importação.
+                                Existem {filteredOrders.length} pedidos neste período, mas o valor total é R$ 0,00.
+                                <br />Isso indica que as colunas financeiras (Valor Total, Preço) não foram mapeadas corretamente na importação.
                             </p>
-                            <button 
+                            <button
                                 onClick={onNavigateToSettings}
                                 className="mt-2 text-sm font-black text-amber-800 underline hover:text-amber-900"
                             >
@@ -315,34 +326,34 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
                 <div className="lg:col-span-1 space-y-6">
                     <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4">
                         <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2">
-                            <Settings size={14} className="text-blue-500"/> Configuração de Impostos (Fiscal)
+                            <Settings size={14} className="text-blue-500" /> Configuração de Impostos (Fiscal)
                         </h3>
                         <p className="text-[10px] text-gray-400">Adicione aqui os impostos que serão deduzidos do faturamento bruto para o cálculo de lucro líquido.</p>
                         <div className="space-y-3">
                             {taxes.map(tax => (
                                 <div key={tax.id} className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-2 relative group">
                                     <button onClick={() => handleRemoveTax(tax.id)} className="absolute -top-2 -right-2 bg-white border shadow-sm p-1 rounded-full text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <Minus size={12}/>
+                                        <Minus size={12} />
                                     </button>
-                                    <input 
-                                        type="text" 
-                                        value={tax.name} 
+                                    <input
+                                        type="text"
+                                        value={tax.name}
                                         onChange={e => handleUpdateTax(tax.id, 'name', e.target.value)}
                                         className="w-full bg-transparent border-b border-slate-200 font-bold text-xs outline-none focus:border-blue-500"
                                         placeholder="Nome do Imposto"
                                     />
                                     <div className="flex gap-2">
-                                        <select 
-                                            value={tax.type} 
+                                        <select
+                                            value={tax.type}
                                             onChange={e => handleUpdateTax(tax.id, 'type', e.target.value)}
                                             className="bg-white border rounded-lg text-[10px] font-black p-1"
                                         >
                                             <option value="percent">%</option>
                                             <option value="fixed">R$</option>
                                         </select>
-                                        <input 
-                                            type="number" 
-                                            value={tax.value} 
+                                        <input
+                                            type="number"
+                                            value={tax.value}
                                             onChange={e => handleUpdateTax(tax.id, 'value', Number(e.target.value))}
                                             className="flex-1 bg-white border rounded-lg p-1 text-xs font-black text-right outline-none"
                                         />
@@ -350,14 +361,14 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
                                 </div>
                             ))}
                             <button onClick={handleAddTax} className="w-full py-2 border-2 border-dashed border-slate-200 rounded-2xl text-[10px] font-black text-slate-400 uppercase hover:bg-slate-50 hover:border-blue-200 transition-all flex items-center justify-center gap-2">
-                                <Plus size={14}/> Adicionar Imposto
+                                <Plus size={14} /> Adicionar Imposto
                             </button>
                         </div>
                     </div>
 
                     <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4">
                         <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2">
-                            <PieChart size={14} className="text-blue-500"/> Filtros de Visão
+                            <PieChart size={14} className="text-blue-500" /> Filtros de Visão
                         </h3>
                         <div className="space-y-3">
                             <select value={period} onChange={e => setPeriod(e.target.value as any)} className="w-full p-3 bg-slate-50 border rounded-xl text-xs font-black outline-none focus:ring-2 focus:ring-blue-500">
@@ -371,11 +382,11 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
                                 <div className="space-y-2">
                                     <div>
                                         <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">De</label>
-                                        <input type="date" value={customDates.start} onChange={e => setCustomDates(p => ({ ...p, start: e.target.value }))} className="w-full p-2 bg-slate-50 border rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 mt-1"/>
+                                        <input type="date" value={customDates.start} onChange={e => setCustomDates(p => ({ ...p, start: e.target.value }))} className="w-full p-2 bg-slate-50 border rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 mt-1" />
                                     </div>
                                     <div>
                                         <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Até</label>
-                                        <input type="date" value={customDates.end} onChange={e => setCustomDates(p => ({ ...p, end: e.target.value }))} className="w-full p-2 bg-slate-50 border rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 mt-1"/>
+                                        <input type="date" value={customDates.end} onChange={e => setCustomDates(p => ({ ...p, end: e.target.value }))} className="w-full p-2 bg-slate-50 border rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-blue-500 mt-1" />
                                     </div>
                                 </div>
                             )}
@@ -390,17 +401,17 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
 
                     {/* Botões de Limpeza */}
                     <div className="space-y-3">
-                        <button 
+                        <button
                             onClick={() => setIsDeleteModalOpen(true)}
                             className="w-full py-3 bg-slate-100 text-slate-600 rounded-xl font-bold uppercase text-xs tracking-widest hover:bg-slate-200 transition-all flex items-center justify-center gap-2"
                         >
-                            <Trash2 size={14}/> Limpar Filtro Atual
+                            <Trash2 size={14} /> Limpar Filtro Atual
                         </button>
-                        <button 
+                        <button
                             onClick={() => setIsDeleteAllModalOpen(true)}
                             className="w-full py-3 bg-red-100 text-red-700 rounded-xl font-bold uppercase text-xs tracking-widest hover:bg-red-200 transition-all flex items-center justify-center gap-2 border border-red-200"
                         >
-                            <AlertTriangle size={14}/> Zerar Tudo (Reset)
+                            <AlertTriangle size={14} /> Zerar Tudo (Reset)
                         </button>
                     </div>
                 </div>
@@ -409,26 +420,26 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
                 <div className="lg:col-span-3 space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         <FinanceStatCard label="Faturamento Bruto (Pedidos)" value={fmt(stats.gross)} color="blue" sub={`${stats.units} unidades vendidas`} />
-                        <FinanceStatCard 
-                            label="Deduções Marketplace" 
-                            value={fmt(stats.fees + stats.shipping)} 
-                            color="orange" 
+                        <FinanceStatCard
+                            label="Deduções Marketplace"
+                            value={fmt(stats.fees + stats.shipping)}
+                            color="orange"
                             breakdown={[
                                 { label: 'Comissões', value: fmt(stats.fees) },
                                 { label: 'Fretes Empresa', value: fmt(stats.shipping) }
                             ]}
                         />
-                        <FinanceStatCard 
-                            label="Impostos (Cálculo Fiscal)" 
-                            value={fmt(taxTotal)} 
-                            color="purple" 
+                        <FinanceStatCard
+                            label="Impostos (Cálculo Fiscal)"
+                            value={fmt(taxTotal)}
+                            color="purple"
                             breakdown={taxBreakdown.map(t => ({ label: t.name, value: fmt(t.calculatedAmount) }))}
                         />
-                        <FinanceStatCard 
-                            label="Líquido Final" 
-                            value={fmt(finalNetProfit)} 
-                            color="emerald" 
-                            highlight 
+                        <FinanceStatCard
+                            label="Líquido Final"
+                            value={fmt(finalNetProfit)}
+                            color="emerald"
+                            highlight
                             breakdown={[
                                 { label: 'Margem sobre bruto', value: fmtPct(margemPct), colorClass: margemPct >= 0 ? 'text-emerald-600' : 'text-red-600' }
                             ]}
@@ -438,15 +449,15 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
                     {/* Stats secundárias */}
                     <div className="grid grid-cols-3 gap-4">
                         <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3">
-                            <div className="p-2 bg-blue-50 rounded-xl"><TrendingUp size={18} className="text-blue-600"/></div>
+                            <div className="p-2 bg-blue-50 rounded-xl"><TrendingUp size={18} className="text-blue-600" /></div>
                             <div><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Total Pedidos</p><p className="text-xl font-black text-slate-800">{totalPedidos}</p></div>
                         </div>
                         <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3">
-                            <div className="p-2 bg-purple-50 rounded-xl"><DollarSign size={18} className="text-purple-600"/></div>
+                            <div className="p-2 bg-purple-50 rounded-xl"><DollarSign size={18} className="text-purple-600" /></div>
                             <div><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Ticket Médio</p><p className="text-xl font-black text-slate-800">{fmt(ticketMedio)}</p></div>
                         </div>
                         <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3">
-                            <div className="p-2 bg-slate-50 rounded-xl"><Calendar size={18} className="text-slate-500"/></div>
+                            <div className="p-2 bg-slate-50 rounded-xl"><Calendar size={18} className="text-slate-500" /></div>
                             <div><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Dias com Vendas</p><p className="text-xl font-black text-slate-800">{dailyChart.length}</p></div>
                         </div>
                     </div>
@@ -455,7 +466,7 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
                     {dailyChart.length > 1 && (
                         <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
                             <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest mb-4 flex items-center gap-2">
-                                <TrendingUp size={14} className="text-blue-500"/> Receita Bruta por Dia
+                                <TrendingUp size={14} className="text-blue-500" /> Receita Bruta por Dia
                             </h3>
                             <div className="flex items-end gap-1 h-24">
                                 {(() => {
@@ -485,15 +496,15 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div className="p-5 bg-yellow-50 border border-yellow-100 rounded-3xl flex justify-between items-center">
                                 <div><p className="text-[9px] font-black text-yellow-600 uppercase mb-1">Mercado Livre</p><p className="text-xl font-black text-yellow-800">{fmt(canalComparison.ml)}</p></div>
-                                <Landmark size={24} className="text-yellow-200"/>
+                                <Landmark size={24} className="text-yellow-200" />
                             </div>
                             <div className="p-5 bg-orange-50 border border-orange-100 rounded-3xl flex justify-between items-center">
                                 <div><p className="text-[9px] font-black text-orange-600 uppercase mb-1">Shopee</p><p className="text-xl font-black text-orange-800">{fmt(canalComparison.shopee)}</p></div>
-                                <Landmark size={24} className="text-orange-200"/>
+                                <Landmark size={24} className="text-orange-200" />
                             </div>
                             <div className="p-5 bg-blue-50 border border-blue-100 rounded-3xl flex justify-between items-center">
                                 <div><p className="text-[9px] font-black text-blue-600 uppercase mb-1">Site / Outros</p><p className="text-xl font-black text-blue-800">{fmt(canalComparison.site)}</p></div>
-                                <Landmark size={24} className="text-blue-200"/>
+                                <Landmark size={24} className="text-blue-200" />
                             </div>
                         </div>
                     )}
@@ -501,7 +512,7 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
                     <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden">
                         <div className="p-6 border-b flex justify-between items-center bg-slate-50/50">
                             <h3 className="font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
-                                <TrendingUp size={20} className="text-blue-600"/> Performance de Vendas por SKU
+                                <TrendingUp size={20} className="text-blue-600" /> Performance de Vendas por SKU
                             </h3>
                             <div className="flex bg-slate-200 p-1 rounded-xl">
                                 <button onClick={() => setRankingMetric('revenue')} className={`px-4 py-1.5 text-[9px] font-black uppercase rounded-lg transition-all ${rankingMetric === 'revenue' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Por Receita</button>
@@ -522,7 +533,7 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
                                 <tbody className="divide-y divide-slate-50 font-bold text-slate-600">
                                     {stats.ranking.slice(0, 30).map((item, idx) => (
                                         <tr key={item.code} className="hover:bg-slate-50 transition-colors">
-                                            <td className="px-6 py-4 text-xs text-slate-400">#{idx+1}</td>
+                                            <td className="px-6 py-4 text-xs text-slate-400">#{idx + 1}</td>
                                             <td className="px-6 py-4">
                                                 <p className="text-slate-800 uppercase leading-tight">{item.name}</p>
                                                 <p className="text-[9px] font-mono text-slate-400">{item.code}</p>
@@ -543,29 +554,30 @@ const FinancePage: React.FC<FinancePageProps> = ({ allOrders, stockItems, skuLin
                 </div>
             </div>
 
-            <FinanceImportModal 
-                isOpen={isImportModalOpen} 
-                onClose={() => setIsImportModalOpen(false)} 
+            <FinanceImportModal
+                isOpen={isImportModalOpen}
+                onClose={() => setIsImportModalOpen(false)}
                 allOrders={allOrders}
                 generalSettings={generalSettings}
                 onLaunchOrders={onLaunchOrders}
+                onSaveSettings={onSaveSettings}
             />
-            
-            <ConfirmActionModal 
-                isOpen={isDeleteModalOpen} 
-                onClose={() => setIsDeleteModalOpen(false)} 
-                onConfirm={handleClearFilteredData} 
-                title="Limpar Histórico Filtrado" 
+
+            <ConfirmActionModal
+                isOpen={isDeleteModalOpen}
+                onClose={() => setIsDeleteModalOpen(false)}
+                onConfirm={handleClearFilteredData}
+                title="Limpar Histórico Filtrado"
                 message={<p>Deseja excluir permanentemente os pedidos filtrados deste período? Esta ação é irreversível.</p>}
                 confirmButtonText="Confirmar Exclusão"
                 isConfirming={isDeleting}
             />
 
-            <ConfirmActionModal 
-                isOpen={isDeleteAllModalOpen} 
-                onClose={() => setIsDeleteAllModalOpen(false)} 
-                onConfirm={handleClearAllData} 
-                title="Zerar Todo o Financeiro" 
+            <ConfirmActionModal
+                isOpen={isDeleteAllModalOpen}
+                onClose={() => setIsDeleteAllModalOpen(false)}
+                onConfirm={handleClearAllData}
+                title="Zerar Todo o Financeiro"
                 message={<><p><strong>ATENÇÃO:</strong> Você está prestes a apagar <strong>TODOS OS PEDIDOS ({allOrders.length})</strong> do banco de dados.</p><p className="mt-2 text-sm">Isso limpará completamente o histórico financeiro, relatórios de vendas e vínculos de bipagem de todos os pedidos.</p><p className="mt-2 text-red-600 font-bold uppercase">Esta ação é irreversível.</p></>}
                 confirmButtonText="Sim, Zerar Tudo"
                 isConfirming={isDeleting}

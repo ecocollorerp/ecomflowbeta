@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { X, ArrowDownCircle, ArrowUpCircle, Package, Search } from 'lucide-react';
 import { StockItem, StockPackGroup } from '../types';
@@ -13,51 +12,57 @@ interface VolatilMovementModalProps {
 }
 
 const VolatilMovementModal: React.FC<VolatilMovementModalProps> = ({ isOpen, onClose, group, stockItems, onConfirm, movementType }) => {
-    const [quantity, setQuantity] = useState(1);
+    const isEntrada = movementType === 'entrada';
     const [reference, setReference] = useState('');
-    const [selectedSku, setSelectedSku] = useState('');
-    const [skuSearch, setSkuSearch] = useState('');
     const [isSaving, setIsSaving] = useState(false);
 
-    const isEntrada = movementType === 'entrada';
+    // Estado dos inputs de cada SKU do grupo { [skuCode]: { packCount: number, packSize: number } }
+    const [inputs, setInputs] = useState<Record<string, { packCount: number, packSize: number }>>({});
 
-    // SKUs do grupo
-    const groupSkus = stockItems.filter(i => group.item_codes.includes(i.code));
+    const handleInputChange = (skuCode: string, field: 'packCount' | 'packSize', val: number) => {
+        setInputs(prev => {
+            const current = prev[skuCode] || { packCount: 0, packSize: 1 };
+            return {
+                ...prev,
+                [skuCode]: {
+                    ...current,
+                    [field]: val
+                }
+            };
+        });
+    };
 
-    // Busca de SKUs
-    const filteredSkus = groupSkus.filter(s =>
-        !skuSearch || s.name.toLowerCase().includes(skuSearch.toLowerCase()) || s.code.toLowerCase().includes(skuSearch.toLowerCase())
-    );
-
-    // Todos os SKUs disponíveis para adicionar (se grupo não tem SKUs vinculados)
-    const allAvailableSkus = stockItems.filter(i =>
-        i.kind === 'PRODUTO' && (!skuSearch || i.name.toLowerCase().includes(skuSearch.toLowerCase()) || i.code.toLowerCase().includes(skuSearch.toLowerCase()))
-    );
-
-    const displaySkus = groupSkus.length > 0 ? filteredSkus : allAvailableSkus.slice(0, 20);
-
-    const handleSave = async () => {
-        if (quantity <= 0) return;
+    const handleSaveAll = async () => {
         setIsSaving(true);
         try {
-            const delta = isEntrada ? quantity : -quantity;
-            await onConfirm(group.id, delta, reference, selectedSku || undefined);
+            const movementEntries = Object.entries(inputs)
+                .map(([skuCode, data]: [string, any]) => ({
+                    skuCode,
+                    quantity: data.packCount * data.packSize
+                }))
+                .filter(m => m.quantity > 0);
+
+            for (const movement of movementEntries) {
+                const delta = isEntrada ? movement.quantity : -movement.quantity;
+                await onConfirm(group.id, delta, reference, movement.skuCode);
+            }
             onClose();
-            setQuantity(1);
+            setInputs({});
             setReference('');
-            setSelectedSku('');
         } finally {
             setIsSaving(false);
         }
     };
 
+    const totalToChange = Object.values(inputs).reduce((sum: number, data: any) => sum + (data.packCount * data.packSize), 0);
+
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-2 md:p-4">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-[95vw] overflow-hidden flex flex-col h-[95vh] md:h-[90vh]">
                 {/* Header */}
-                <div className={`px-6 py-5 ${isEntrada ? 'bg-emerald-600' : 'bg-red-600'} text-white`}>
+                <div className={`px-6 py-5 ${isEntrada ? 'bg-emerald-600' : 'bg-red-600'} text-white shrink-0`}>
                     <div className="flex justify-between items-center">
                         <div className="flex items-center gap-3">
                             {isEntrada ? <ArrowDownCircle size={24} /> : <ArrowUpCircle size={24} />}
@@ -66,7 +71,7 @@ const VolatilMovementModal: React.FC<VolatilMovementModalProps> = ({ isOpen, onC
                                     {isEntrada ? 'Entrada' : 'Saída'} — {group.name}
                                 </h2>
                                 <p className="text-sm opacity-80">
-                                    Estoque atual: {group.quantidade_volatil || 0} UN
+                                    Estoque atual do Grupo: {group.quantidade_volatil || 0} UN
                                 </p>
                             </div>
                         </div>
@@ -76,105 +81,99 @@ const VolatilMovementModal: React.FC<VolatilMovementModalProps> = ({ isOpen, onC
                     </div>
                 </div>
 
-                <div className="p-6 space-y-5">
-                    {/* Quantidade */}
-                    <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">
-                            Quantidade
-                        </label>
-                        <input
-                            type="number"
-                            min={1}
-                            value={quantity}
-                            onChange={(e) => setQuantity(Math.max(1, Number(e.target.value)))}
-                            className={`w-full text-3xl font-black text-center py-4 border-2 rounded-2xl focus:outline-none transition-all ${isEntrada
-                                    ? 'border-emerald-300 focus:border-emerald-500 text-emerald-700 bg-emerald-50'
-                                    : 'border-red-300 focus:border-red-500 text-red-700 bg-red-50'
-                                }`}
-                            autoFocus
-                        />
-                        {!isEntrada && quantity > (group.quantidade_volatil || 0) && (
-                            <p className="text-xs text-red-500 mt-1 font-bold">
-                                ⚠️ Quantidade maior que o estoque atual ({group.quantidade_volatil || 0})
-                            </p>
+                <div className="p-6 space-y-5 overflow-y-auto flex-1">
+
+                    <div className="flex items-center justify-between text-xs font-black text-gray-400 tracking-widest uppercase mb-1">
+                        <span>SKUs do Grupo ({group.item_codes?.length || 0})</span>
+                        <span>Preencha as Quantidades</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {stockItems
+                            .filter(s => group.item_codes?.includes(s.code))
+                            .map(item => {
+                                const state = inputs[item.code] || { packCount: 0, packSize: 1 };
+                                const itemTotal = state.packCount * state.packSize;
+
+                                return (
+                                    <div key={item.id} className={`p-4 rounded-xl border-2 transition-all ${itemTotal > 0 ? (isEntrada ? 'border-emerald-300 bg-emerald-50' : 'border-red-300 bg-red-50') : 'border-gray-100 bg-white'}`}>
+                                        <div className="mb-3 flex justify-between items-start">
+                                            <div className="flex-1">
+                                                <p className="font-bold text-gray-800 text-sm truncate">{item.name}</p>
+                                                <p className="text-[10px] opacity-70 font-bold uppercase tracking-wider text-gray-500">SKU: {item.code}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-[9px] font-black text-gray-400 uppercase">Saldo Atual</p>
+                                                <p className="text-xs font-black text-gray-700">{item.current_qty} UN</p>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-1 block">Pacotes</label>
+                                                <input
+                                                    type="number" min={0} value={state.packCount}
+                                                    onChange={(e) => handleInputChange(item.code, 'packCount', Math.max(0, Number(e.target.value)))}
+                                                    className={`w-full text-center py-2 border-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 font-bold ${itemTotal > 0 ? (isEntrada ? 'border-emerald-200 focus:ring-emerald-500' : 'border-red-200 focus:ring-red-500') : 'border-gray-200 focus:border-gray-300'}`}
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="text-[9px] font-black text-gray-500 uppercase tracking-widest mb-1 block">Unidades / Pacote</label>
+                                                <input
+                                                    type="number" min={1} value={state.packSize}
+                                                    onChange={(e) => handleInputChange(item.code, 'packSize', Math.max(1, Number(e.target.value)))}
+                                                    className={`w-full text-center py-2 border-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-opacity-50 font-bold ${itemTotal > 0 ? (isEntrada ? 'border-emerald-200 focus:ring-emerald-500' : 'border-red-200 focus:ring-red-500') : 'border-gray-200 focus:border-gray-300'}`}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {itemTotal > 0 && (
+                                            <div className="mt-3 text-right">
+                                                <span className={`text-xs font-black uppercase tracking-widest px-2 py-1 rounded bg-white shadow-sm border ${isEntrada ? 'text-emerald-700 border-emerald-200' : 'text-red-700 border-red-200'}`}>
+                                                    {isEntrada ? '+' : '-'} {itemTotal} UN
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        {(!group.item_codes || group.item_codes.length === 0) && (
+                            <p className="col-span-full text-sm text-gray-500 italic text-center py-4 border-2 border-dashed rounded-xl">Nenhum SKU principal vinculado a este pacote.</p>
                         )}
                     </div>
 
-                    {/* SKU (opcional) */}
-                    <div>
-                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">
-                            SKU / Produto (opcional)
-                        </label>
-                        {selectedSku ? (
-                            <div className="flex items-center justify-between p-3 bg-blue-50 border-2 border-blue-200 rounded-xl">
-                                <div>
-                                    <p className="font-bold text-blue-800 text-sm">{selectedSku}</p>
-                                    <p className="text-xs text-blue-500">
-                                        {stockItems.find(s => s.code === selectedSku)?.name || ''}
-                                    </p>
-                                </div>
-                                <button onClick={() => setSelectedSku('')} className="text-blue-400 hover:text-blue-600">
-                                    <X size={16} />
-                                </button>
-                            </div>
-                        ) : (
-                            <div>
-                                <div className="relative mb-2">
-                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                                    <input
-                                        type="text"
-                                        placeholder="Buscar SKU ou nome..."
-                                        value={skuSearch}
-                                        onChange={(e) => setSkuSearch(e.target.value)}
-                                        className="w-full pl-9 pr-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-blue-400"
-                                    />
-                                </div>
-                                {displaySkus.length > 0 && (
-                                    <div className="max-h-32 overflow-y-auto border border-gray-200 rounded-xl">
-                                        {displaySkus.map(sku => (
-                                            <button
-                                                key={sku.id}
-                                                onClick={() => { setSelectedSku(sku.code); setSkuSearch(''); }}
-                                                className="w-full text-left px-3 py-2 hover:bg-blue-50 border-b border-gray-100 last:border-0 transition-all"
-                                            >
-                                                <span className="font-bold text-xs text-gray-800">{sku.code}</span>
-                                                <span className="text-xs text-gray-500 ml-2">{sku.name}</span>
-                                                <span className="text-xs text-gray-400 ml-2">({sku.current_qty} un)</span>
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                    </div>
+                    {!isEntrada && totalToChange > (group.quantidade_volatil || 0) && (
+                        <p className="text-xs text-red-500 font-bold text-center bg-red-100 p-2 rounded-lg">
+                            ⚠️ A quantidade total de saída ({totalToChange}) é maior que o estoque atual ({group.quantidade_volatil || 0})
+                        </p>
+                    )}
 
                     {/* Referência */}
-                    <div>
+                    <div className="pt-2 border-t">
                         <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 block">
-                            Referência / Observação
+                            Referência / Observação (Geral)
                         </label>
                         <input
                             type="text"
-                            placeholder="Ex: Produção lote #42, Venda cliente XYZ..."
+                            placeholder="Ex: Fabricação própria, Ajuste inventário..."
                             value={reference}
                             onChange={(e) => setReference(e.target.value)}
                             className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-blue-400"
                         />
                     </div>
 
-                    {/* Preview */}
-                    <div className={`p-4 rounded-2xl ${isEntrada ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'}`}>
+                    {/* Preview Global */}
+                    <div className={`p-4 rounded-xl ${isEntrada ? 'bg-emerald-100' : 'bg-red-100'}`}>
                         <div className="flex justify-between items-center">
-                            <span className="text-xs font-bold text-gray-500 uppercase">Resultado</span>
+                            <span className="text-xs font-black text-gray-600 uppercase tracking-widest">Estoque Final Estimado</span>
                             <span className={`text-xl font-black ${isEntrada ? 'text-emerald-700' : 'text-red-700'}`}>
-                                {(group.quantidade_volatil || 0)} → {Math.max(0, (group.quantidade_volatil || 0) + (isEntrada ? quantity : -quantity))} UN
+                                {(group.quantidade_volatil || 0)} → {Math.max(0, (group.quantidade_volatil || 0) + (isEntrada ? totalToChange : -totalToChange))} UN
                             </span>
                         </div>
                     </div>
                 </div>
 
                 {/* Footer */}
-                <div className="px-6 py-4 bg-gray-50 border-t flex justify-end gap-3">
+                <div className="px-6 py-4 bg-gray-50 border-t flex justify-end gap-3 shrink-0">
                     <button
                         onClick={onClose}
                         className="px-6 py-3 text-sm font-black uppercase tracking-widest text-gray-600 hover:bg-gray-200 rounded-xl transition-all"
@@ -182,15 +181,15 @@ const VolatilMovementModal: React.FC<VolatilMovementModalProps> = ({ isOpen, onC
                         Cancelar
                     </button>
                     <button
-                        onClick={handleSave}
-                        disabled={isSaving || quantity <= 0}
+                        onClick={handleSaveAll}
+                        disabled={isSaving || totalToChange === 0}
                         className={`px-8 py-3 text-sm font-black uppercase tracking-widest text-white rounded-xl transition-all flex items-center gap-2 shadow-lg disabled:opacity-50 ${isEntrada
-                                ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
-                                : 'bg-red-600 hover:bg-red-700 shadow-red-200'
+                            ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200'
+                            : 'bg-red-600 hover:bg-red-700 shadow-red-200'
                             }`}
                     >
                         {isEntrada ? <ArrowDownCircle size={16} /> : <ArrowUpCircle size={16} />}
-                        {isSaving ? 'Salvando...' : `Confirmar ${isEntrada ? 'Entrada' : 'Saída'}`}
+                        {isSaving ? 'Salvando...' : `Confirmar Tudo (${totalToChange} UN)`}
                     </button>
                 </div>
             </div>

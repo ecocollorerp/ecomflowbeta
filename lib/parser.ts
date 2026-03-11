@@ -1,7 +1,7 @@
 
 // lib/parser.ts
 import { OrderItem, ProcessedData, Canal, ResumidaItem, GeneralSettings, ColumnMapping } from '../types';
-import { getMultiplicadorFromSku, classificarCor } from './sku';
+import { getMultiplicadorFromSku, classificarCor, classificarTipoBase, isItemMenor } from './sku';
 import * as XLSX from 'xlsx';
 
 const safeUpper = (val: any) => String(val || '').trim().toUpperCase();
@@ -42,6 +42,34 @@ const normalizeDate = (rawDate: any): string => {
     if (!isNaN(parsed.getTime())) return parsed.toISOString().split('T')[0];
 
     return '';
+};
+
+export const extractHeadersAndData = (fileBuffer: ArrayBuffer): { headers: string[], sheetData: any[] } => {
+    const workbook = XLSX.read(fileBuffer, { type: 'array' });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const rawData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+
+    let headerRowIndex = 0;
+    // Procura a primeira linha com muitas (ex: > 2) colunas preenchidas
+    for (let i = 0; i < Math.min(rawData.length, 50); i++) {
+        const row = rawData[i];
+        if (Array.isArray(row) && row.length > 2) {
+            headerRowIndex = i;
+            break;
+        }
+    }
+
+    const sheetData = XLSX.utils.sheet_to_json<any>(worksheet, { range: headerRowIndex });
+
+    let headers: string[] = [];
+    if (sheetData.length > 0) {
+        headers = Object.keys(sheetData[0]);
+    } else if (rawData[headerRowIndex]) {
+        headers = Array.from(new Set((rawData[headerRowIndex] as any[]).map(c => String(c || '').trim()).filter(Boolean)));
+    }
+
+    return { headers, sheetData };
 };
 
 // Nova função para extrair apenas as datas de envio disponíveis antes do processamento total
@@ -135,8 +163,11 @@ export const parseExcelFile = (
         importCpf: boolean;
         importName: boolean;
         allowedShippingDates?: string[]; // Array of YYYY-MM-DD strings
+        descontarVolatil?: boolean;
+        columnOverrides?: Partial<ColumnMapping>;
     },
-    forcedCanal?: Canal | 'AUTO'
+    forcedCanal?: Canal | 'AUTO',
+    forcedStatus?: string // NOVO: Permite forçar um status (NORMAL, BIPADO, etc)
 ): ProcessedData => {
     // 1. Ler o arquivo bruto
     const workbook = XLSX.read(fileBuffer, { type: 'array', cellDates: true });
@@ -206,6 +237,10 @@ export const parseExcelFile = (
         }
     }
 
+    if (options.columnOverrides) {
+        mappingToUse = { ...mappingToUse!, ...options.columnOverrides };
+    }
+
     // 5. Re-ler a planilha
     const jsonData = XLSX.utils.sheet_to_json<any>(worksheet, { range: headerRowIndex, raw: false });
 
@@ -254,15 +289,14 @@ export const parseExcelFile = (
         }
 
         // --- Filtro de Status ---
-        let statusParaImportacao: 'NORMAL' | 'ERRO' = 'NORMAL';
+        let statusParaImportacao: any = forcedStatus || 'NORMAL';
         let errorReason = undefined;
 
         if (statusColumnName && acceptedStatusValues.length > 0) {
             const rawStatus = String(row[statusColumnName] || '').trim().toLowerCase();
             const isAccepted = acceptedStatusValues.includes(rawStatus);
             if (!isAccepted) {
-                statusParaImportacao = 'ERRO';
-                errorReason = `Status inválido: ${row[statusColumnName]}`;
+                continue; // Ignorar totalmente linhas com status indesejados
             }
         }
 
@@ -272,7 +306,7 @@ export const parseExcelFile = (
         if (!orderId || !sku) continue;
 
         const qty_raw = Number(row[mappingToUse!.qty] || 0);
-        if (qty_raw <= 0) continue;
+        if (isNaN(qty_raw) || qty_raw <= 0) continue;
 
         // --- Valores Financeiros ---
         let rawTotalValue = mappingToUse!.totalValue ? cleanMoney(row[mappingToUse!.totalValue]) : 0;
@@ -300,7 +334,7 @@ export const parseExcelFile = (
             calculatedTotal = calculatedProduct + customerShipping;
         }
 
-        const calculatedNet = calculatedProduct - fees - sellerShipping;
+        const calculatedNet = cleanMoney(row[mappingToUse!.priceNet]) || (calculatedProduct - fees - sellerShipping);
         const mult = getMultiplicadorFromSku(sku);
 
         orders.push({
@@ -329,6 +363,7 @@ export const parseExcelFile = (
             platform_fees: fees,
             shipping_fee: sellerShipping,
             shipping_paid_by_customer: customerShipping,
+            descontar_volatil: options.descontarVolatil,
         });
     }
 
@@ -387,7 +422,16 @@ export const parseExcelFile = (
         importId: `imp_${Date.now()}`,
         canal: canalDetectado!,
         lists: { completa: orders, resumida, totaisPorCor },
-        skusNaoVinculados: Array.from(new Set(orders.map(o => o.sku))).map(sku => ({ sku, colorSugerida: classificarCor(sku) })),
+        skusNaoVinculados: Array.from(new Set(orders.map(o => o.sku))).map(sku => {
+            const baseType = classificarTipoBase(sku);
+            const isMiudo = isItemMenor(sku);
+            return {
+                sku,
+                colorSugerida: classificarCor(sku),
+                baseSugerida: baseType,
+                isMiudoSugerido: isMiudo
+            };
+        }),
         idempotencia: { lancaveis: orders.length, jaSalvos },
         summary: {
             totalPedidos: new Set(orders.map(o => o.orderId)).size,

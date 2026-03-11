@@ -63,6 +63,7 @@ BEGIN
       category TEXT DEFAULT '',
       color TEXT,
       product_type TEXT,
+      base_type TEXT,
       expedition_items JSONB DEFAULT '[]'::jsonb,
       substitute_product_code TEXT,
       barcode TEXT,
@@ -72,6 +73,11 @@ BEGIN
   -- Garante coluna barcode
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_items' AND column_name='barcode') THEN
     ALTER TABLE public.stock_items ADD COLUMN barcode TEXT;
+  END IF;
+
+  -- Garante coluna base_type
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_items' AND column_name='base_type') THEN
+    ALTER TABLE public.stock_items ADD COLUMN base_type TEXT;
   END IF;
 
   -- Movimentações de Estoque
@@ -565,7 +571,9 @@ BEGIN
 END;
 $$;
 
--- Função: Delete Orders
+-- Função: Delete Orders (DROP agressivo para evitar ambiguidade)
+DROP FUNCTION IF EXISTS public.delete_orders(text[]);
+DROP FUNCTION IF EXISTS public.delete_orders(uuid[]);
 CREATE OR REPLACE FUNCTION delete_orders(order_ids text[])
 RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN

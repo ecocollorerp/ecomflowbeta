@@ -9,6 +9,7 @@ import {
     Cloud, AlertTriangle, Search, StopCircle, Package, Factory
 } from 'lucide-react';
 import ConfirmActionModal from '../components/ConfirmActionModal';
+import PrefixosModal from '../components/PrefixosModal';
 
 interface BipagemPageProps {
     isAutoBipagemActive: boolean;
@@ -51,6 +52,7 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
     const [isHardDeleteModalOpen, setIsHardDeleteModalOpen] = useState(false);
+    const [isPrefixosModalOpen, setIsPrefixosModalOpen] = useState(false);
     const [isActionLoading, setIsActionLoading] = useState(false);
 
     const inputRef = useRef<HTMLInputElement>(null);
@@ -174,9 +176,9 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
             {scanResult && (
                 <div
                     className={`fixed inset-0 z-[100] flex flex-col items-center justify-center p-6 animate-in fade-in zoom-in duration-200 ${scanResult.groupComplete ? 'bg-gradient-to-br from-yellow-400 via-amber-400 to-orange-500' :
-                            scanResult.status === 'OK' ? 'bg-emerald-600' :
-                                scanResult.status === 'DUPLICATE' ? 'bg-amber-500' :
-                                    'bg-red-600'
+                        scanResult.status === 'OK' ? 'bg-emerald-600' :
+                            scanResult.status === 'DUPLICATE' ? 'bg-amber-500' :
+                                'bg-red-600'
                         }`}
                     onClick={closeOverlay}
                 >
@@ -432,6 +434,22 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
                             </li>
                         </ul>
                     </div>
+
+                    <div className="bg-slate-800 p-6 rounded-3xl shadow-xl text-white">
+                        <h3 className="font-black uppercase tracking-tighter mb-4 flex items-center gap-2">
+                            <UserIcon size={18} className="text-blue-400" />
+                            Multi-Operador
+                        </h3>
+                        <p className="text-xs font-medium text-slate-300 mb-4 leading-relaxed">
+                            Compartilhando o mesmo computador? Configure prefixos para cada operador.
+                        </p>
+                        <button
+                            onClick={() => setIsPrefixosModalOpen(true)}
+                            className="w-full bg-blue-500 hover:bg-blue-400 text-white px-4 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-colors flex items-center justify-center gap-2"
+                        >
+                            <UserIcon size={14} /> Gerenciar Prefixos
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -454,6 +472,14 @@ const BipagemPage: React.FC<BipagemPageProps> = (props) => {
                 message={<><p>Deseja excluir permanentemente <strong>{selectedIds.size}</strong> registro(s) de log?</p><p className="text-red-500 font-bold uppercase text-[10px] mt-2">Atenção: Isso NÃO reverte o estoque nem o status do pedido!</p></>}
                 confirmButtonText="Sim, Excluir"
                 isConfirming={isActionLoading}
+            />
+
+            <PrefixosModal
+                isOpen={isPrefixosModalOpen}
+                onClose={() => setIsPrefixosModalOpen(false)}
+                users={users}
+                onSaveUser={props.onSaveUser}
+                currentUser={currentUser}
             />
         </div>
     );
