@@ -47,6 +47,17 @@ function handleBlingError(data: any, defaultMessage: string): void {
 }
 
 /**
+ * Detecta o canal de venda (ML, SHOPEE, SITE) a partir de um texto ou ID de loja
+ */
+export function parseCanal(raw: any): 'ML' | 'SHOPEE' | 'SITE' {
+    const text = String(raw || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (text.includes('MERCADO LIVRE') || text.includes('MERCADOLIVRE') || text.includes('MERCADO-LIVRE') || text.includes('MLB') || text.includes('ML ') || text === 'ML' || text.includes('MERCADO')) return 'ML';
+    if (text.includes('SHOPEE')) return 'SHOPEE';
+    if (text.includes('AMAZON') || text.includes('NUVEM') || text.includes('SITE')) return 'SITE';
+    return 'SITE';
+}
+
+/**
  * Helper genérico de retry para qualquer fetch (endpoints locais do server).
  * Tenta novamente em caso de HTTP 429 (rate limit) com backoff progressivo.
  */
@@ -429,8 +440,12 @@ export interface NfeSaida {
     numeroLoja?: string;  // número do pedido na loja virtual (extraído do intermediador ou numeroLoja)
     loja?: string;         // descrição da loja (Bling v3)
     lojaId?: number;       // ID da loja (Bling v3 - importante para detectar canal)
+    canal?: 'ML' | 'SHOPEE' | 'SITE';
+    idVenda?: number;      // ID interno da venda no Bling (importante para etiquetas)
     tipo?: string;         // tipo da NF-e (ex: "saida", "entrada")
     naturezaOperacao?: string; // natureza da operação (ex: "Venda")
+    idTransportador?: number;  // ID do transportador
+    rastreamento?: string;     // Código de rastreamento
 }
 
 // Mapeamento de situação ID → descrição legível (exportado para uso externo)
@@ -453,13 +468,16 @@ export async function fetchNfeSaida(
     const MAX_PAGES = 10; // segurança
 
     for (let p = 0; p < MAX_PAGES; p++) {
-        const params: Record<string, string> = {};
-        if (opts.dataInicial) params.dataInicial = opts.dataInicial;
-        if (opts.dataFinal) params.dataFinal = opts.dataFinal;
+        const params: Record<string, string> = {
+            tipo: '1', // 1=Saída
+            limite: '100',
+            pagina: String(pagina)
+        };
+        if (opts.dataInicial) params.dataEmissaoInicial = `${opts.dataInicial} 00:00:00`;
+        if (opts.dataFinal) params.dataEmissaoFinal = `${opts.dataFinal} 23:59:59`;
         if (opts.situacao) params.situacao = String(opts.situacao);
-        params.pagina = String(pagina);
 
-        const resp = await fetchWithRetry(`/api/bling/nfe/listar-saida?${new URLSearchParams(params).toString()}`, {
+        const resp = await fetchWithRetry(`/api/bling/nfe?${new URLSearchParams(params).toString()}`, {
             headers: { Authorization: authH, Accept: 'application/json' },
         });
         if (!resp.ok) {
@@ -470,34 +488,105 @@ export async function fetchNfeSaida(
         const notas: any[] = data?.notas || data?.data || [];
         if (notas.length === 0) break;
 
-        allNotas.push(...notas.map((n: any) => ({
-            id: n.id,
-            numero: n.numero ? String(n.numero) : undefined,
-            serie: n.serie ? String(n.serie) : undefined,
-            chaveAcesso: n.chaveAcesso || n.chave_acesso || undefined,
-            situacao: n.situacao,
-            situacaoDescr: NFE_SIT_MAP[n.situacao] || `Situação ${n.situacao}`,
-            dataEmissao: n.dataEmissao || n.dataOperacao || n.data,
-            dataSaida: n.dataOperacao || n.dataEmissao || n.data,
-            valorTotal: n.valorNota || n.total || n.valor || undefined,
-            contato: n.contato ? { id: n.contato.id, nome: n.contato.nome, numeroDocumento: n.contato.numeroDocumento } : undefined,
-            linkDanfe: n.linkDanfe || n.link || n.linkDANFE || undefined,
-            linkXml: n.linkXml || n.xml || undefined,
-            numeroVenda: n.numeroPedidoCompra || n.numeroLoja || undefined,
-            numeroLoja: n.numeroLoja || n.intermediador?.numeroPedido || n.numeroPedidoLoja || undefined,
-            loja: n.loja?.descricao || n.vendedor?.descricao || n.canal || undefined,
-            lojaId: n.loja?.id ? Number(n.loja.id) : undefined,
-            tipo: n.tipo ? String(n.tipo) : undefined,
-            naturezaOperacao: n.naturezaOperacao || n.natureza || undefined,
-        })));
+        allNotas.push(...notas.map((n: any) => {
+            const canal = parseCanal(n.loja?.descricao || n.vendedor?.descricao || n.canal);
+            return {
+                id: n.id,
+                numero: n.numero ? String(n.numero) : undefined,
+                serie: n.serie ? String(n.serie) : undefined,
+                chaveAcesso: n.chaveAcesso || n.chave_acesso || undefined,
+                situacao: n.situacao,
+                situacaoDescr: NFE_SIT_MAP[n.situacao] || `Situação ${n.situacao}`,
+                dataEmissao: n.dataEmissao || n.dataOperacao || n.data,
+                dataSaida: n.dataOperacao || n.dataEmissao || n.data,
+                valorTotal: n.valorNota || n.total || n.valor || undefined,
+                contato: n.contato ? { id: n.contato.id, nome: n.contato.nome, numeroDocumento: n.contato.numeroDocumento } : undefined,
+                linkDanfe: n.linkDanfe || n.link || n.linkDANFE || undefined,
+                linkXml: n.linkXml || n.xml || undefined,
+                numeroVenda: n.numeroPedidoCompra || n.numeroLoja || undefined,
+                numeroLoja: n.numeroLoja || n.intermediador?.numeroPedido || n.numeroPedidoLoja || undefined,
+                idVenda: n.pedido?.id || n.idPedidoVenda || undefined,
+                loja: n.loja?.descricao || n.vendedor?.descricao || n.canal || undefined,
+                lojaId: n.loja?.id ? Number(n.loja.id) : undefined,
+                canal,
+                tipo: n.tipo ? String(n.tipo) : undefined,
+                naturezaOperacao: n.naturezaOperacao || n.natureza || undefined,
+                idTransportador: n.transporte?.contato?.id ? Number(n.transporte.contato.id) : undefined,
+                rastreamento: n.transporte?.objeto?.codigoRastreamento || undefined,
+            };
+        }));
 
         if (notas.length < 100) break; // última página
         pagina++;
-        // Delay entre páginas
-        await new Promise(r => setTimeout(r, 500));
+        // Delay entre páginas para respeitar rate limits (opcional aqui, o retry já ajuda)
+        await new Promise(r => setTimeout(r, 600));
     }
 
     return allNotas;
+}
+
+/**
+ * Enriquecimento: Busca detalhes de uma NF-e para preencher campos ausentes na listagem básica (v3)
+ * como numeroLoja, rastreamento, loja, etc.
+ */
+export async function enrichNfeSaida(apiKey: string, nfe: NfeSaida): Promise<NfeSaida> {
+    try {
+        const token = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+        const detalhe = await fetchNfeDetalhe(token, nfe.id);
+        const d = detalhe?.data || detalhe;
+        if (!d) return nfe;
+
+        // --- BUSCA AGRESSIVA PELO ID DA VENDA (Pedido Interno do Bling) ---
+        // Essencial para gerar etiquetas ZPL reais (vendas.php#edit/{id})
+        let idVenda = d.vendas?.[0]?.id || 
+                      d.pedidoVenda?.id || 
+                      d.pedido?.id || 
+                      (Array.isArray(d.vendas) && d.vendas.length > 0 ? d.vendas[0].id : null);
+
+        // Se não achou na estrutura, tenta buscar em notas/observações via Regex
+        if (!idVenda) {
+            const obsText = `${d.observações || ''} ${d.observaçõesInternas || ''} ${d.pedido?.observacoes || ''}`;
+            const matchVenda = obsText.match(/(?:ID\s+Venda|Pedido\s+Bling|Venda\s+ID|vendas\.php#edit\/)\s*[:\-]?\s*(\d+)/i);
+            if (matchVenda?.[1]) idVenda = Number(matchVenda[1]);
+        }
+
+        // --- BUSCA AGRESSIVA PELO NÚMERO DA LOJA VIRTUAL (Marketplace) ---
+        let numeroLoja = d.intermediador?.numeroPedido || 
+                         d.numeroPedidoLoja || 
+                         d.pedido?.numeroLoja ||
+                         d.vendas?.[0]?.numeroLoja;
+
+        if (!numeroLoja) {
+             const obsText = `${d.observações || ''} ${d.observaçõesInternas || ''}`;
+             const matchLoja = obsText.match(/(?:Número\s+Pedido\s+Loja|Pedido\s+Original|Order\s+ID)\s*[:\-]?\s*([A-Z0-9\-_]+)/i);
+             if (matchLoja?.[1]) numeroLoja = matchLoja[1];
+        }
+
+        // --- BUSCA AGRESSIVA PELO RASTREAMENTO ---
+        const transporte = d.transporte || {};
+        const rastreamento = transporte.objeto?.codigoRastreamento || 
+                             transporte.volumes?.[0]?.codigoRastreamento || 
+                             transporte.volumes?.[0]?.objeto ||
+                             d.pedido?.transporte?.codigoRastreamento;
+
+        const lojaNome = d.loja?.descricao || d.vendedor?.descricao || d.pedido?.loja?.nome || nfe.loja;
+        const canal = parseCanal(lojaNome);
+
+        return {
+            ...nfe,
+            idVenda: idVenda || nfe.idVenda,
+            numeroVenda: d.numeroPedidoLoja || d.intermediador?.numeroPedido || idVenda || nfe.numeroVenda,
+            numeroLoja: numeroLoja || nfe.numeroLoja,
+            loja: lojaNome,
+            lojaId: d.loja?.id ? Number(d.loja.id) : nfe.lojaId,
+            canal,
+            rastreamento,
+            idTransportador: transporte.contador?.id || transporte.contato?.id ? Number(transporte.contador?.id || transporte.contato?.id) : nfe.idTransportador,
+        };
+    } catch (err) {
+        console.error(`Erro ao enriquecer NF-e ${nfe.id}:`, err);
+        return nfe;
+    }
 }
 
 /**
@@ -519,9 +608,9 @@ export async function enviarNfe(apiKey: string, nfeId: number): Promise<any> {
 /**
  * Obtém detalhes completos de uma NF-e (XML, chave de acesso, links).
  */
-export async function fetchNfeDetalhe(apiKey: string, nfeId: number): Promise<any> {
+export async function fetchNfeDetalhe(apiKey: string, nfeId: number | string): Promise<any> {
     const authH = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
-    const resp = await fetchWithRetry(`/api/bling/nfe/detalhe/${nfeId}`, {
+    const resp = await fetchWithRetry(`/api/bling/nfe/${nfeId}`, {
         headers: { Authorization: authH, Accept: 'application/json' },
     });
     if (!resp.ok) {

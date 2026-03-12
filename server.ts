@@ -3133,6 +3133,17 @@ async function startServer() {
     }
   });
 
+  // Webhooks do Bling — Devem retornar 200 OK para evitar erro de "Webhook inativo" no painel do Bling
+  app.post("/api/bling/webhook/vendas", (req, res) => {
+    console.log("🔔 [BLING WEBHOOK VENDAS] Recebido:", JSON.stringify(req.body).substring(0, 200) + '...');
+    res.status(200).json({ success: true, message: "Webhook recebido com sucesso" });
+  });
+
+  app.post("/api/bling/webhook/nfe", (req, res) => {
+    console.log("🔔 [BLING WEBHOOK NFE] Recebido:", JSON.stringify(req.body).substring(0, 200) + '...');
+    res.status(200).json({ success: true, message: "Webhook recebido com sucesso" });
+  });
+
   // Cria o servidor HTTPS antes do Vite para passar como referência ao HMR
   const httpsServer = https.createServer({ key, cert }, app);
 
