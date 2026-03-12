@@ -673,6 +673,8 @@ const App: React.FC = () => {
                             min_qty: Number(i.min_qty) || 0,
                             expedition_items: [],
                             is_volatile_infinite: Boolean(i.is_volatile_infinite) || false,
+                            // preserve BOM data so searches can consider parent/child relationships
+                            bom_composition: i.bom_composition || { items: [] },
                         };
                     } catch (err) {
                         console.error('❌ Erro ao mapear product_bom:', i, err);

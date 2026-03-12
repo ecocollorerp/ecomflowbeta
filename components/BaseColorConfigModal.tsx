@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { X, Save, Search } from 'lucide-react';
 import { StockItem, GeneralSettings, ProductBaseConfig } from '../types';
+import { skuMatchesTerm, buildParentMap } from '../utils/skuHelpers';
 
 type BaseType = 'branca' | 'preta' | 'especial';
 
@@ -40,13 +41,12 @@ const BaseColorConfigModal: React.FC<BaseColorConfigModalProps> = ({ isOpen, onC
         onClose();
     };
 
+    const parentMap = useMemo(() => buildParentMap(products), [products]);
+
     const filteredProducts = useMemo(() => {
-        const searchLower = searchTerm.toLowerCase();
-        return products.filter(p => 
-            p.name.toLowerCase().includes(searchLower) ||
-            p.code.toLowerCase().includes(searchLower)
-        );
-    }, [products, searchTerm]);
+        if (!searchTerm) return products;
+        return products.filter(p => skuMatchesTerm(p, searchTerm, products, parentMap));
+    }, [products, searchTerm, parentMap]);
 
     if (!isOpen) return null;
 

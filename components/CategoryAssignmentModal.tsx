@@ -2,6 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { X, Search, Check, Save, Package, Filter } from 'lucide-react';
 import { StockItem } from '../types';
+import { skuMatchesTerm, buildParentMap } from '../utils/skuHelpers';
 
 interface CategoryAssignmentModalProps {
     isOpen: boolean;
@@ -18,13 +19,14 @@ const CategoryAssignmentModal: React.FC<CategoryAssignmentModalProps> = ({ isOpe
     const [searchTerm, setSearchTerm] = useState('');
     const [isSaving, setIsSaving] = useState(false);
 
+    const parentMap = useMemo(() => buildParentMap(allProducts), [allProducts]);
+
     const filtered = useMemo(() => {
-        const lower = searchTerm.toLowerCase();
-        return allProducts.filter(p => 
-            p.name.toLowerCase().includes(lower) || 
-            p.code.toLowerCase().includes(lower)
-        ).sort((a,b) => a.name.localeCompare(b.name));
-    }, [allProducts, searchTerm]);
+        if (!searchTerm) return allProducts.slice().sort((a,b) => a.name.localeCompare(b.name));
+        return allProducts
+            .filter(p => skuMatchesTerm(p, searchTerm, allProducts, parentMap))
+            .sort((a,b) => a.name.localeCompare(b.name));
+    }, [allProducts, searchTerm, parentMap]);
 
     if (!isOpen) return null;
 

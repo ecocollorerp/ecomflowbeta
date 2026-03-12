@@ -61,17 +61,31 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
   const [apenasComEtiqueta, setApenasComEtiqueta] = useState(false);
   const [quantidadeDesejada, setQuantidadeDesejada] = useState<number>(200); // Mudar de 100 pra qtd flex
   const [canalFiltro, setCanalFiltro] = useState<'TODOS' | 'ML' | 'SHOPEE' | 'SITE'>('TODOS');
+  const [pagina, setPagina] = useState<number>(1);
+  const [idLojaFiltro, setIdLojaFiltro] = useState<string>('');
+  const [ordenacao, setOrdenacao] = useState<'asc' | 'desc'>('asc');
+  const [situacoesFiltro, setSituacoesFiltro] = useState<number[]>([6,15]);
 
   // Quando a plataforma muda, limpa lista e busca automaticamente
+  // when the selected platform or other search criteria change we clear results and
+  // return to first page
   React.useEffect(() => {
     if (token && plataformaSelecionada) {
       setPedidosEmAberto([]);
       setPedidosSelecionados(new Set());
       setFiltroTexto('');
       setCanalFiltro('TODOS');
+      setPagina(1);
       buscarPedidosEmAberto();
     }
-  }, [plataformaSelecionada, apenasComEtiqueta, quantidadeDesejada]);
+  }, [plataformaSelecionada, apenasComEtiqueta, quantidadeDesejada, idLojaFiltro, ordenacao, situacoesFiltro]);
+
+  // refetch when page number changes (after initial load above)
+  React.useEffect(() => {
+    if (token && plataformaSelecionada) {
+      buscarPedidosEmAberto();
+    }
+  }, [pagina]);
 
   // Buscar pedidos em aberto por plataforma
   const buscarPedidosEmAberto = async () => {
@@ -87,7 +101,12 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
         plataformaSelecionada,
         {
           quantidadeDesejada: quantidadeDesejada, // Utiliza o seletor da UI
-          apenasComEtiqueta: plataformaSelecionada === 'MERCADO_LIVRE' && apenasComEtiqueta
+          apenasComEtiqueta: plataformaSelecionada === 'MERCADO_LIVRE' && apenasComEtiqueta,
+          pagina,
+          limite: 100, // sempre 100 por página conforme requisito
+          idsSituacoes: situacoesFiltro,
+          idLoja: idLojaFiltro || undefined,
+          ordenar: ordenacao,
         }
       );
 
@@ -245,6 +264,34 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
     }
   };
 
+  // função para gerar NF-e individual
+  const gerarNfeIndividual = async (pedidoId: string) => {
+    if (!token) return;
+    setIsGerandoNfe(true);
+    try {
+      const resp = await fetch('/api/bling/nfe/criar-emitir', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ blingOrderId: pedidoId, emitir: true })
+      });
+      const data = await resp.json();
+      if (data.success) {
+        addToast?.('✅ NF-e gerada/emitida com sucesso para o pedido', 'success');
+        buscarPedidosEmAberto();
+      } else {
+        addToast?.(`❌ Falha ao gerar NF-e: ${data.error || data.message}`, 'error');
+        console.error('Erro individual NFe', data);
+      }
+    } catch (err: any) {
+      addToast?.(`❌ Erro: ${err.message}`, 'error');
+    } finally {
+      setIsGerandoNfe(false);
+    }
+  };
+
   // Filtrar pedidos reativamente por canal + texto (sem precisar clicar em buscar)
   const pedidosFiltrados = pedidosEmAberto.filter(pedido => {
     const textMatch = filtroTexto === '' ||
@@ -386,6 +433,51 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                         <option value={1000}>1000 Pedidos</option>
                       </select>
                     </label>
+
+                    {/* nova seção de filtros avançados */}
+                    <label className="flex items-center gap-2 text-sm">
+                      <span className="text-gray-700">Loja ID:</span>
+                      <input
+                        type="text"
+                        value={idLojaFiltro}
+                        onChange={e => setIdLojaFiltro(e.target.value)}
+                        className="border border-gray-300 rounded p-1 text-sm bg-gray-50 text-gray-800 w-24"
+                        placeholder="ex: 1234"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <span className="text-gray-700">Página:</span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={pagina}
+                        onChange={e => setPagina(parseInt(e.target.value) || 1)}
+                        className="border border-gray-300 rounded p-1 text-sm bg-gray-50 text-gray-800 w-20"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <span className="text-gray-700">Ordenação:</span>
+                      <select
+                        value={ordenacao}
+                        onChange={e => setOrdenacao(e.target.value as any)}
+                        className="border border-gray-300 rounded p-1 text-sm bg-gray-50 text-gray-800"
+                      >
+                        <option value="asc">Antigo→Novo</option>
+                        <option value="desc">Novo→Antigo</option>
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm">
+                      <span className="text-gray-700">Situações (IDs):</span>
+                      <input
+                        type="text"
+                        value={situacoesFiltro.join(',')}
+                        onChange={e => setSituacoesFiltro(
+                          e.target.value.split(',').map(v => parseInt(v.trim())).filter(n => !isNaN(n))
+                        )}
+                        className="border border-gray-300 rounded p-1 text-sm bg-gray-50 text-gray-800 w-32"
+                        placeholder="6,15"
+                      />
+                    </label>
                   </div>
                 </div>
                 <button
@@ -525,6 +617,14 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                                 <p className="text-sm text-gray-500">
                                   {new Date(pedido.dataCompra).toLocaleDateString('pt-BR')}
                                 </p>
+                                {/* botão NF-e individual */}
+                                <button
+                                  onClick={() => gerarNfeIndividual(pedido.id)}
+                                  disabled={isGerandoNfe}
+                                  className="text-xs text-blue-600 underline ml-4"
+                                >
+                                  Gerar NF-e
+                                </button>
                               </div>
                             </div>
                             <p className="text-sm text-gray-600">
@@ -540,6 +640,24 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                         </div>
                       </div>
                     ))}
+                  </div>
+
+                  {/* paginação simples */}
+                  <div className="mt-2 flex justify-between items-center">
+                    <button
+                      onClick={() => setPagina(p => Math.max(1, p - 1))}
+                      disabled={pagina <= 1}
+                      className="text-sm text-blue-600 disabled:opacity-50"
+                    >
+                      « Anterior
+                    </button>
+                    <span className="text-sm">Página {pagina}</span>
+                    <button
+                      onClick={() => setPagina(p => p + 1)}
+                      className="text-sm text-blue-600"
+                    >
+                      Próxima »
+                    </button>
                   </div>
                 </div>
               )}

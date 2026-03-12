@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { Filter, X, Search, Eye, Download, CheckCircle, AlertCircle, SkipForward } from 'lucide-react';
 import { StockItem, SkuLink } from '../types';
+import { skuCodeMatches, buildParentMap } from '../utils/skuHelpers';
 
 interface AutorizadoSemDANFEItem {
   pedidoId: string;
@@ -61,6 +62,9 @@ const FiltroAutorisadoSemDANFE: React.FC<FiltroAutorisadoSemDANFEProps> = ({
     return skuMestreMap.has(skuMestre);
   }, [skuMestreMap]);
 
+  // Precompute parent map for SKU relationships
+  const parentMap = useMemo(() => buildParentMap(stockItems), [stockItems]);
+
   // Filtrar e enriquecer itens
   const itensFiltrados = useMemo(() => {
     return itens
@@ -78,9 +82,9 @@ const FiltroAutorisadoSemDANFE: React.FC<FiltroAutorisadoSemDANFEProps> = ({
       .filter(item => {
         // Filtro por SKU (importado ou mestre)
         if (filtroSku) {
-          const termo = filtroSku.toLowerCase();
-          const matchImportado = item.skuImportado.toLowerCase().includes(termo);
-          const matchMestre = item.skuMestre?.toLowerCase().includes(termo);
+          const termo = filtroSku;
+          const matchImportado = skuCodeMatches(item.skuImportado, termo, stockItems, parentMap);
+          const matchMestre = item.skuMestre ? skuCodeMatches(item.skuMestre, termo, stockItems, parentMap) : false;
           if (!matchImportado && !matchMestre) return false;
         }
 
@@ -96,7 +100,7 @@ const FiltroAutorisadoSemDANFE: React.FC<FiltroAutorisadoSemDANFEProps> = ({
         }
         return parseInt(b.pedidoNumero) - parseInt(a.pedidoNumero);
       });
-  }, [itens, filtroSku, filtroStatus, sortBy, resolverSkuMestre, validarSku, skuMestreMap]);
+  }, [itens, filtroSku, filtroStatus, sortBy, resolverSkuMestre, validarSku, skuMestreMap, stockItems, parentMap]);
 
   const handleToggleSelecao = (id: string) => {
     const novo = new Set(selecionados);

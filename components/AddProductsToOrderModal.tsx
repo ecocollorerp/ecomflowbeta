@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { X, ShoppingCart, Plus, Minus, Trash2 } from 'lucide-react';
 import { StockItem, OrderProduct } from '../types';
+import { skuMatchesTerm, buildParentMap } from '../utils/skuHelpers';
 
 interface AddProductsToOrderModalProps {
     isOpen: boolean;
@@ -14,15 +15,16 @@ const AddProductsToOrderModal: React.FC<AddProductsToOrderModalProps> = ({ isOpe
     const [orderItems, setOrderItems] = useState<OrderProduct[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
 
+    const parentMap = useMemo(() => buildParentMap(products), [products]);
+
     const filteredProducts = useMemo(() => {
         if (!searchTerm) return [];
-        const searchLower = searchTerm.toLowerCase();
         // Show products that are not already in the order
-        return products.filter(p =>
-            !orderItems.some(oi => oi.product.id === p.id) &&
-            (p.name.toLowerCase().includes(searchLower) || p.code.toLowerCase().includes(searchLower))
-        ).slice(0, 10); // Limit results for performance
-    }, [searchTerm, products, orderItems]);
+        return products
+            .filter(p => !orderItems.some(oi => oi.product.id === p.id))
+            .filter(p => skuMatchesTerm(p, searchTerm, products, parentMap))
+            .slice(0, 10); // Limit results for performance
+    }, [searchTerm, products, orderItems, parentMap]);
 
     const handleAddProduct = (product: StockItem) => {
         setOrderItems(prev => [...prev, { product, quantity: 1 }]);

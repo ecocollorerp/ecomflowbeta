@@ -4,6 +4,7 @@ import { X, FileUp, Loader2, CheckCircle, AlertCircle, Inbox, Link, PlusCircle, 
 import { parseNFeXML } from '../lib/xmlParser';
 import { StockItem, ParsedNfeItem, StockItemKind, GeneralSettings } from '../types';
 import { getMultiplicadorFromSku } from '../lib/sku';
+import { skuMatchesTerm, buildParentMap } from '../utils/skuHelpers';
 
 type Action = 'none' | 'link' | 'create';
 
@@ -35,6 +36,8 @@ const ImportXmlModal: React.FC<ImportXmlModalProps> = ({ isOpen, onClose, onConf
     const [linkSearchTerms, setLinkSearchTerms] = useState<Record<string, string>>({});
 
     const existingCodes = useMemo(() => new Set(existingStockItems.map(i => i.code)), [existingStockItems]);
+
+    const parentMapImported = useMemo(() => buildParentMap(existingStockItems), [existingStockItems]);
 
     const resetState = () => {
         setFile(null);
@@ -191,7 +194,7 @@ const ImportXmlModal: React.FC<ImportXmlModalProps> = ({ isOpen, onClose, onConf
                                                  {(linkSearchTerms[item.code] || '').length > 1 && (
                                                     <div className="absolute z-10 w-full mt-1 bg-white border shadow-lg rounded max-h-40 overflow-y-auto">
                                                         {existingStockItems
-                                                            .filter(stock => stock.name.toLowerCase().includes((linkSearchTerms[item.code] || '').toLowerCase()) || stock.code.toLowerCase().includes((linkSearchTerms[item.code] || '').toLowerCase()))
+                                                            .filter(stock => skuMatchesTerm(stock, linkSearchTerms[item.code] || '', existingStockItems, parentMapImported))
                                                             .map(stock => (
                                                                 <div key={stock.id} onClick={() => { handleLinkToChange(item.code, stock.code); setLinkSearchTerms(p => ({...p, [item.code]: stock.name})) }} className="p-2 hover:bg-gray-100 cursor-pointer text-xs">
                                                                     {stock.name} ({stock.code})

@@ -197,6 +197,12 @@ export class ImportacaoControllerService {
       dataInicial?: string;
       dataFinal?: string;
       apenasComEtiqueta?: boolean;
+      // new filters added based on user requirements
+      idsSituacoes?: number[];      // conjunto de situações (6 = aberto, 15 = em andamento, etc.)
+      idLoja?: string | number;    // filtrar por ID da loja
+      ordenar?: 'asc' | 'desc';    // ordenação por dataCompra
+      pagina?: number;             // página específica para buscar
+      limite?: number;             // tamanho da página (default 100)
     } = {}
   ): Promise<{
     pedidosDisponiveis: PedidoblingNaoVinculado[];
@@ -207,17 +213,35 @@ export class ImportacaoControllerService {
     try {
       console.log(`📋 Buscando ${plataforma}...`);
 
-      const { quantidadeDesejada = 200, dataInicial, dataFinal, apenasComEtiqueta = false } = opcoes;
+      // destructure new filters
+      const {
+        quantidadeDesejada = 200,
+        dataInicial,
+        dataFinal,
+        apenasComEtiqueta = false,
+        idsSituacoes,
+        idLoja,
+        ordenar,
+        pagina: paginaOpcional,
+        limite: limiteOpcional,
+      } = opcoes;
       let todosOsPedidos: any[] = [];
-      let pagina = 1;
-      const limite = 100;
+      let pagina = paginaOpcional || 1;
+      const limite = limiteOpcional || 100;
       let continuarCarregando = true;
 
       while (continuarCarregando) {
-        // IDs 6 = Em aberto, 15 = Em andamento
-        let url = `https://www.bling.com.br/Api/v3/pedidos/vendas?limite=${limite}&pagina=${pagina}&idsSituacoes[]=6&idsSituacoes[]=15`;
+        // montar query string com os filtros dinâmicos
+        const situacoesParam = (idsSituacoes && idsSituacoes.length > 0)
+          ? idsSituacoes.map(id => `&idsSituacoes[]=${id}`).join('')
+          : '&idsSituacoes[]=6&idsSituacoes[]=15'; // default aberto + andamento
+
+        let url = `https://www.bling.com.br/Api/v3/pedidos/vendas?limite=${limite}&pagina=${pagina}${situacoesParam}`;
         if (dataInicial) url += `&dataInicial=${dataInicial}`;
         if (dataFinal) url += `&dataFinal=${dataFinal}`;
+        if (idLoja) url += `&idLoja=${idLoja}`;
+
+        // NOTE: Bling doesn't have explicit order param; we'll handle client-side after fetch.
 
         const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         if (!resp.ok) {
@@ -264,7 +288,16 @@ export class ImportacaoControllerService {
         }
       }
 
-      const formatados = todosOsPedidos.slice(0, quantidadeDesejada).map((pedido: any) => {
+      let ordenados = todosOsPedidos;
+      if (ordenar) {
+        ordenados = ordenados.sort((a: any, b: any) => {
+          const da = new Date(a.data).getTime();
+          const db = new Date(b.data).getTime();
+          return ordenar === 'asc' ? da - db : db - da;
+        });
+      }
+
+      const formatados = ordenados.slice(0, quantidadeDesejada).map((pedido: any) => {
         let numeroLojaOriginal = pedido.numeroLoja || '';
         if (!numeroLojaOriginal) {
           const info = pedido?.observacoes || '';
@@ -303,8 +336,10 @@ export class ImportacaoControllerService {
         };
       });
 
-      // Oldest to newest
-      formatados.sort((a, b) => new Date(a.dataCompra).getTime() - new Date(b.dataCompra).getTime());
+      // se o chamador não especificou ordenação, mantemos ordem crescente
+      if (!ordenar) {
+        formatados.sort((a, b) => new Date(a.dataCompra).getTime() - new Date(b.dataCompra).getTime());
+      }
 
       return {
         pedidosDisponiveis: formatados,

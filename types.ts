@@ -177,6 +177,18 @@ export interface StockItem {
     barcode?: string;
     is_volatile_infinite?: boolean;
     base_type?: 'branca' | 'preta' | 'especial';
+    // optional BOM/composition information (parent products may list children here)
+    bom_composition?: {
+        items: Array<{
+            code?: string;
+            stockItemCode?: string;
+            name?: string;
+            qty?: number;
+            [key: string]: any;
+        }>;
+    };
+    // legacy field used elsewhere
+    items?: any[];
 }
 
 export type StockMovementOrigin = 'AJUSTE_MANUAL' | 'PRODUCAO_MANUAL' | 'BIP' | 'PESAGEM' | 'MOAGEM' | 'IMPORT_XML' | 'PRODUCAO_INTERNA';

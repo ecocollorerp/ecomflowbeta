@@ -1,6 +1,7 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { StockItem, StockMovement, ProdutoCombinado, WeighingBatch, WeighingType, StockMovementOrigin, StockItemKind, User, GeneralSettings, ParsedNfeItem, SkuLink, StockPackGroup } from '../types';
+import { skuMatchesTerm, buildParentMap, skuCodeMatches } from '../utils/skuHelpers';
 import { Package, Factory, History, Search, PlusCircle, Weight, Cog, SlidersHorizontal, Edit3, Trash2, ChevronDown, ChevronRight, FileUp, ArrowLeft, Settings, Box, Plus, Save, X, Link, ArrowRight, Loader2, ChevronUp, AlertTriangle, ArrowDownCircle, ArrowUpCircle, Layers, TrendingUp, TrendingDown, BarChart2, Filter, Calendar, RefreshCw, FileText } from 'lucide-react';
 import { PesagemPage } from './PesagemPage';
 import { dbClient } from '../lib/supabaseClient';
@@ -149,10 +150,15 @@ const TransferSkuModal: React.FC<TransferSkuModalProps> = ({ isOpen, onClose, sk
     const [searchTerm, setSearchTerm] = useState('');
     const [isTransferring, setIsTransferring] = useState(false);
 
+    const parentMapAll = useMemo(() => buildParentMap(allProducts), [allProducts]);
     const availableProducts = useMemo(() => {
-        const searchLower = searchTerm.toLowerCase();
-        return allProducts.filter(p => p.id !== currentMaster.id && (p.name.toLowerCase().includes(searchLower) || p.code.toLowerCase().includes(searchLower)));
-    }, [allProducts, currentMaster, searchTerm]);
+        if (!searchTerm) {
+            return allProducts.filter(p => p.id !== currentMaster.id);
+        }
+        return allProducts.filter(p =>
+            p.id !== currentMaster.id && skuMatchesTerm(p, searchTerm, allProducts, parentMapAll)
+        );
+    }, [allProducts, currentMaster, searchTerm, parentMapAll]);
 
     useEffect(() => {
         if (!isOpen) {

@@ -3,6 +3,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { X, Link as LinkIcon, Search, PlusCircle, AlertCircle, CheckCircle } from 'lucide-react';
 import { StockItem, SkuLink } from '../types';
+import { skuMatchesTerm, buildParentMap } from '../utils/skuHelpers';
 
 interface LinkSkuModalProps {
     isOpen: boolean;
@@ -30,16 +31,14 @@ const LinkSkuModal: React.FC<LinkSkuModalProps> = ({ isOpen, onClose, skusToLink
     const availableProducts = useMemo(() => products, [products]);
 
     // ✅ Filtrar por busca
+    const parentMap = useMemo(() => buildParentMap(availableProducts), [availableProducts]);
+
     const filteredProducts = useMemo(() => {
         if (!searchTerm) {
             return availableProducts;
         }
-        const lowerSearchTerm = searchTerm.toLowerCase();
-        return availableProducts.filter(p => 
-            p.name.toLowerCase().includes(lowerSearchTerm) || 
-            p.code.toLowerCase().includes(lowerSearchTerm)
-        );
-    }, [searchTerm, availableProducts]);
+        return availableProducts.filter(p => skuMatchesTerm(p, searchTerm, availableProducts, parentMap));
+    }, [searchTerm, availableProducts, parentMap]);
 
     if (!isOpen || skusToLink.length === 0) return null;
 
