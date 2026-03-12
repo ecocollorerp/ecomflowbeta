@@ -427,7 +427,8 @@ export interface NfeSaida {
     xml?: string;
     numeroVenda?: string; // número do pedido de venda vinculado
     numeroLoja?: string;  // número do pedido na loja virtual (extraído do intermediador ou numeroLoja)
-    loja?: string;         // loja/canal de origem (ex: "Mercado Livre", "Shopee")
+    loja?: string;         // descrição da loja (Bling v3)
+    lojaId?: number;       // ID da loja (Bling v3 - importante para detectar canal)
     tipo?: string;         // tipo da NF-e (ex: "saida", "entrada")
     naturezaOperacao?: string; // natureza da operação (ex: "Venda")
 }
@@ -485,6 +486,7 @@ export async function fetchNfeSaida(
             numeroVenda: n.numeroPedidoCompra || n.numeroLoja || undefined,
             numeroLoja: n.numeroLoja || n.intermediador?.numeroPedido || n.numeroPedidoLoja || undefined,
             loja: n.loja?.descricao || n.vendedor?.descricao || n.canal || undefined,
+            lojaId: n.loja?.id ? Number(n.loja.id) : undefined,
             tipo: n.tipo ? String(n.tipo) : undefined,
             naturezaOperacao: n.naturezaOperacao || n.natureza || undefined,
         })));
@@ -527,6 +529,41 @@ export async function fetchNfeDetalhe(apiKey: string, nfeId: number): Promise<an
         throw new Error(err?.error || `Erro ${resp.status}`);
     }
     return resp.json();
+}
+
+/**
+ * Obtém o link do DANFE em PDF via API v3.
+ */
+export async function fetchNfePdf(apiKey: string, nfeId: number | string): Promise<{ url: string }> {
+    const authH = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+    const resp = await fetchWithRetry(`/api/bling/nfe/${nfeId}/pdf`, {
+        headers: { Authorization: authH, Accept: 'application/json' },
+    });
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err?.error || `Erro ${resp.status} ao buscar PDF`);
+    }
+    const json = await resp.json();
+    return json.data; // Retorna { url: '...' }
+}
+
+/**
+ * Gera etiquetas de logística para um ou mais objetos.
+ * @param idsObjetos Lista de IDs de objetos logísticos.
+ */
+export async function fetchLogisticaEtiquetas(apiKey: string, idsObjetos: number[]): Promise<{ url: string }> {
+    const authH = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+    const resp = await fetchWithRetry('/api/bling/logisticas/etiquetas', {
+        method: 'POST',
+        headers: { Authorization: authH, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ idsObjetos }),
+    });
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err?.error || `Erro ${resp.status} ao gerar etiquetas`);
+    }
+    const json = await resp.json();
+    return json.data; // Retorna { url: '...' }
 }
 
 /**
