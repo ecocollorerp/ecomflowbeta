@@ -1832,6 +1832,33 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         }
     };
 
+    const handleDownloadZpl = async (nfe: NfeSaida) => {
+        try {
+            const token = await getValidToken();
+            if (!token) throw new Error('Token inválido.');
+
+            addToast('Buscando conteúdo ZPL (DANFE + Etiqueta)...', 'info');
+            const zpl = await fetchNfeEtiquetaZpl(token, nfe.id);
+
+            if (zpl) {
+                const blob = new Blob([zpl], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `ETIQUETA_DANFE_${nfe.numero || nfe.id}.zpl`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                addToast('✅ Arquivo ZPL baixado com sucesso!', 'success');
+            } else {
+                addToast('Conteúdo ZPL não disponível para esta nota.', 'warning');
+            }
+        } catch (err: any) {
+            addToast(`Erro no download ZPL: ${err.message}`, 'error');
+        }
+    };
+
     const handleDownloadXml = async (nfe: NfeSaida) => {
         try {
             const token = await getValidToken();
@@ -3985,10 +4012,16 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                     )}
                                                                     {/* DANFE */}
                                                                     {(isEmitidaDanfe || isAutorizadaSemDanfe) && (
-                                                                        <button onClick={() => handleAbrirDanfe(nfe)} title="Abrir DANFE"
-                                                                            className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-orange-50 text-orange-600 px-2.5 py-1.5 rounded-lg hover:bg-orange-100 border border-orange-100 transition-all">
-                                                                            <Eye size={11} /> DANFE
-                                                                        </button>
+                                                                        <div className="flex items-center gap-1">
+                                                                            <button onClick={() => handleAbrirDanfe(nfe)} title="Abrir DANFE"
+                                                                                className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-orange-50 text-orange-600 px-2.5 py-1.5 rounded-l-lg hover:bg-orange-100 border border-orange-100 transition-all border-r-0">
+                                                                                <Eye size={11} /> DANFE
+                                                                            </button>
+                                                                            <button onClick={() => handleDownloadZpl(nfe)} title="Baixar ZPL (DANFE Simplificada + Etiqueta)"
+                                                                                className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-amber-50 text-amber-600 px-2.5 py-1.5 rounded-r-lg hover:bg-amber-100 border border-amber-100 transition-all">
+                                                                                <Printer size={11} /> ZPL
+                                                                            </button>
+                                                                        </div>
                                                                     )}
                                                                     {/* XML */}
                                                                     {(isEmitidaDanfe || isAutorizadaSemDanfe) && (
