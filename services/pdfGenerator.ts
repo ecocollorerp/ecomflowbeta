@@ -212,7 +212,7 @@ function drawFooter(
  * @param previews An array of Base64 encoded PNG image data URLs for each label.
  * @param processedData A map containing data extracted from all pages, keyed by original index.
  * @param settings The current label settings.
- * @param includeDanfe Whether to include odd-numbered pages (DANFEs).
+ * @param includeMode The mode of inclusion (both, only_label, only_danfe).
  * @param stockItems The list of all stock items to find product names.
  * @param skuLinks The list of SKU links to resolve product codes.
  * @returns A promise that resolves to the generated PDF as a Blob.
@@ -221,7 +221,7 @@ export const buildPdf = async (
     previews: string[],
     processedData: Map<number, ExtractedZplData>,
     settings: ZplSettings,
-    includeDanfe: boolean,
+    includeMode: 'both' | 'only_label' | 'only_danfe',
     stockItems: StockItem[],
     skuLinks: SkuLink[]
 ): Promise<Blob> => {
@@ -234,6 +234,8 @@ export const buildPdf = async (
     const skuLinkMap = new Map(skuLinks.map(link => [link.importedSku.toUpperCase(), link.masterProductSku.toUpperCase()]));
     const stockItemMap = new Map(stockItems.map(item => [item.code.toUpperCase(), item]));
 
+    const includeDanfe = includeMode === 'both' || includeMode === 'only_danfe';
+    const includeLabel = includeMode === 'both' || includeMode === 'only_label';
 
     for (let i = 0; i < previews.length; i += 2) {
         const danfePage = previews[i];
@@ -243,160 +245,84 @@ export const buildPdf = async (
         // Determine platform-specific settings for this pair
         const platformSettings = pairData?.isMercadoLivre ? settings.mercadoLivre : settings.shopee;
 
-        // Skip this pair entirely if the label page is invalid and we don't want the DANFE
-        const isLabelInvalid = !labelPage || labelPage === 'ERROR' || labelPage.includes('R0lGOD') || labelPage === 'SKIPPED';
-        if (isLabelInvalid && !includeDanfe) {
-            continue;
+        // DANFE (Odd Page)
+        const isDanfeInvalid = !danfePage || danfePage === 'ERROR' || danfePage.includes('R0lGOD') || danfePage === 'SKIPPED';
+        if (includeDanfe && !isDanfeInvalid) {
+            pdf.addPage([width_mm, height_mm], orientation);
+            const img = await getImageDimensions(danfePage);
+            let finalWidth = width_mm * (settings.sourcePageScale_percent / 100);
+            let finalHeight = finalWidth / (img.width / img.height);
+            if (finalHeight > height_mm) {
+                finalHeight = height_mm;
+                finalWidth = finalHeight * (img.width / img.height);
+            }
+            const x = (width_mm - finalWidth) / 2;
+            const y = (height_mm - finalHeight) / 2;
+            pdf.addImage(danfePage, 'PNG', x, y, finalWidth, finalHeight, undefined, 'FAST');
         }
-        
-        pdf.addPage([width_mm, height_mm], orientation);
 
-        // Case 1: Label Only (either no DANFE was paired, or user doesn't want it)
-        if (!pairData?.hasDanfe || !includeDanfe) {
-             if (!isLabelInvalid) {
-                const imageAreaHeight = height_mm * (platformSettings.imageAreaPercentage_even / 100);
-                const img = await getImageDimensions(labelPage);
+        // Label (Even Page)
+        const isLabelInvalid = !labelPage || labelPage === 'ERROR' || labelPage.includes('R0lGOD') || labelPage === 'SKIPPED';
+        if (includeLabel && !isLabelInvalid) {
+            pdf.addPage([width_mm, height_mm], orientation);
+            const imageAreaHeight = height_mm * (platformSettings.imageAreaPercentage_even / 100);
+            const img = await getImageDimensions(labelPage);
 
-                let finalWidth = width_mm;
-                let finalHeight = finalWidth / (img.width / img.height);
-                if (finalHeight > imageAreaHeight) {
-                    finalHeight = imageAreaHeight;
-                    finalWidth = finalHeight * (img.width / img.height);
-                }
-                const x = (width_mm - finalWidth) / 2;
-                pdf.addImage(labelPage, 'PNG', x, 0, finalWidth, finalHeight, undefined, 'FAST');
-                
-                // Draw footer for label-only pages
-                if (pairData && pairData.skus.length > 0) {
-                    const lines: string[] = [];
-                    const grouped = new Map<string, { product: StockItem | null, totalQty: number }>();
-                    
-                    pairData.skus.forEach(s => {
-                        const normalizedSku = s.sku.toUpperCase();
-                        const masterSku = skuLinkMap.get(normalizedSku);
-                        const productKey = masterSku || normalizedSku;
-                        
-                        if (grouped.has(productKey)) {
-                            grouped.get(productKey)!.totalQty += s.qty;
-                        } else {
-                            grouped.set(productKey, {
-                                product: stockItemMap.get(productKey) || null,
-                                totalQty: s.qty
-                            });
-                        }
-                    });
-
-                    grouped.forEach(({ product, totalQty }, key) => {
-                        const line = platformSettings.footer.template
-                            .replace('{sku}', product?.code || key)
-                            .replace('{name}', product?.name || key)
-                            .replace('{qty}', String(totalQty));
-                        lines.push(line);
-                    });
-
-
-
-                    const { footer } = platformSettings;
-                    let footerStartX, footerStartY;
-
-                    if (footer.positionPreset === 'custom') {
-                        footerStartX = footer.x_position_mm;
-                        footerStartY = footer.y_position_mm;
-                    } else {
-                        footerStartX = 2; // Default left margin for presets
-                        footerStartY = footer.positionPreset === 'above' 
-                            ? footer.spacing_mm 
-                            : imageAreaHeight + footer.spacing_mm;
-                    }
-
-                    const footerAvailableWidth = width_mm - footerStartX;
-                    const footerAvailableHeight = height_mm - footerStartY;
-
-                    drawFooter(pdf, lines, footerStartX, footerStartY, footerAvailableWidth, footerAvailableHeight, platformSettings.footer);
-                }
+            let finalWidth = width_mm;
+            let finalHeight = finalWidth / (img.width / img.height);
+            if (finalHeight > imageAreaHeight) {
+                finalHeight = imageAreaHeight;
+                finalWidth = finalHeight * (img.width / img.height);
             }
-        // Case 2: DANFE and Label
-        } else {
-            // DANFE (Odd Page)
-            const isDanfeInvalid = !danfePage || danfePage === 'ERROR' || danfePage.includes('R0lGOD') || danfePage === 'SKIPPED';
-            if (!isDanfeInvalid) {
-                const img = await getImageDimensions(danfePage);
-                let finalWidth = width_mm * (settings.sourcePageScale_percent / 100);
-                let finalHeight = finalWidth / (img.width / img.height);
-                if (finalHeight > height_mm) {
-                    finalHeight = height_mm;
-                    finalWidth = finalHeight * (img.width / img.height);
-                }
-                const x = (width_mm - finalWidth) / 2;
-                const y = (height_mm - finalHeight) / 2;
-                pdf.addImage(danfePage, 'PNG', x, y, finalWidth, finalHeight, undefined, 'FAST');
-            }
-
-            // Label (Even Page)
-            if (!isLabelInvalid) {
-                pdf.addPage([width_mm, height_mm], orientation);
-                const imageAreaHeight = height_mm * (platformSettings.imageAreaPercentage_even / 100);
-                const img = await getImageDimensions(labelPage);
-
-                let finalWidth = width_mm;
-                let finalHeight = finalWidth / (img.width / img.height);
-                 if (finalHeight > imageAreaHeight) {
-                    finalHeight = imageAreaHeight;
-                    finalWidth = finalHeight * (img.width / img.height);
-                }
-                const x = (width_mm - finalWidth) / 2;
-                pdf.addImage(labelPage, 'PNG', x, 0, finalWidth, finalHeight, undefined, 'FAST');
+            const x = (width_mm - finalWidth) / 2;
+            pdf.addImage(labelPage, 'PNG', x, 0, finalWidth, finalHeight, undefined, 'FAST');
+            
+            if (pairData && pairData.skus.length > 0) {
+                const lines: string[] = [];
+                const grouped = new Map<string, { product: StockItem | null, totalQty: number }>();
                 
-                if (pairData && pairData.skus.length > 0) {
-                    const lines: string[] = [];
-                    const grouped = new Map<string, { product: StockItem | null, totalQty: number }>();
+                pairData.skus.forEach(s => {
+                    const normalizedSku = s.sku.toUpperCase();
+                    const masterSku = skuLinkMap.get(normalizedSku);
+                    const productKey = masterSku || normalizedSku;
                     
-                    pairData.skus.forEach(s => {
-                        const normalizedSku = s.sku.toUpperCase();
-                        const masterSku = skuLinkMap.get(normalizedSku);
-                        const productKey = masterSku || normalizedSku;
-                        
-                        if (grouped.has(productKey)) {
-                            grouped.get(productKey)!.totalQty += s.qty;
-                        } else {
-                            grouped.set(productKey, {
-                                product: stockItemMap.get(productKey) || null,
-                                totalQty: s.qty
-                            });
-                        }
-                    });
-
-                    grouped.forEach(({ product, totalQty }, key) => {
-                        const line = platformSettings.footer.template
-                            .replace('{sku}', product?.code || key)
-                            .replace('{name}', product?.name || key)
-                            .replace('{qty}', String(totalQty));
-                        lines.push(line);
-                    });
-
-
-                    
-                    const { footer } = platformSettings;
-                    let footerStartX, footerStartY;
-
-                    if (footer.positionPreset === 'custom') {
-                        footerStartX = footer.x_position_mm;
-                        footerStartY = footer.y_position_mm;
+                    if (grouped.has(productKey)) {
+                        grouped.get(productKey)!.totalQty += s.qty;
                     } else {
-                        footerStartX = 2; // Default left margin for presets
-                        footerStartY = footer.positionPreset === 'above' 
-                            ? footer.spacing_mm 
-                            : imageAreaHeight + footer.spacing_mm;
+                        grouped.set(productKey, {
+                            product: stockItemMap.get(productKey) || null,
+                            totalQty: s.qty
+                        });
                     }
-                    
-                    const footerAvailableWidth = width_mm - footerStartX;
-                    const footerAvailableHeight = height_mm - footerStartY;
-                    drawFooter(pdf, lines, footerStartX, footerStartY, footerAvailableWidth, footerAvailableHeight, platformSettings.footer);
+                });
+
+                grouped.forEach(({ product, totalQty }, key) => {
+                    const line = platformSettings.footer.template
+                        .replace('{sku}', product?.code || key)
+                        .replace('{name}', product?.name || key)
+                        .replace('{qty}', String(totalQty));
+                    lines.push(line);
+                });
+
+                const { footer } = platformSettings;
+                let footerStartX, footerStartY;
+
+                if (footer.positionPreset === 'custom') {
+                    footerStartX = footer.x_position_mm;
+                    footerStartY = footer.y_position_mm;
+                } else {
+                    footerStartX = 2; // Default left margin for presets
+                    footerStartY = footer.positionPreset === 'above' 
+                        ? footer.spacing_mm 
+                        : imageAreaHeight + footer.spacing_mm;
                 }
+                
+                const footerAvailableWidth = width_mm - footerStartX;
+                const footerAvailableHeight = height_mm - footerStartY;
+                drawFooter(pdf, lines, footerStartX, footerStartY, footerAvailableWidth, footerAvailableHeight, platformSettings.footer);
             }
         }
     }
-
 
     if ((pdf as any).internal.getNumberOfPages() === 0) {
         throw new Error("Nenhuma página válida foi adicionada ao PDF.");
@@ -404,3 +330,4 @@ export const buildPdf = async (
 
     return pdf.output('blob');
 };
+

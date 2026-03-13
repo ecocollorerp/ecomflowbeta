@@ -276,7 +276,8 @@ class DanfeSimplificadoComEtiquetaService {
    */
   private montarConteudoConsolidado(
     danfe: DanfeSimplificado,
-    pedido: PedidoComEtiqueta
+    pedido: PedidoComEtiqueta,
+    modo: 'consolidado' | 'etiqueta' | 'danfe' = 'consolidado'
   ): string {
     const dataHora = new Date().toLocaleString('pt-BR');
 
@@ -284,12 +285,9 @@ class DanfeSimplificadoComEtiquetaService {
     const etiquetaConteudo = pedido.etiqueta.conteudoRealBling || 
       `[ETIQUETA SHOPEE]\nRastreio: ${pedido.etiqueta.codigoBarrasRastreio}\nCódigo Barras: ||${pedido.etiqueta.codigoBarrasRastreio}||`;
 
-    const danfeTexto = `
-╔════════════════════════════════════════════════════════════════════════════╗
-║                     DANFE SIMPLIFICADO + ETIQUETA REAL                      ║
-║                     (Shopee → Bling → ERP - Vinculado)                      ║
-╚════════════════════════════════════════════════════════════════════════════╝
+    if (modo === 'etiqueta') return etiquetaConteudo;
 
+    const danfeTexto = `
 [PEDIDO #${danfe.numero}]
 Data: ${danfe.dataCompra}
 Marketplace: ${danfe.marketplace}
@@ -305,8 +303,17 @@ ${danfe.itens.map(item => `  ${item}`).join('\n')}
 
 [RESUMO FINANCEIRO]
 Valor Total: R$ ${danfe.valorTotal.toFixed(2)}
-Frete: A CALCULAR
-Total Final: R$ ${danfe.valorTotal.toFixed(2)}
+`;
+
+    if (modo === 'danfe') return danfeTexto;
+
+    return `
+╔════════════════════════════════════════════════════════════════════════════╗
+║                     DANFE SIMPLIFICADO + ETIQUETA REAL                      ║
+║                     (Shopee → Bling → ERP - Vinculado)                      ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+${danfeTexto}
 
 ╔════════════════════════════════════════════════════════════════════════════╗
 ║                        ETIQUETA REAL DO BLING                              ║
@@ -325,11 +332,8 @@ ${danfe.rastreio}
 Processado: ${dataHora}
 Origem: Shopee → Bling → Vinculação ERP
 Status: ✅ PRONTO PARA IMPRESSÃO
-Obs: SKUs vinculados aos produtos principais do ERP
 ╚════════════════════════════════════════════════════════════════════════════╝
 `;
-
-    return danfeTexto;
   }
 
   /**
@@ -337,7 +341,9 @@ Obs: SKUs vinculados aos produtos principais do ERP
    */
   async processarPedidosParaDanfeEtiqueta(
     pedidos: PedidoComEtiqueta[],
-    usuarioId?: string
+    usuarioId?: string,
+    modo: 'consolidado' | 'etiqueta' | 'danfe' = 'consolidado',
+    onProgress?: (current: number, total: number) => void
   ): Promise<{
     processados: ProcessoDanfeEtiqueta[];
     arquivos: ArquivoProcessado[];
@@ -354,6 +360,7 @@ Obs: SKUs vinculados aos produtos principais do ERP
 
     for (let i = 0; i < pedidos.length; i++) {
       const pedido = pedidos[i];
+      if (onProgress) onProgress(i + 1, pedidos.length);
 
       try {
         // Verificar se tem etiqueta REAL
@@ -377,7 +384,7 @@ Obs: SKUs vinculados aos produtos principais do ERP
         const danfe = this.gerarDanfeSimplificado(pedido);
 
         // Montar conteúdo consolidado (DANFE + Etiqueta REAL)
-        const conteudoConsolidado = this.montarConteudoConsolidado(danfe, pedido);
+        const conteudoConsolidado = this.montarConteudoConsolidado(danfe, pedido, modo);
 
         // Salvar em auditoria
         if (usuarioId) {

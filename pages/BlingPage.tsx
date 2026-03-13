@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { GeneralSettings, OrderItem, BlingInvoice, BlingProduct, BlingSettings, BlingScopeSettings, StockItem, SkuLink } from '../types';
-import { fetchBlingOrders, fetchBlingInvoices, fetchEtiquetaZplForPedido, fetchEtiquetasLote, fetchBlingProducts, executeBlingTokenExchange, executeTokenRefresh, syncBlingOrders, syncBlingInvoices, fetchNfeSaida, fetchNfeDetalhe, fetchPedidoVendaDetalhe, atualizarPedidoVenda, enviarNfe, fetchNfeEtiquetaZpl, fetchNfePdf, fetchLogisticaEtiquetas, enrichNfeSaida } from '../lib/blingApi';
+import { GeneralSettings, OrderItem, BlingInvoice, BlingProduct, BlingSettings, BlingScopeSettings, StockItem, SkuLink, ZplIncludeMode } from '../types';
+import { fetchBlingOrders, fetchBlingInvoices, fetchEtiquetaZplForPedido, fetchEtiquetasLote, fetchBlingProducts, executeBlingTokenExchange, executeTokenRefresh, syncBlingOrders, syncBlingInvoices, fetchNfeSaida, fetchNfeDetalhe, fetchPedidoVendaDetalhe, atualizarPedidoVenda, enviarNfe, fetchNfeEtiquetaZpl, fetchNfePdf, fetchLogisticaEtiquetas, enrichNfeSaida, atualizarNfe } from '../lib/blingApi';
 import type { NfeSaida } from '../lib/blingApi';
 import { addPendingZplItem } from '../utils/pendingZpl';
 import { BlingSync } from '../components/BlingSync';
@@ -38,7 +38,7 @@ interface BlingPageProps {
     onLaunchSuccess: (orders: OrderItem[]) => Promise<void>; // Updated to Promise for await support
     addToast: (message: string, type: 'success' | 'error' | 'info' | 'warning') => void;
     setCurrentPage: (page: string) => void;
-    onLoadZpl: (zpl: string, includeDanfe?: boolean) => void;
+    onLoadZpl: (zpl: string, includeMode: ZplIncludeMode) => void;
     stockItems?: StockItem[];
     skuLinks?: SkuLink[];
     allOrders?: OrderItem[];
@@ -54,6 +54,7 @@ interface ZplLoteItem {
     timestamp: string;
     total: number;
     success: number;
+    successIds: string[];
     failed: { orderId: string; blingId: string; error: string }[];
     zplContent: string;
 }
@@ -945,17 +946,29 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     const hasAutoFetchedVendas = useRef(false);
 
     // Pedidos completos vindos do endpoint de sync (com itens aninhados)
-    const [syncedOrders, setSyncedOrders] = useState<any[]>([]);
+    const [syncedOrders, setSyncedOrders] = useState<any[]>(() => {
+        try {
+            const cached = localStorage.getItem('syncedOrders');
+            if (cached) return JSON.parse(cached);
+        } catch { /* ignore */ }
+        return [];
+    });
     const [expandedOrderIds, setExpandedOrderIds] = useState<Set<string>>(new Set());
     const [pedidoSearch, setPedidoSearch] = useState('');
 
     // ── Estado da aba Pedidos de Vendas ──────────────────────────────────────
-    const [vendasDirectOrders, setVendasDirectOrders] = useState<any[]>([]);
+    const [vendasDirectOrders, setVendasDirectOrders] = useState<any[]>(() => {
+        try {
+            const cached = localStorage.getItem('vendasDirectOrders');
+            if (cached) return JSON.parse(cached);
+        } catch { /* ignore */ }
+        return [];
+    });
     const [isLoadingVendas, setIsLoadingVendas] = useState(false);
-    const [vendasStartDate, setVendasStartDate] = useState(getSevenDaysAgo());
-    const [vendasEndDate, setVendasEndDate] = useState(new Date().toISOString().split('T')[0]);
-    const [vendasSituacao, setVendasSituacao] = useState<string>('6');
-    const [vendasCanalFilter, setVendasCanalFilter] = useState<'TODOS' | 'ML' | 'SHOPEE' | 'SITE'>('TODOS');
+    const [vendasStartDate, setVendasStartDate] = useState(() => localStorage.getItem('vendasStartDate') || getSevenDaysAgo());
+    const [vendasEndDate, setVendasEndDate] = useState(() => localStorage.getItem('vendasEndDate') || new Date().toISOString().split('T')[0]);
+    const [vendasSituacao, setVendasSituacao] = useState<string>(() => localStorage.getItem('vendasSituacao') || '6');
+    const [vendasCanalFilter, setVendasCanalFilter] = useState<'TODOS' | 'ML' | 'SHOPEE' | 'SITE'>(() => (localStorage.getItem('vendasCanalFilter') as any) || 'TODOS');
     const [vendasSearch, setVendasSearch] = useState('');
     const [selectedVendasIds, setSelectedVendasIds] = useState<Set<string>>(new Set());
     const [isGeneratingBatchZpl, setIsGeneratingBatchZpl] = useState(false);
@@ -972,6 +985,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     const [zplLotesFilter, setZplLotesFilter] = useState<'todos' | 'falhas'>('todos');
     const [lastCompletedLote, setLastCompletedLote] = useState<ZplLoteItem | null>(null);
     const [zplGeneratedIds, setZplGeneratedIds] = useState<Set<string>>(new Set());
+
     // Puxar etiquetas manualmente do Bling
     const [etiquetaPullSource, setEtiquetaPullSource] = useState<'importacao' | 'nfe'>('importacao');
     const [isPullingEtiquetas, setIsPullingEtiquetas] = useState(false);
@@ -1002,7 +1016,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     const [nfeBatchErrors, setNfeBatchErrors] = useState<Record<number, string>>({});
     
     // Filtros de Importação do Marketplace
-    const [importCanalFilter, setImportCanalFilter] = useState<'TODOS' | 'ML' | 'SHOPEE' | 'SITE'>('TODOS');
+    const [importCanalFilter, setImportCanalFilter] = useState<'TODOS' | 'ML' | 'SHOPEE' | 'SITE'>(() => (localStorage.getItem('importCanalFilter') as any) || 'TODOS');
     const [importSearch, setImportSearch] = useState('');
     const [showOnlyWithLink, setShowOnlyWithLink] = useState(false);
     
@@ -1021,6 +1035,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     const [isDownloadingDanfe, setIsDownloadingDanfe] = useState(false);
     const [isEnrichingNfe, setIsEnrichingNfe] = useState(false);
     const [danfeDownloadProgress, setDanfeDownloadProgress] = useState<{ current: number; total: number } | null>(null);
+    const [labelDownloadProgress, setLabelDownloadProgress] = useState<{ current: number; total: number } | null>(null);
     // Vincular itens NF-e → ERP
     const [expandedNfeItemsId, setExpandedNfeItemsId] = useState<number | null>(null);
     const [nfeItemsCache, setNfeItemsCache] = useState<Record<number, any[]>>({});
@@ -1042,6 +1057,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     const [isLinkingCatalog, setIsLinkingCatalog] = useState(false);
     // Editar pedido de venda (dados fiscais, nome)
     const [editPedidoModal, setEditPedidoModal] = useState<{ id: string; data: any } | null>(null);
+    const [editNfeModal, setEditNfeModal] = useState<{ id: string; data: any } | null>(null);
+    const [isSavingNfe, setIsSavingNfe] = useState(false);
+    const [isLoadingOrderInfo, setIsLoadingOrderInfo] = useState<string | null>(null); // Nfe ID
+    const [nfeOrderDataCache, setNfeOrderDataCache] = useState<Record<string, any>>({});
     const [isSavingPedido, setIsSavingPedido] = useState(false);
     // Modal modo ZPL — escolha entre DANFE+Etiqueta ou apenas Etiqueta
     const [zplModeModal, setZplModeModal] = useState<{ zpl: string; loteId: string; descricao?: string } | null>(null);
@@ -1062,10 +1081,16 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     const [isImportingToERP, setIsImportingToERP] = useState(false);
 
     // Filters State
-    const [filters, setFilters] = useState({
-        startDate: getSevenDaysAgo(),
-        endDate: getToday(),
-        status: 'EM ABERTO' as 'EM ABERTO' | 'EM ANDAMENTO' | 'ATENDIDO' | 'TODOS',
+    const [filters, setFilters] = useState(() => {
+        try {
+            const cached = localStorage.getItem('blingFilters');
+            if (cached) return JSON.parse(cached);
+        } catch { /* ignore */ }
+        return {
+            startDate: getSevenDaysAgo(),
+            endDate: getToday(),
+            status: 'EM ABERTO' as 'EM ABERTO' | 'EM ANDAMENTO' | 'ATENDIDO' | 'TODOS',
+        };
     });
 
     const [searchTerm, setSearchTerm] = useState('');
@@ -1371,6 +1396,68 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         }
     };
 
+    // ── AUTOMATED URL ACTIONS ───────────────────────────────────────────────
+    useEffect(() => {
+        const urlParams = new URLSearchParams(window.location.search);
+        const pedidoId = urlParams.get('pedidoId');
+        const blingId = urlParams.get('blingId');
+        
+        if (isConnected && (pedidoId || blingId) && !isLoadingVendas && !isLoadingNfeSaida) {
+            // Pequeno delay para garantir que o componente está montado
+            const timer = setTimeout(() => {
+                handleUrlParameterAction(pedidoId, blingId);
+            }, 1000);
+            return () => clearTimeout(timer);
+        }
+    }, [isConnected, isLoadingVendas, isLoadingNfeSaida]);
+
+    const handleUrlParameterAction = async (pedidoId: string | null, blingId: string | null) => {
+        try {
+            const token = await getValidToken();
+            if (!token) return;
+
+            // 1. Prioridade para blingId (assume-se ser NF-e ID)
+            if (blingId) {
+                const nfe = nfeSaida.find(n => String(n.id) === blingId || n.numero === blingId);
+                if (nfe) {
+                    addToast(`🚀 Ação automática: Processando NF-e ${nfe.numero || nfe.id}`, 'info');
+                    handleGerarEtiquetaNfe(nfe);
+                } else {
+                    // Tenta buscar detalhes se não estiver na lista cacheada
+                    const detalhe = await fetchNfeDetalhe(token, blingId);
+                    if (detalhe) {
+                        const nfeObj = detalhe.data || detalhe;
+                        handleGerarEtiquetaNfe(nfeObj as NfeSaida);
+                    }
+                }
+            } 
+            // 2. Fallback para pedidoId
+            else if (pedidoId) {
+                const order = vendasDirectOrders.find(o => String(o.blingId || o.orderId) === pedidoId);
+                if (order) {
+                    addToast(`🚀 Ação automática: Processando Pedido ${order.orderId || order.blingId}`, 'info');
+                    const zpl = await fetchEtiquetaZplForPedido(token, order.blingId || order.orderId);
+                    if (zpl) {
+                        setZplModeModal({ zpl, loteId: `ZPL-PED-${order.orderId}`, descricao: `Pedido ${order.orderId}` });
+                    }
+                } else {
+                    const zpl = await fetchEtiquetaZplForPedido(token, pedidoId);
+                    if (zpl) {
+                        setZplModeModal({ zpl, loteId: `ZPL-PED-${pedidoId}`, descricao: `Pedido ${pedidoId}` });
+                    }
+                }
+            }
+            
+            // Limpa os parâmetros da URL para evitar re-execução indesejada
+            const newUrl = window.location.pathname + window.location.hash;
+            window.history.replaceState({}, document.title, newUrl);
+
+        } catch (err: any) {
+            console.error('[UrlAction] Erro:', err);
+            addToast(`Erro na ação automática: ${err.message}`, 'error');
+        }
+    };
+
     const handleAdjustStock = async () => {
         if (!adjustStockModal?.item) return;
         const qty = Number(adjustQty);
@@ -1417,6 +1504,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         // Salva estados importantes quando mudarem
         if (syncedOrders.length > 0) localStorage.setItem('syncedOrders', JSON.stringify(syncedOrders));
         if (nfeSaida.length > 0) localStorage.setItem('nfeSaida', JSON.stringify(nfeSaida));
+        if (vendasDirectOrders.length > 0) localStorage.setItem('vendasDirectOrders', JSON.stringify(vendasDirectOrders));
         localStorage.setItem('activeTab', activeTab);
         localStorage.setItem('blingFilters', JSON.stringify(filters));
         localStorage.setItem('vendasSituacao', vendasSituacao);
@@ -1425,7 +1513,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         localStorage.setItem('nfeSaidaFiltro', nfeSaidaFiltro);
         if (pendingNfeSaida) localStorage.setItem('pendingNfeSaida', JSON.stringify(pendingNfeSaida));
         else localStorage.removeItem('pendingNfeSaida');
-    }, [syncedOrders, nfeSaida, activeTab, filters, vendasSituacao, vendasSearch, nfeSaidaSearch, nfeSaidaFiltro, pendingNfeSaida]);
+    }, [syncedOrders, nfeSaida, vendasDirectOrders, activeTab, filters, vendasSituacao, vendasSearch, nfeSaidaSearch, nfeSaidaFiltro, pendingNfeSaida]);
 
     useEffect(() => {
         // Carrega estados na inicialização
@@ -1533,9 +1621,14 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     await handleFetchOrdersAndInvoices();
                     await handleFetchVendasEmAberto(true);
                 } else {
-                    const errMsg = typeof result.error === 'string'
-                        ? result.error
-                        : (result.error?.description || result.error?.type || result.error?.message || JSON.stringify(result.error) || 'Falha desconhecida');
+                    let errMsg = 'Falha desconhecida';
+                    if (typeof result.error === 'string') {
+                        errMsg = result.error;
+                    } else if (result.error) {
+                        errMsg = result.error.description || result.error.message || result.error.type || JSON.stringify(result.error);
+                    } else if (result.message) {
+                        errMsg = result.message;
+                    }
                     addToast(`Erro ao gerar NF-e via Bling: ${errMsg}`, 'error');
                 }
             } else {
@@ -1700,37 +1793,42 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     };
 
     const handleAbrirDanfe = async (nfe: NfeSaida) => {
-        if (nfe.linkDanfe) {
-            window.open(nfe.linkDanfe, '_blank');
-            return;
-        }
-        // Busca detalhe para obter link DANFE
         try {
             const token = await getValidToken();
-            if (!token) return;
-            
-            // Tenta obter o PDF real via API v3 (DANFE Simplificada/Normal conforme config)
-            addToast('Buscando link do DANFE...', 'info');
-            try {
-                const pdfData = await fetchNfePdf(token, nfe.id);
-                if (pdfData?.url) {
-                    window.open(pdfData.url, '_blank');
-                    return;
-                }
-            } catch (pdfErr) {
-                console.warn('[handleAbrirDanfe] Erro ao buscar PDF v3, tentando detalhe:', pdfErr);
-            }
+            if (!token) throw new Error('Token inválido.');
 
-            // Fallback para detalhe
-            const detalhe = await fetchNfeDetalhe(token, nfe.id);
-            const link = detalhe?.data?.linkDanfe || detalhe?.data?.link || detalhe?.linkDanfe || detalhe?.link;
-            if (link) {
-                window.open(link, '_blank');
+            addToast('Iniciando download do DANFE...', 'info');
+            
+            // NOVO: Usa a rota de download direto via PROXY ERP
+            const resp = await fetch(`/api/bling/download/pdf/${nfe.id}`, {
+                headers: { Authorization: token }
+            });
+
+            if (resp.ok) {
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `DANFE_${nfe.numero || nfe.id}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                addToast('✅ DANFE baixado com sucesso! Verifique a barra de downloads do seu navegador.', 'success');
+                // Opcional: tentar abrir em nova aba também para garantir visibilidade
+                window.open(url, '_blank');
             } else {
-                addToast('Link do DANFE não disponível para esta nota.', 'info');
+                // Fallback para link direto se houver
+                if (nfe.linkDanfe) {
+                    window.open(nfe.linkDanfe, '_blank');
+                    addToast('Download iniciado via link direto (fallback).', 'info');
+                } else {
+                    addToast('Não foi possível gerar o PDF do DANFE.', 'error');
+                }
             }
         } catch (err: any) {
-            addToast(`Erro: ${err.message}`, 'error');
+            addToast(`Erro no download: ${err.message}`, 'error');
+            if (nfe.linkDanfe) window.open(nfe.linkDanfe, '_blank');
         }
     };
 
@@ -1788,6 +1886,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             return;
         }
         setIsBatchEmitindo(true);
+        setLabelDownloadProgress({ current: 0, total: pendentes.length });
         setNfeBatchErrors({});
         let ok = 0, fail = 0;
         const loteId = `EMISSAO-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
@@ -1807,6 +1906,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             } catch (err: any) {
                 fail++;
                 setNfeBatchErrors(prev => ({ ...prev, [nfe.id]: err.message || 'Erro desconhecido' }));
+            } finally {
+                setLabelDownloadProgress(prev => prev ? { ...prev, current: prev.current + 1 } : null);
             }
             // delay entre emissões para rate limit
             await new Promise(r => setTimeout(r, 600));
@@ -1839,6 +1940,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         // Não limpamos a seleção se houver falhas, para permitir reprocessamento fácil
         if (fail === 0) setSelectedNfeSaidaIds(new Set());
         setIsBatchEmitindo(false);
+        setLabelDownloadProgress(null);
         
         if (fail > 0) {
             addToast(`${ok} NF-e sucesso, ${fail} falha(s). Verifique os erros na tabela.`, 'error');
@@ -2202,35 +2304,34 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 const nfe = notasList[i];
                 setDanfeDownloadProgress({ current: i + 1, total: notasList.length });
                 let danfeUrl = "";
-                try {
-                    const pdfResp = await fetch(`/api/bling/nfe/${nfe.id}/pdf`, {
-                        headers: { Authorization: token }
-                    });
-                    const pdfData = await pdfResp.json();
-                    danfeUrl = pdfData?.data?.link || pdfData?.link || nfe.linkDanfe;
-                } catch (err) {
-                    console.error("Erro ao obter PDF v3:", err);
-                    danfeUrl = nfe.linkDanfe;
-                }
-
-                if (danfeUrl) {
+                if (nfe.id) {
                     try {
-                        const resp = await fetch(danfeUrl);
+                        // NOVO: Chama a rota de download direto via PROXY ERP
+                        const resp = await fetch(`/api/bling/download/pdf/${nfe.id}`, {
+                            headers: { Authorization: token }
+                        });
+                        
                         if (resp.ok) {
                             const blob = await resp.blob();
                             const url = URL.createObjectURL(blob);
                             const a = document.createElement('a');
                             a.href = url;
                             a.download = nomeArquivo(i);
+                            document.body.appendChild(a);
                             a.click();
+                            document.body.removeChild(a);
+                            // NOVO: Abrir também em nova aba para garantir visibilidade
+                            window.open(url, '_blank');
                             URL.revokeObjectURL(url);
                             baixados++;
                         } else {
-                            window.open(danfeUrl, '_blank');
+                            // Fallback para o link original se o proxy falhar
+                            if (nfe.linkDanfe) window.open(nfe.linkDanfe, '_blank');
                             baixados++;
                         }
-                    } catch {
-                        window.open(danfeUrl, '_blank');
+                    } catch (err) {
+                        console.error("Erro no download via proxy:", err);
+                        if (nfe.linkDanfe) window.open(nfe.linkDanfe, '_blank');
                         baixados++;
                     }
                 }
@@ -2271,24 +2372,65 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             setExpandedNfeItemsId(null);
             return;
         }
-        // Se já carregou, apenas expand
-        if (nfeItemsCache[nfe.id]) {
+        
+        // Se já carregou ITENS e INFO_ORDER, apenas expand
+        if (nfeItemsCache[nfe.id] && nfeOrderDataCache[nfe.id]) {
             setExpandedNfeItemsId(nfe.id);
             return;
         }
+
         setIsLoadingNfeItems(true);
         setExpandedNfeItemsId(nfe.id);
+        
         try {
             const token = await getValidToken();
             if (!token) throw new Error('Token inválido.');
-            const detalhe = await fetchNfeDetalhe(token, nfe.id);
-            const itens = detalhe?.data?.itens || detalhe?.itens || [];
-            setNfeItemsCache(prev => ({ ...prev, [nfe.id]: itens }));
+
+            // 1. Busca Itens da NF-e
+            if (!nfeItemsCache[nfe.id]) {
+                const detalhe = await fetchNfeDetalhe(token, nfe.id);
+                const itens = detalhe?.data?.itens || detalhe?.itens || [];
+                setNfeItemsCache(prev => ({ ...prev, [nfe.id]: itens }));
+            }
+
+            // 2. Busca Info do Pedido Vinculado (se houver idVenda)
+            const idVenda = nfe.idVenda || (nfeItemsCache[nfe.id] as any)?.pedido?.id;
+            if (idVenda && !nfeOrderDataCache[nfe.id]) {
+                try {
+                    const pedDet = await fetchPedidoVendaDetalhe(token, idVenda);
+                    if (pedDet?.data) {
+                        setNfeOrderDataCache(prev => ({ ...prev, [nfe.id]: pedDet.data }));
+                    }
+                } catch (pe) { console.warn('Erro ao buscar order info para NF-e:', pe); }
+            }
+
         } catch (err: any) {
-            addToast(`Erro ao carregar itens: ${err.message}`, 'error');
+            addToast(`Erro ao carregar detalhes: ${err.message}`, 'error');
             setExpandedNfeItemsId(null);
         } finally {
             setIsLoadingNfeItems(false);
+        }
+    };
+
+    // ── Salvar alterações na NF-e (apenas pendentes) ─────────────────────────
+    const handleSalvarNfe = async () => {
+        if (!editNfeModal) return;
+        setIsSavingNfe(true);
+        try {
+            const token = await getValidToken();
+            if (!token) throw new Error('Token inválido.');
+
+            await atualizarNfe(token, editNfeModal.id, editNfeModal.data);
+            addToast(`✅ NF-e ${editNfeModal.id} atualizada com sucesso!`, 'success');
+            
+            // Refresh local da nota se estiver na lista
+            setNfeSaida(prev => prev.map(n => n.id === editNfeModal.id ? { ...n, ...editNfeModal.data } : n));
+            
+            setEditNfeModal(null);
+        } catch (err: any) {
+            addToast(`Erro ao salvar NF-e: ${err.message}`, 'error');
+        } finally {
+            setIsSavingNfe(false);
         }
     };
 
@@ -2302,8 +2444,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             return;
         }
         setIsBatchEmitindo(true);
+        setLabelDownloadProgress({ current: 0, total: notasSel.length });
         const zplParts: string[] = [];
         let ok = 0, fail = 0;
+        const successIds: string[] = [];
         for (const nfe of notasSel) {
             try {
                 const token = await getValidToken();
@@ -2314,6 +2458,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 if (zplReal) {
                     zplParts.push(zplReal);
                     ok++;
+                    successIds.push(nfe.numero || nfe.id);
                 } else {
                     // 2. Fallback via pedido vinculado
                     // PRIORIDADE: nfe.idVenda (capturado no enriquecimento)
@@ -2321,7 +2466,11 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     
                     if (pedidoVendaId) {
                         const zpl = await fetchEtiquetaZplForPedido(token, String(pedidoVendaId));
-                        if (zpl) { zplParts.push(zpl); ok++; }
+                        if (zpl) { 
+                            zplParts.push(zpl); 
+                            ok++; 
+                            successIds.push(nfe.numero || nfe.id);
+                        }
                         else fail++;
                     } else {
                         // Tenta buscar detalhe se não tiver em cache
@@ -2329,23 +2478,40 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         const vId = detalhe?.data?.vendas?.[0]?.id || detalhe?.data?.pedidoVenda?.id || detalhe?.vendas?.[0]?.id;
                         if (vId) {
                             const zpl = await fetchEtiquetaZplForPedido(token, String(vId));
-                            if (zpl) { zplParts.push(zpl); ok++; }
+                            if (zpl) { 
+                                zplParts.push(zpl); 
+                                ok++; 
+                                successIds.push(nfe.numero || nfe.id);
+                            }
                             else fail++;
                         } else fail++;
                     }
                 }
             } catch { fail++; }
+            setLabelDownloadProgress(prev => prev ? { ...prev, current: prev.current + 1 } : null);
             await new Promise(r => setTimeout(r, 500));
         }
         if (zplParts.length > 0) {
             const loteId = `ETIQ-DANFE-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
             const combined = zplParts.join('\n');
+            const newLote: ZplLoteItem = {
+                id: loteId,
+                timestamp: new Date().toISOString(),
+                total: notasSel.length,
+                success: ok,
+                successIds: successIds,
+                failed: fail > 0 ? [{ orderId: 'Vários', blingId: '', error: 'Falha em alguns itens' }] : [],
+                zplContent: combined,
+            };
+            setZplLotes(prev => [newLote, ...prev]);
+            setLastCompletedLote(newLote);
             setZplModeModal({ zpl: combined, loteId, descricao: `${ok} etiqueta(s) + DANFE` });
             addToast(`${ok} etiqueta(s) gerada(s)!${fail > 0 ? ` ${fail} falha(s).` : ''}`, ok > 0 ? 'success' : 'warning');
         } else {
             addToast(`Nenhuma etiqueta gerada. ${fail} falha(s).`, 'error');
         }
         setIsBatchEmitindo(false);
+        setLabelDownloadProgress(null);
         setSelectedNfeSaidaIds(new Set());
     };
 
@@ -2358,6 +2524,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             return;
         }
         setIsBatchEmitindo(true);
+        setLabelDownloadProgress({ current: 0, total: notasSel.length });
         try {
             const token = await getValidToken();
             if (!token) throw new Error('Token inválido.');
@@ -2383,11 +2550,13 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     }
                 } catch (e) {
                     console.warn(`[handleBatchPdfEtiquetas] Erro na nota ${nfe.id}`, e);
+                } finally {
+                    setLabelDownloadProgress(prev => prev ? { ...prev, current: prev.current + 1 } : null);
                 }
             }
 
             if (idsObjetos.length === 0) {
-                addToast('Nenhum objeto logístico encontrado.', 'warning');
+                addToast('Nenhum objeto logístico encontrado. Verifique se as etiquetas de transporte já foram geradas no Bling para estas notas.', 'warning');
                 return;
             }
 
@@ -2402,6 +2571,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             addToast(`Erro: ${err.message}`, 'error');
         } finally {
             setIsBatchEmitindo(false);
+            setLabelDownloadProgress(null);
             setSelectedNfeSaidaIds(new Set());
         }
     };
@@ -2471,6 +2641,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
 
         const zplParts: string[] = [];
         let successCount = 0;
+        const successIds: string[] = [];
         const failedItems: ZplLoteItem['failed'] = [];
 
         for (let i = 0; i < targets.length; i++) {
@@ -2490,6 +2661,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
 
                     zplParts.push(zpl);
                     successCount++;
+                    successIds.push(order.orderId || order.blingNumero || order.id);
                     // Marca como gerado nesta sessão
                     setZplGeneratedIds(prev => new Set([...prev, order.id]));
                 } else {
@@ -2514,6 +2686,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 timestamp: new Date().toISOString(),
                 total: targets.length,
                 success: successCount,
+                successIds: successIds,
                 failed: failedItems,
                 zplContent: combinedZpl,
             };
@@ -2787,6 +2960,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     timestamp: new Date().toISOString(),
                     total: ids.length,
                     success: successZpls.length,
+                    successIds: successZpls.map(r => String(r.pedidoVendaId || '')),
                     failed: failedItems.map(f => ({ orderId: String(f.pedidoVendaId), blingId: String(f.pedidoVendaId), error: f.error || 'Erro desconhecido' })),
                     zplContent: batchZpl,
                 };
@@ -3275,21 +3449,9 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                         </td>
                                                         {/* ZPL column */}
                                                         <td className="p-3">
-                                                            {canGerarEtiquetas && nfeEmitida && (
+                                                            {vendasInv && (
                                                                 <button
-                                                                    onClick={async () => {
-                                                                        setGeneratingZplId(key);
-                                                                        try {
-                                                                            const token = await getValidToken();
-                                                                            if (!token) throw new Error('Token inválido');
-                                                                            const zpl = await fetchEtiquetaZplForPedido(token, order.blingId || order.orderId);
-                                                                            if (zpl) setZplModeModal({ zpl, loteId: `ZPL-${order.blingId || order.orderId}`, descricao: order.customer_name });
-                                                                        } catch (e: any) {
-                                                                            addToast(`Erro ZPL: ${e.message}`, 'error');
-                                                                        } finally {
-                                                                            setGeneratingZplId(null);
-                                                                        }
-                                                                    }}
+                                                                    onClick={e => { e.stopPropagation(); handleGenerateZpl(vendasInv); }}
                                                                     disabled={generatingZplId === key}
                                                                     className="flex items-center gap-1 text-[9px] font-black uppercase bg-blue-50 text-blue-600 px-2 py-1.5 rounded-lg hover:bg-blue-100 border border-blue-100 disabled:opacity-50 whitespace-nowrap transition-all"
                                                                 >
@@ -3646,9 +3808,19 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         {/* Progresso batch emissão / download */}
                         {isBatchEmitindo && (
                             <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-2xl p-4">
-                                <span className="text-xs font-black text-yellow-700 flex items-center gap-2">
-                                    <Loader2 size={12} className="animate-spin" /> Enviando NF-e para SEFAZ... Aguarde.
-                                </span>
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-xs font-black text-yellow-700 flex items-center gap-2">
+                                        <Loader2 size={12} className="animate-spin" /> Processando em lote... Aguarde.
+                                    </span>
+                                    {labelDownloadProgress && (
+                                        <span className="text-xs font-bold text-yellow-600">{labelDownloadProgress.current}/{labelDownloadProgress.total}</span>
+                                    )}
+                                </div>
+                                {labelDownloadProgress && (
+                                    <div className="w-full bg-yellow-200 rounded-full h-2 overflow-hidden">
+                                        <div className="bg-yellow-600 h-2 rounded-full transition-all duration-300" style={{ width: `${Math.round((labelDownloadProgress.current / labelDownloadProgress.total) * 100)}%` }} />
+                                    </div>
+                                )}
                             </div>
                         )}
                         {isDownloadingXml && xmlDownloadProgress && (
@@ -3713,8 +3885,9 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                 const isAutorizadaSemDanfe = isAutorizada && !nfe.linkDanfe;
                                                 const isEmitidaDanfe = isEmitida || (isAutorizada && !!nfe.linkDanfe);
                                                 const isLoading = emitindoNfeId === nfe.id;
-                                                const isItemsExpanded = expandedNfeItemsId === nfe.id;
+                                                const isExpanded = expandedNfeItemsId === nfe.id;
                                                 const nfeItems = nfeItemsCache[nfe.id] || [];
+                                                const orderInfo = nfeOrderDataCache[nfe.id];
 
                                                 const formatDate = (d?: string) => {
                                                     if (!d) return '-';
@@ -3731,7 +3904,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
 
                                                 return (
                                                     <React.Fragment key={nfe.id}>
-                                                        <tr className={`hover:bg-slate-50 transition-colors ${isSelected ? 'bg-emerald-50/60' : ''} ${isPendente ? 'bg-yellow-50/30' : ''}`}>
+                                                        <tr className={`hover:bg-slate-50 transition-colors ${isSelected ? 'bg-emerald-50/60' : isExpanded ? 'bg-slate-50' : ''} ${isPendente ? 'bg-yellow-50/30' : ''}`}>
                                                             <td className="p-3 w-10">
                                                                 <button
                                                                     onClick={() => setSelectedNfeSaidaIds(prev => {
@@ -3743,6 +3916,9 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                 >
                                                                     {isSelected ? <CheckSquare size={14} className="text-emerald-600" /> : <Square size={14} className="text-slate-300" />}
                                                                 </button>
+                                                            </td>
+                                                            <td className="p-3 text-center cursor-pointer" onClick={() => handleExpandNfeItems(nfe)}>
+                                                                {isExpanded ? <ChevronDown size={14} className="text-blue-500" /> : <ChevronRight size={14} className="text-slate-400" />}
                                                             </td>
                                                             <td className="p-3 font-black text-slate-700">{nfe.numero || nfe.id}</td>
                                                             <td className="p-3 font-mono text-xs text-slate-400">{nfe.serie || '-'}</td>
@@ -3794,25 +3970,24 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                             </td>
                                                             <td className="p-3">
                                                                 <div className="flex items-center gap-1.5 flex-wrap">
-                                                                    {/* Pendente — botão Emitir */}
+                                                                    {/* Pendente — botões Emitir e Editar */}
                                                                     {isPendente && (
-                                                                        <button onClick={() => handleEmitirNfe(nfe)} disabled={isLoading || isBatchEmitindo} title="Enviar NF-e para SEFAZ"
-                                                                            className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-yellow-100 text-yellow-800 px-2.5 py-1.5 rounded-lg hover:bg-yellow-200 border border-yellow-200 disabled:opacity-50 transition-all">
-                                                                            {isLoading ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Emitir
-                                                                        </button>
+                                                                        <>
+                                                                            <button onClick={() => handleEmitirNfe(nfe)} disabled={isLoading || isBatchEmitindo} title="Enviar NF-e para SEFAZ"
+                                                                                className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-yellow-100 text-yellow-800 px-2.5 py-1.5 rounded-lg hover:bg-yellow-200 border border-yellow-200 disabled:opacity-50 transition-all">
+                                                                                {isLoading ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Emitir
+                                                                            </button>
+                                                                            <button onClick={() => setEditNfeModal({ id: String(nfe.id), data: nfe })} title="Editar informações da nota"
+                                                                                className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-amber-50 text-amber-600 px-2.5 py-1.5 rounded-lg hover:bg-amber-100 border border-amber-100 transition-all">
+                                                                                <Settings size={11} /> Editar
+                                                                            </button>
+                                                                        </>
                                                                     )}
                                                                     {/* DANFE */}
                                                                     {(isEmitidaDanfe || isAutorizadaSemDanfe) && (
                                                                         <button onClick={() => handleAbrirDanfe(nfe)} title="Abrir DANFE"
                                                                             className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-orange-50 text-orange-600 px-2.5 py-1.5 rounded-lg hover:bg-orange-100 border border-orange-100 transition-all">
                                                                             <Eye size={11} /> DANFE
-                                                                        </button>
-                                                                    )}
-                                                                    {/* Etiqueta + DANFE Simplificada */}
-                                                                    {(isEmitidaDanfe || isAutorizadaSemDanfe) && canGerarEtiquetas && (
-                                                                        <button onClick={() => handleGerarEtiquetaNfe(nfe)} disabled={isLoading} title="Gerar Etiqueta de Envio + DANFE Simplificada"
-                                                                            className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-indigo-50 text-indigo-700 px-2.5 py-1.5 rounded-lg hover:bg-indigo-100 border border-indigo-100 disabled:opacity-50 transition-all">
-                                                                            {isLoading ? <Loader2 size={11} className="animate-spin" /> : <Printer size={11} />} Etiq+DANFE
                                                                         </button>
                                                                     )}
                                                                     {/* XML */}
@@ -3841,12 +4016,6 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                             <XCircle size={11} /> Limpar Erro
                                                                         </button>
                                                                     )}
-                                                                    {/* Vincular Itens */}
-                                                                    <button onClick={() => handleExpandNfeItems(nfe)} disabled={isLoadingNfeItems && expandedNfeItemsId === nfe.id} title="Ver / vincular itens da NF-e"
-                                                                        className={`flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2.5 py-1.5 rounded-lg border transition-all ${isItemsExpanded ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-purple-50 text-purple-600 border-purple-100 hover:bg-purple-100'}`}>
-                                                                        {isLoadingNfeItems && expandedNfeItemsId === nfe.id ? <Loader2 size={11} className="animate-spin" /> : <Package size={11} />}
-                                                                        {isItemsExpanded ? 'Fechar' : 'Itens'}
-                                                                    </button>
                                                                 </div>
                                                             </td>
                                                         </tr>
@@ -3861,63 +4030,107 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                 </td>
                                                             </tr>
                                                         )}
-                                                        {/* Linha expandida — itens da NF-e */}
-                                                        {isItemsExpanded && (
-                                                            <tr className="bg-purple-50/40">
-                                                                <td colSpan={10} className="p-4">
-                                                                    <div className="rounded-xl border border-purple-100 bg-white p-4">
-                                                                        <p className="text-[10px] font-black text-purple-700 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                                                            <Package size={12} /> Itens da NF-e {nfe.numero || nfe.id}
-                                                                        </p>
-                                                                        {isLoadingNfeItems ? (
-                                                                            <div className="text-center py-4">
-                                                                                <Loader2 size={20} className="mx-auto mb-2 animate-spin text-purple-400" />
-                                                                                <p className="text-xs text-purple-400">Carregando itens...</p>
+                                                        {/* Linha expandida — Detalhes da NF-e */}
+                                                        {isExpanded && (
+                                                            <tr className={`border-b border-slate-100 shadow-inner ${isExpanded ? 'bg-slate-50/60' : 'bg-slate-50/60'}`}>
+                                                                <td colSpan={14} className="p-0">
+                                                                    <div className="p-4 space-y-4">
+                                                                        {/* 1. Header com Itens vs Info do Pedido */}
+                                                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                                            {/* Dados do cliente (se cacheado do pedido) */}
+                                                                            <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
+                                                                                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1"><User size={10} /> Cliente</p>
+                                                                                <p className="text-xs font-bold text-slate-700">{nfe.contato?.nome || '-'}</p>
+                                                                                <p className="text-[9px] text-slate-500">CPF/CNPJ: {formatDoc(nfe.contato?.numeroDocumento)}</p>
+                                                                                {orderInfo?.customer_email && <p className="text-[9px] text-slate-400">{orderInfo.customer_email}</p>}
+                                                                                {orderInfo?.customer_tel && <p className="text-[9px] text-slate-400">{orderInfo.customer_tel}</p>}
                                                                             </div>
-                                                                        ) : nfeItems.length > 0 ? (
-                                                                            <table className="min-w-full text-xs">
-                                                                                <thead className="bg-purple-100/50">
-                                                                                    <tr>
-                                                                                        {['Código', 'Descrição', 'Produto ERP Vinculado', 'Unidade', 'Qtd', 'Valor Unit.', 'Subtotal'].map(h =>
-                                                                                            <th key={h} className="p-2 text-left text-[9px] font-black uppercase tracking-widest text-purple-600">{h}</th>
-                                                                                        )}
-                                                                                    </tr>
-                                                                                </thead>
-                                                                                <tbody className="divide-y divide-purple-50">
-                                                                                    {nfeItems.map((item: any, idx: number) => {
-                                                                                        const sku = (item.codigo || item.produto?.codigo || '').toUpperCase();
-                                                                                        const linkedName = sku ? erpSkuNameMap.get(sku) : undefined;
-                                                                                        return (
-                                                                                            <tr key={idx} className="hover:bg-purple-50/40 transition-colors">
-                                                                                                <td className="p-2 font-mono text-slate-500">{item.codigo || item.produto?.codigo || '-'}</td>
-                                                                                                  <td className="p-2 font-bold text-slate-700">
-                                                                        {linkedName ? (
-                                                                            <div className="flex flex-col">
-                                                                                <span className="text-purple-700"><LinkIcon size={10} className="inline mr-1" />{linkedName}</span>
-                                                                                <span className="text-[10px] text-slate-400 font-normal">{item.descricao || item.produto?.descricao || '-'}</span>
+
+                                                                            {/* Endereço de entrega (se cacheado do pedido) */}
+                                                                            <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
+                                                                                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1"><MapPin size={10} /> Entrega</p>
+                                                                                {orderInfo?.enderecoEntrega ? (
+                                                                                    <div className="text-[10px] text-slate-600">
+                                                                                        <p className="font-bold text-slate-800">{orderInfo.enderecoEntrega.logradouro}, {orderInfo.enderecoEntrega.numero}</p>
+                                                                                        <p>{orderInfo.enderecoEntrega.bairro} — {orderInfo.enderecoEntrega.cidade}/{orderInfo.enderecoEntrega.uf}</p>
+                                                                                        <p>CEP: {orderInfo.enderecoEntrega.cep}</p>
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <p className="text-[10px] text-slate-300 italic">Informações de endereço não carregadas.</p>
+                                                                                )}
                                                                             </div>
-                                                                        ) : (
-                                                                            item.descricao || item.produto?.descricao || '-'
-                                                                        )}
-                                                                    </td>
-                                                                                                <td className="p-2">
-                                                                                                    {linkedName
-                                                                                                        ? <span className="flex items-center gap-1 text-green-700 font-bold"><LinkIcon size={10} />{linkedName}</span>
-                                                                                                        : <span className="text-xs text-slate-300 italic">Não vinculado</span>
-                                                                                                    }
-                                                                                                </td>
-                                                                                                <td className="p-2 text-slate-400">{item.unidade || item.produto?.unidade || 'UN'}</td>
-                                                                                                <td className="p-2 font-black text-slate-700">{item.quantidade ?? '-'}</td>
-                                                                                                <td className="p-2 text-slate-500">{item.valor != null ? Number(item.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '-'}</td>
-                                                                                                <td className="p-2 font-black text-emerald-600">{item.quantidade && item.valor ? (item.quantidade * item.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '-'}</td>
-                                                                                            </tr>
-                                                                                        );
-                                                                                    })}
-                                                                                </tbody>
-                                                                            </table>
-                                                                        ) : (
-                                                                            <p className="text-xs text-purple-400 text-center py-3">Nenhum item encontrado nesta NF-e.</p>
-                                                                        )}
+
+                                                                            {/* Pagamento (se cacheado do pedido) */}
+                                                                            <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
+                                                                                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1"><CreditCard size={10} /> Pagamento</p>
+                                                                                {orderInfo?.pagamentos && orderInfo.pagamentos.length > 0 ? (
+                                                                                    orderInfo.pagamentos.map((p: any, idxP: number) => (
+                                                                                        <div key={idxP} className="flex justify-between text-[10px] text-slate-600 mb-1 last:mb-0">
+                                                                                            <span>{p.forma}</span>
+                                                                                            <span className="font-bold text-emerald-600">{Number(p.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                                                                                        </div>
+                                                                                    ))
+                                                                                ) : (
+                                                                                    <p className="text-[10px] text-slate-300 italic">Informações financeiras não carregadas.</p>
+                                                                                )}
+                                                                            </div>
+                                                                        </div>
+
+                                                                        {/* 2. Listagem de Itens */}
+                                                                        <div className="rounded-xl border border-purple-100 bg-white p-4 shadow-sm">
+                                                                            <p className="text-[10px] font-black text-purple-700 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                                                                <Package size={12} /> Itens da NF-e
+                                                                            </p>
+                                                                            {isLoadingNfeItems ? (
+                                                                                <div className="text-center py-4">
+                                                                                    <Loader2 size={20} className="mx-auto mb-2 animate-spin text-purple-400" />
+                                                                                    <p className="text-xs text-purple-400">Carregando itens...</p>
+                                                                                </div>
+                                                                            ) : nfeItems.length > 0 ? (
+                                                                                <table className="min-w-full text-xs">
+                                                                                    <thead className="bg-purple-100/50">
+                                                                                        <tr>
+                                                                                            {['Código', 'Descrição', 'Produto ERP Vinculado', 'Unidade', 'Qtd', 'Valor Unit.', 'Subtotal'].map(h =>
+                                                                                                <th key={h} className="p-2 text-left text-[9px] font-black uppercase tracking-widest text-purple-600">{h}</th>
+                                                                                            )}
+                                                                                        </tr>
+                                                                                    </thead>
+                                                                                    <tbody className="divide-y divide-purple-50">
+                                                                                        {nfeItems.map((item: any, idx: number) => {
+                                                                                            const sku = (item.codigo || item.produto?.codigo || '').toUpperCase();
+                                                                                            const linkedName = sku ? erpSkuNameMap.get(sku) : undefined;
+                                                                                            return (
+                                                                                                <tr key={idx} className="hover:bg-purple-50/40 transition-colors">
+                                                                                                    <td className="p-2 font-mono text-slate-500">{item.codigo || item.produto?.codigo || '-'}</td>
+                                                                                                    <td className="p-2 font-bold text-slate-700">
+                                                                                                        {linkedName ? (
+                                                                                                            <div className="flex flex-col">
+                                                                                                                <span className="text-purple-700"><LinkIcon size={10} className="inline mr-1" />{linkedName}</span>
+                                                                                                                <span className="text-[10px] text-slate-400 font-normal">{item.descricao || item.produto?.descricao || '-'}</span>
+                                                                                                            </div>
+                                                                                                        ) : (
+                                                                                                            item.descricao || item.produto?.descricao || '-'
+                                                                                                        )}
+                                                                                                    </td>
+                                                                                                    <td className="p-2">
+                                                                                                        {linkedName
+                                                                                                            ? <span className="flex items-center gap-1 text-green-700 font-bold"><LinkIcon size={10} />{linkedName}</span>
+                                                                                                            : <span className="text-xs text-slate-300 italic">Não vinculado</span>
+                                                                                                        }
+                                                                                                    </td>
+                                                                                                    <td className="p-2 text-slate-400">{item.unidade || item.produto?.unidade || 'UN'}</td>
+                                                                                                    <td className="p-2 font-black text-slate-700">{item.quantidade ?? '-'}</td>
+                                                                                                    <td className="p-2 text-slate-500">{item.valor != null ? Number(item.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '-'}</td>
+                                                                                                    <td className="p-2 font-black text-emerald-600">{item.quantidade && item.valor ? (item.quantidade * item.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '-'}</td>
+                                                                                                </tr>
+                                                                                            );
+                                                                                        })}
+                                                                                    </tbody>
+                                                                                </table>
+                                                                            ) : (
+                                                                                <p className="text-xs text-purple-400 text-center py-3">Nenhum item encontrado nesta NF-e.</p>
+                                                                            )}
+                                                                        </div>
                                                                     </div>
                                                                 </td>
                                                             </tr>
@@ -4148,6 +4361,18 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                             </p>
                                         </div>
                                     </div>
+                                    {lote.successIds && lote.successIds.length > 0 && (
+                                        <div className="bg-emerald-50/50 rounded-xl p-2 space-y-1 max-h-24 overflow-y-auto border border-emerald-100">
+                                            <p className="text-[8px] font-black text-emerald-600 uppercase tracking-widest mb-1">Pedidos no Lote:</p>
+                                            <div className="flex flex-wrap gap-1">
+                                                {lote.successIds.map(id => (
+                                                    <span key={id} className="text-[9px] bg-white px-1.5 py-0.5 rounded border border-emerald-100 text-emerald-700 font-mono font-bold">
+                                                        {id}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                     {lote.failed.length > 0 && (
                                         <div className="bg-red-50 rounded-xl p-2 space-y-1 max-h-20 overflow-y-auto border border-red-100">
                                             {lote.failed.map(f => (
@@ -4289,23 +4514,25 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         <div className="space-y-2 mt-4">
                             <button
                                 onClick={() => {
-                                    onLoadZpl(zplModeModal.zpl, true);
+                                    onLoadZpl(zplModeModal.zpl, 'only_label');
                                     addPendingZplItem({ id: zplModeModal.loteId, loteId: zplModeModal.loteId, zplContent: zplModeModal.zpl, labelCount: (zplModeModal.zpl.match(/\^XA/gi) || []).length, timestamp: new Date().toISOString(), source: 'individual', descricao: zplModeModal.descricao });
                                     setZplModeModal(null);
-                                }}
-                                className="w-full flex items-center gap-2 text-sm font-black uppercase bg-blue-50 text-blue-700 px-4 py-3 rounded-xl hover:bg-blue-100 border border-blue-200 transition-all"
-                            >
-                                <FileText size={14} /> DANFE + Etiqueta
-                            </button>
-                            <button
-                                onClick={() => {
-                                    onLoadZpl(zplModeModal.zpl, false);
-                                    addPendingZplItem({ id: zplModeModal.loteId, loteId: zplModeModal.loteId, zplContent: zplModeModal.zpl, labelCount: (zplModeModal.zpl.match(/\^XA/gi) || []).length, timestamp: new Date().toISOString(), source: 'individual', descricao: zplModeModal.descricao });
-                                    setZplModeModal(null);
+                                    if (setCurrentPage) setCurrentPage('etiquetas');
                                 }}
                                 className="w-full flex items-center gap-2 text-sm font-black uppercase bg-emerald-50 text-emerald-700 px-4 py-3 rounded-xl hover:bg-emerald-100 border border-emerald-200 transition-all"
                             >
                                 <Printer size={14} /> Apenas Etiqueta
+                            </button>
+                            <button
+                                onClick={() => {
+                                    onLoadZpl(zplModeModal.zpl, 'only_danfe');
+                                    addPendingZplItem({ id: zplModeModal.loteId, loteId: zplModeModal.loteId, zplContent: zplModeModal.zpl, labelCount: (zplModeModal.zpl.match(/\^XA/gi) || []).length, timestamp: new Date().toISOString(), source: 'individual', descricao: zplModeModal.descricao });
+                                    setZplModeModal(null);
+                                    if (setCurrentPage) setCurrentPage('etiquetas');
+                                }}
+                                className="w-full flex items-center gap-2 text-sm font-black uppercase bg-orange-50 text-orange-700 px-4 py-3 rounded-xl hover:bg-orange-100 border border-orange-200 transition-all"
+                            >
+                                <FileText size={14} /> Apenas DANFE
                             </button>
                             <button
                                 onClick={() => {
@@ -4488,7 +4715,86 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 </div>
             )}
 
-            {/* ── Modal de confirmação de importação para o ERP ──────────────── */}
+            {/* ── Modal: Editar NF-e (apenas pendentes) ────────────────────────── */}
+            {editNfeModal && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full p-8 animate-in zoom-in-95 duration-200">
+                        <div className="flex items-center justify-between mb-6">
+                            <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
+                                <FileText size={28} className="text-amber-500" />
+                                EDITAR NF-E {editNfeModal.id}
+                            </h2>
+                            <button onClick={() => setEditNfeModal(null)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+                                <X size={20} className="text-slate-400" />
+                            </button>
+                        </div>
+
+                        <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+                            <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 mb-2 flex items-start gap-3">
+                                <Info size={18} className="text-blue-500 mt-1" />
+                                <div className="text-[11px] text-blue-700 leading-relaxed">
+                                    <p className="font-bold uppercase tracking-tight mb-1">Nota em Edição</p>
+                                    <p>Você está alterando os dados fiscais da nota no Bling. Lembre-se que campos como Natureza de Operação e Dados do Cliente afetam o cálculo de impostos.</p>
+                                </div>
+                            </div>
+
+                            {/* Informações Básicas */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 block">Número da Nota</label>
+                                    <input
+                                        type="text"
+                                        value={editNfeModal.data.numero || ''}
+                                        onChange={e => setEditNfeModal(prev => prev ? { ...prev, data: { ...prev.data, numero: e.target.value } } : null)}
+                                        className="w-full p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-amber-400"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 block">Série</label>
+                                    <input
+                                        type="text"
+                                        value={editNfeModal.data.serie || ''}
+                                        onChange={e => setEditNfeModal(prev => prev ? { ...prev, data: { ...prev.data, serie: e.target.value } } : null)}
+                                        className="w-full p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-amber-400"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Contato / Nome */}
+                            <div>
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 block">Destinatário (Nome)</label>
+                                <input
+                                    type="text"
+                                    value={editNfeModal.data.contato?.nome || ''}
+                                    onChange={e => setEditNfeModal(prev => prev ? { ...prev, data: { ...prev.data, contato: { ...prev.data.contato, nome: e.target.value } } } : null)}
+                                    className="w-full p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-amber-400"
+                                />
+                            </div>
+
+                            {/* Observações */}
+                            <div>
+                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 block">Observações da Nota</label>
+                                <textarea
+                                    rows={3}
+                                    value={editNfeModal.data.observacoes || ''}
+                                    onChange={e => setEditNfeModal(prev => prev ? { ...prev, data: { ...prev.data, observacoes: e.target.value } } : null)}
+                                    className="w-full p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-amber-400 resize-none"
+                                    placeholder="Informações complementares para a SEFAZ..."
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex gap-3 mt-8">
+                            <button onClick={() => setEditNfeModal(null)} className="flex-1 text-xs font-black uppercase tracking-widest py-3.5 rounded-xl border-2 border-slate-200 text-slate-500 hover:bg-slate-50 transition-all">
+                                Cancelar
+                            </button>
+                            <button onClick={handleSalvarNfe} disabled={isSavingNfe} className="flex-1 flex items-center justify-center gap-2 text-xs font-black uppercase tracking-widest py-3.5 rounded-xl bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 transition-all shadow-lg shadow-amber-100">
+                                {isSavingNfe ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} Salvar Nota
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
             {showImportConfirm && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[85vh] overflow-hidden flex flex-col">

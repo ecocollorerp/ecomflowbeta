@@ -62,7 +62,7 @@ export const AbaDanfeEtiquetaBling: React.FC<AbaDanfeEtiquetaBlingProps> = ({
               : 'text-gray-500 hover:text-gray-700'
             }`}
         >
-          🖨️ DANFE + Etiqueta
+          🖨️ DANFE Simplificado + Etiqueta de transporte
         </button>
       </div>
 
@@ -78,7 +78,7 @@ export const AbaDanfeEtiquetaBling: React.FC<AbaDanfeEtiquetaBlingProps> = ({
               <FileText size={32} className="text-purple-600 flex-shrink-0" />
               <div>
                 <h2 className="text-2xl font-bold text-purple-900">
-                  🖨️ Impressão DANFE + Etiqueta (Bling)
+                  🖨️ Impressão de DANFE Simplificado + Etiqueta
                 </h2>
                 <p className="text-sm text-purple-700 mt-2">
                   Combine DANFE Simplificado + Etiqueta da plataforma em um único arquivo.

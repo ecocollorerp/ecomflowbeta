@@ -841,9 +841,11 @@ export interface EtiquetaHistoryItem {
     page_hashes: string[];
 }
 
+export type ZplIncludeMode = 'both' | 'only_label' | 'only_danfe';
+
 export type EtiquetasState = {
     zplInput: string;
-    includeDanfe: boolean;
+    includeMode: ZplIncludeMode; // Replaces includeDanfe
     zplPages: string[];
     previews: string[];
     extractedData: Map<number, ExtractedZplData>;

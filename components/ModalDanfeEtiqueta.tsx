@@ -43,6 +43,8 @@ export const ModalDanfeEtiqueta: React.FC<ModalDanfeEtiquetaProps> = ({
     relatorio: string;
     arquivos: any[];
   } | null>(null);
+  const [downloadMode, setDownloadMode] = useState<'consolidado' | 'etiqueta' | 'danfe'>('consolidado');
+  const [progresso, setProgresso] = useState<{ atual: number; total: number } | null>(null);
 
   if (!isOpen) return null;
 
@@ -82,10 +84,13 @@ export const ModalDanfeEtiqueta: React.FC<ModalDanfeEtiquetaProps> = ({
     }
 
     setIsProcessando(true);
+    setProgresso({ atual: 0, total: pedidosCarregados.length });
     try {
       const resultado = await danfeSimplificadoComEtiquetaService.processarPedidosParaDanfeEtiqueta(
         pedidosCarregados,
-        'usuario@email.com'
+        'usuario@email.com',
+        downloadMode,
+        (atual, total) => setProgresso({ atual, total })
       );
 
       setResultado(resultado);
@@ -97,6 +102,7 @@ export const ModalDanfeEtiqueta: React.FC<ModalDanfeEtiquetaProps> = ({
       addToast?.(`❌ Erro ao processar: ${error.message}`, 'error');
     } finally {
       setIsProcessando(false);
+      setProgresso(null);
     }
   };
 
@@ -154,7 +160,7 @@ export const ModalDanfeEtiqueta: React.FC<ModalDanfeEtiquetaProps> = ({
           <div className="flex items-center gap-3">
             <FileText size={24} />
             <div>
-              <h2 className="font-bold text-lg">Impressão DANFE + Etiqueta</h2>
+              <h2 className="font-bold text-lg">Impressão de DANFE Simplificado + Etiqueta</h2>
               <p className="text-sm text-blue-100">Migração do Bling - Formato Simplificado</p>
             </div>
           </div>
@@ -213,8 +219,33 @@ export const ModalDanfeEtiqueta: React.FC<ModalDanfeEtiquetaProps> = ({
                   ) : (
                     <Download size={20} />
                   )}
-                  {isCarregando ? 'Buscando pedidos...' : 'Buscar Pedidos com Etiqueta'}
+                  {isCarregando ? 'Buscando pedidos...' : 'Buscar Etiquetas de transporte'}
                 </button>
+
+                {/* Opções de Download */}
+                <div className="mt-4 p-3 bg-white rounded-lg border border-blue-200">
+                  <p className="text-xs font-bold text-blue-800 mb-2 uppercase tracking-wider">O que deseja gerar?</p>
+                  <div className="flex flex-col gap-2">
+                    {[
+                      { id: 'consolidado', label: 'DANFE Simplificado + Etiqueta', icon: <Package size={14} /> },
+                      { id: 'etiqueta', label: 'Apenas Etiqueta de Transporte', icon: <Download size={14} /> },
+                      { id: 'danfe', label: 'Apenas DANFE Simplificado', icon: <FileText size={14} /> },
+                    ].map(opt => (
+                      <label key={opt.id} className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-all border ${downloadMode === opt.id ? 'bg-blue-600 border-blue-600 text-white shadow-md' : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'}`}>
+                        <input
+                          type="radio"
+                          name="downloadMode"
+                          value={opt.id}
+                          checked={downloadMode === opt.id}
+                          onChange={() => setDownloadMode(opt.id as any)}
+                          className="hidden"
+                        />
+                        <span className={downloadMode === opt.id ? 'text-white' : 'text-blue-600'}>{opt.icon}</span>
+                        <span className="text-xs font-bold uppercase">{opt.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
               </div>
 
               {/* Pedidos Carregados */}
@@ -257,9 +288,28 @@ export const ModalDanfeEtiqueta: React.FC<ModalDanfeEtiquetaProps> = ({
                       <Package size={20} />
                     )}
                     {isProcessando
-                      ? 'Processando DANFE + Etiqueta...'
-                      : '⚡ Processar e Montar Arquivos'}
+                      ? 'Processando...'
+                      : `⚡ Gerar ${downloadMode === 'consolidado' ? 'DANFE + Etiqueta' : downloadMode === 'etiqueta' ? 'Apenas Etiqueta' : 'Apenas DANFE'}`}
                   </button>
+                  
+                  {/* Barra de Progresso */}
+                  {progresso && (
+                    <div className="mt-4 p-4 bg-blue-50 rounded-xl border border-blue-200">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="text-xs font-black text-blue-700 uppercase tracking-widest">Processando Lote...</span>
+                        <span className="text-xs font-black text-blue-700">{Math.round((progresso.atual / progresso.total) * 100)}%</span>
+                      </div>
+                      <div className="w-full bg-blue-200 rounded-full h-3 overflow-hidden shadow-inner">
+                        <div 
+                          className="bg-blue-600 h-full transition-all duration-300 ease-out"
+                          style={{ width: `${(progresso.atual / progresso.total) * 100}%` }}
+                        />
+                      </div>
+                      <p className="text-[10px] text-blue-600 mt-2 font-bold text-center">
+                        Pedido {progresso.atual} de {progresso.total}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
             </>
@@ -326,7 +376,7 @@ export const ModalDanfeEtiqueta: React.FC<ModalDanfeEtiquetaProps> = ({
                       onClick={handleDownload}
                       className="w-full px-4 py-3 bg-green-600 text-white rounded font-bold hover:bg-green-700 transition flex items-center justify-center gap-2"
                     >
-                      <Download size={20} /> Baixar Arquivos ZIP ({resultado.totalSucesso}
+                      <Download size={20} /> Clique para baixar: {downloadMode === 'consolidado' ? 'DANFE + Etiqueta' : downloadMode === 'etiqueta' ? 'Etiquetas' : 'DANFEs'} ({resultado.totalSucesso}
                       {resultado.totalSucesso === 1 ? ' arquivo' : ' arquivos'})
                     </button>
                   )}
@@ -345,7 +395,7 @@ export const ModalDanfeEtiqueta: React.FC<ModalDanfeEtiquetaProps> = ({
                 <ul className="text-sm text-yellow-800 space-y-1 list-disc list-inside">
                   <li>Pedidos SEM etiqueta foram automaticamente pulados</li>
                   <li>
-                    Cada arquivo contém DANFE Simplificado + Etiqueta (formato Bling)
+                    Arquivo gerado no modo: <strong className="uppercase">{downloadMode}</strong>
                   </li>
                   <li>Todos os arquivos já estão prontos para impressão</li>
                   <li>ZIP contém {resultado.arquivos.length} arquivo(s) válido(s)</li>

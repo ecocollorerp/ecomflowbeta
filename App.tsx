@@ -58,6 +58,7 @@ import {
     StockPackGroup,
     StockDeductionMode,
     EtiquetasState,
+    ZplIncludeMode
 } from './types';
 import { dbClient, loginUser, syncDatabase, resetDatabase, verifyDatabaseSetup, fetchAll, supabaseUrl } from './lib/supabaseClient';
 import { exportStateToSql } from './lib/export';
@@ -700,6 +701,7 @@ const App: React.FC = () => {
                                 min_qty: Number(i.min_qty) || 0,
                                 expedition_items: i.expedition_items || [],
                                 is_volatile_infinite: false,
+                                bom_composition: undefined,
                             };
                         } catch (err) {
                             console.error('❌ Erro ao mapear insumo:', i, err);
@@ -1535,7 +1537,7 @@ const App: React.FC = () => {
             ready_qty: Number(item.ready_qty || 0),
             min_qty: Number(item.min_qty || 0),
             status: item.status || 'ATIVO',
-            bom_composition: item.bom_composition || null,
+            bom_composition: item.bom_composition || undefined,
         }));
         if (newItemsToInsert.length > 0) await dbClient.from('product_boms').insert(newItemsToInsert as any);
         for (const item of payload.itemsToUpdate) await dbClient.rpc('adjust_stock_quantity', { item_code: item.stockItemCode, quantity_delta: item.quantityDelta, origin_text: 'IMPORT_XML', ref_text: 'NFe Import', user_name: currentUser.name });
@@ -1980,8 +1982,8 @@ const App: React.FC = () => {
         return "";
     }, [currentUser, addToast, loadData]);
 
-    const handleLoadZplFromBling = (zpl: string, includeDanfe = true) => {
-        setEtiquetasState(prev => ({ ...prev, zplInput: zpl, zplPages: [], previews: [], extractedData: new Map(), includeDanfe }));
+    const handleLoadZplFromBling = (zpl: string, includeMode: ZplIncludeMode = 'both') => {
+        setEtiquetasState(prev => ({ ...prev, zplInput: zpl, zplPages: [], previews: [], extractedData: new Map(), includeMode }));
         setCurrentPage('etiquetas');
     };
 

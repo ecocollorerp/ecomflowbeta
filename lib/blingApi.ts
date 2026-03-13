@@ -53,7 +53,7 @@ export function parseCanal(raw: any): 'ML' | 'SHOPEE' | 'SITE' {
     const text = String(raw || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     if (text.includes('MERCADO LIVRE') || text.includes('MERCADOLIVRE') || text.includes('MERCADO-LIVRE') || text.includes('MLB') || text.includes('ML ') || text === 'ML' || text.includes('MERCADO')) return 'ML';
     if (text.includes('SHOPEE')) return 'SHOPEE';
-    if (text.includes('AMAZON') || text.includes('NUVEM') || text.includes('SITE')) return 'SITE';
+    if (text.includes('AMAZON') || text.includes('NUVEM') || text.includes('SITE') || text.includes('LOJA VIRTUAL')) return 'SITE';
     return 'SITE';
 }
 
@@ -597,6 +597,24 @@ export async function enviarNfe(apiKey: string, nfeId: number): Promise<any> {
     const resp = await fetchWithRetry(`/api/bling/nfe/${nfeId}/enviar`, {
         method: 'POST',
         headers: { Authorization: authH, Accept: 'application/json', 'Content-Type': 'application/json' },
+    });
+    if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err?.error || `Erro ${resp.status}`);
+    }
+    return resp.json();
+}
+
+/**
+ * Atualiza uma NF-e no Bling (PUT).
+ * Útil para corrigir dados antes da emissão.
+ */
+export async function atualizarNfe(apiKey: string, nfeId: number | string, dados: any): Promise<any> {
+    const authH = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+    const resp = await fetchWithRetry(`/api/bling/nfe/${nfeId}`, {
+        method: 'PUT',
+        headers: { Authorization: authH, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(dados),
     });
     if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));

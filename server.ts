@@ -2128,25 +2128,6 @@ async function startServer() {
     }
   });
 
-  // DANFE PDF Endpoint (Bling v3)
-  app.get('/api/bling/nfe/:id/pdf', async (req, res) => {
-    try {
-      const token = normalizeBearerToken(req.headers['authorization'] as string || '');
-      const { id } = req.params;
-      if (!token) return res.status(401).json({ error: 'Token obrigatório' });
-
-      console.log(`📄 [NFe PDF] Solicitando link do DANFE para nota ${id}`);
-      const response = await fetch(`https://www.bling.com.br/Api/v3/nfe/${id}/pdf`, {
-        headers: { Authorization: token, Accept: 'application/json' }
-      });
-
-      const data = await response.json();
-      res.status(response.status).json(data);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
   // Etiquetas de Envio Endpoint (Bling v3)
   app.post('/api/bling/logisticas/etiquetas', async (req, res) => {
     try {
@@ -2161,7 +2142,25 @@ async function startServer() {
         body: JSON.stringify({ idsObjetos })
       });
 
-      const data = await response.json();
+      let data = await response.json();
+
+      // Fallback: Se a resposta não for OK e não houver dados, tentar buscar por ID de pedido
+      if (!response.ok && (!data || Object.keys(data).length === 0) && idsObjetos?.length === 1) {
+        const pedidoId = idsObjetos[0];
+        console.warn(`⚠️ [LOGISTICA ETIQUETAS] Falha ao buscar etiqueta por ID de objeto. Tentando buscar por ID de pedido ${pedidoId}...`);
+        const fallbackResponse = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${pedidoId}/etiquetas`, {
+          method: 'GET',
+          headers: { Authorization: token, Accept: 'application/json' },
+        });
+        if (fallbackResponse.ok) {
+          data = await fallbackResponse.json();
+          console.log(`✅ [LOGISTICA ETIQUETAS] Etiqueta encontrada via fallback por ID de pedido.`);
+          return res.status(fallbackResponse.status).json(data);
+        } else {
+          console.error(`❌ [LOGISTICA ETIQUETAS] Falha no fallback por ID de pedido ${pedidoId}:`, await fallbackResponse.json());
+        }
+      }
+
       res.status(response.status).json(data);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -2169,26 +2168,6 @@ async function startServer() {
   });
 
   // ────────────────────────────────────────────────────────────────────────────
-  // DANFE Simplificada (PDF v3): GET /api/bling/nfe/:id/pdf
-  // Obtém o link do DANFE direto da API v3 do Bling
-  // ────────────────────────────────────────────────────────────────────────────
-  app.get('/api/bling/nfe/:id/pdf', async (req, res) => {
-    try {
-      const { id } = req.params;
-      const token = normalizeBearerToken(req.headers['authorization'] as string || '');
-      if (!token) return res.status(401).json({ error: 'Token obrigatório' });
-
-      console.log(`📄 [NFe PDF] Solicitando link do DANFE para NF-e ${id}`);
-      const response = await fetch(`https://www.bling.com.br/Api/v3/nfe/${id}/pdf`, {
-        headers: { Authorization: token, Accept: 'application/json' }
-      });
-
-      const data = await response.json();
-      res.status(response.status).json(data);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
 
   // ────────────────────────────────────────────────────────────────────────────
   app.get('/api/bling/canais-venda', async (req, res) => {
@@ -2435,10 +2414,71 @@ async function startServer() {
     throw lastError || new Error(`Falha ao conectar com Bling após ${retries + 1} tentativas`);
   }
 
+  // GET /api/bling/download/pdf/:id — proxy de download de DANFE do Bling
+  app.get('/api/bling/download/pdf/:id', async (req, res) => {
+    try {
+      const token = normalizeBearerToken(req.headers['authorization'] as string || '');
+      if (!token) return res.status(401).json({ error: 'Token não fornecido' });
+
+      const nfeId = req.params.id;
+      console.log(`📄 [NFe PDF] Solicitando metadados do PDF para NF-e ${nfeId}`);
+
+      // 1. Busca os metadados do PDF (Bling v3 retorna um JSON com a URL temporária)
+      const metaResponse = await fetch(`https://www.bling.com.br/Api/v3/nfe/${nfeId}/pdf`, {
+        headers: { Authorization: token, Accept: 'application/json' }
+      });
+
+      if (!metaResponse.ok) {
+        const errText = await metaResponse.text();
+        console.error(`❌ [NFe PDF] Erro ao buscar metadados Bling (${metaResponse.status}):`, errText);
+        return res.status(metaResponse.status).json({ error: `Bling retornou ${metaResponse.status}`, detail: errText });
+      }
+
+      const metaData = await metaResponse.json();
+      const pdfUrl = metaData?.data?.url || metaData?.url;
+
+      if (!pdfUrl) {
+        console.error(`❌ [NFe PDF] URL do PDF não encontrada no JSON:`, metaData);
+        return res.status(404).json({ error: 'URL do PDF não retornada pelo Bling', details: metaData });
+      }
+
+      console.log(`📄 [NFe PDF] Baixando PDF real de: ${pdfUrl.substring(0, 50)}...`);
+
+      // 2. Busca o arquivo PDF real da URL temporária
+      const pdfResp = await fetch(pdfUrl);
+      if (!pdfResp.ok) {
+        console.error(`❌ [NFe PDF] Erro ao baixar arquivo da URL temporária (${pdfResp.status})`);
+        return res.status(502).json({ error: 'Falha ao baixar PDF da URL temporária do Bling' });
+      }
+
+      // Configura headers para o navegador reconhecer como PDF e disparar download
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="DANFE_${nfeId}.pdf"`);
+      
+      // Envia o conteúdo do PDF como buffer
+      const arrayBuffer = await pdfResp.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      res.send(buffer);
+      console.log(`✅ [NFe PDF] PDF enviado com sucesso para ${nfeId}`);
+
+    } catch (error: any) {
+      console.error('❌ [NFe PDF Error]:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ─────────────────────────────────────────────────────────────────────────
   // GET /api/bling/nfe/:id/etiqueta — busca etiqueta ZPL REAL da NF-e no Bling
   // Retorna { success: true, zpl: "^XA...^XZ" } com o DANFE simplificado real
   // ─────────────────────────────────────────────────────────────────────────
+  /**
+   * GET /api/bling/nfe/:id/etiqueta
+   * Busca etiqueta ZPL REAL da NF-e no Bling.
+   * Estratégia Robusta:
+   * 1. Tenta direto /nfe/{id}/etiqueta (endpoint padrão v3)
+   * 2. Se falhar, busca detalhes da nota para extrair idObjetoLogistico
+   * 3. Busca ZPL via /logisticas/etiquetas/zpl
+   */
   app.get('/api/bling/nfe/:id/etiqueta', async (req, res) => {
     try {
       const rawAuth = req.headers.authorization || '';
@@ -2446,40 +2486,49 @@ async function startServer() {
       if (!rawAuth) return res.status(401).json({ error: 'Token obrigatório' });
 
       const nfeId = req.params.id;
-      console.log(`🏷️  [NFe Etiqueta] GET nfe/${nfeId}/etiqueta`);
+      console.log(`🏷️  [NFe Etiqueta] Iniciando busca para NF-e ${nfeId}`);
 
-      const resp = await blingFetchRetry(
+      // 1. Tentativa Direta (V3 NFe Etiqueta)
+      let respDirect = await blingFetchRetry(
         `https://www.bling.com.br/Api/v3/nfe/${nfeId}/etiqueta`,
         { headers: { Authorization: token, Accept: 'application/json' } }
       );
 
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        console.warn(`⚠️  [NFe Etiqueta] Bling ${resp.status} para nfe/${nfeId}`);
-        return res.status(resp.status).json({ success: false, error: `Bling retornou ${resp.status}`, detail: err });
+      let dataDirect = await respDirect.json().catch(() => ({}));
+      let zplResult = dataDirect?.data?.zpl || dataDirect?.zpl || null;
+
+      // 2. Fallback: Busca via Objeto Logístico (mais robusto para integrações marketplace)
+      if (!zplResult) {
+        console.log(`🔍 [NFe Etiqueta] Fallback: buscando objeto logístico na NF-e ${nfeId}`);
+        const detailResp = await fetch(`https://www.bling.com.br/Api/v3/nfe/${nfeId}`, { 
+          headers: { Authorization: token, Accept: 'application/json' } 
+        });
+        const detail = await detailResp.json();
+        
+        // Vários caminhos possíveis para o ID do objeto no Bling v3
+        const idObjeto = detail?.data?.transporte?.objeto?.id || 
+                         detail?.data?.transporte?.objetoLogistico?.id ||
+                         detail?.data?.transportes?.[0]?.objetoLogistico?.id;
+
+        if (idObjeto) {
+          console.log(`🏷️  [NFe Etiqueta] Encontrado objeto ${idObjeto}. Buscando ZPL...`);
+          const zplResp = await fetch(`https://www.bling.com.br/Api/v3/logisticas/etiquetas/zpl?idsObjetos[]=${idObjeto}`, { 
+            headers: { Authorization: token, Accept: 'application/json' } 
+          });
+          const zplData = await zplResp.json();
+          zplResult = zplData?.data?.[0]?.zpl || zplData?.zpl;
+        }
       }
 
-      const data = await resp.json().catch(() => ({}));
-
-      // Bling pode retornar o ZPL em diferentes campos da resposta
-      const zpl =
-        data?.data?.zpl ||
-        data?.data?.etiqueta ||
-        data?.data?.conteudo ||
-        data?.data?.content ||
-        (typeof data?.data === 'string' ? data.data : null) ||
-        data?.zpl ||
-        null;
-
-      if (!zpl) {
-        console.warn(`⚠️  [NFe Etiqueta] ZPL não encontrado para nfe/${nfeId}. Resposta:`, JSON.stringify(data).slice(0, 300));
-        return res.status(404).json({ success: false, error: 'ZPL não encontrado na resposta do Bling', raw: data });
+      if (!zplResult) {
+        console.warn(`⚠️  [NFe Etiqueta] ZPL não encontrado por nenhum método para nfe/${nfeId}`);
+        return res.status(404).json({ success: false, error: 'ZPL não encontrado' });
       }
 
-      console.log(`✅ [NFe Etiqueta] ZPL real obtido para nfe/${nfeId} (${zpl.length} chars)`);
-      res.json({ success: true, zpl });
+      console.log(`✅ [NFe Etiqueta] ZPL obtido com sucesso para nfe/${nfeId}`);
+      res.json({ success: true, zpl: zplResult });
     } catch (error: any) {
-      console.error('❌ [NFe Etiqueta]:', error.message);
+      console.error('❌ [NFe Etiqueta Error]:', error.message);
       res.status(500).json({ success: false, error: error.message });
     }
   });
@@ -2680,33 +2729,42 @@ async function startServer() {
 
       // ── 2. Enriquece com detalhes completos (itens, endereço, pagamentos) ────
       // Bling v3 lista retorna dados resumidos; GET /pedidos/vendas/{id} retorna completo
-      // Concorrência reduzida para 2 e delay entre lotes para evitar 429
-      const CONCURRENCY = 2;
-      const DELAY_ENTRE_LOTES = 400; // ms entre lotes para respeitar rate limit do Bling
+      const shouldEnrich = req.query.enrich !== 'false';
       const enrichedRaw: any[] = new Array(allRawOrders.length);
-      for (let i = 0; i < allRawOrders.length; i += CONCURRENCY) {
-        const batch = allRawOrders.slice(i, i + CONCURRENCY);
-        const results = await Promise.all(batch.map(async (o: any) => {
-          try {
-            const detResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${o.id}`, {
-              headers: { Authorization: token, Accept: 'application/json' },
-            });
-            if (detResp.status === 429) {
-              console.warn(`⏳ [VENDAS BUSCAR] Rate limit 429 no pedido ${o.id}, usando dados da lista`);
-              return o; // retorna dados resumidos em vez de falhar
-            }
-            if (detResp.ok) {
-              const detData = await detResp.json();
-              return detData?.data || o;
-            }
-          } catch { /* silencioso */ }
-          return o;
-        }));
-        results.forEach((r, bi) => { enrichedRaw[i + bi] = r; });
-        // Aguarda entre lotes para não exceder rate limit do Bling
-        if (i + CONCURRENCY < allRawOrders.length) {
-          await new Promise(resolve => setTimeout(resolve, DELAY_ENTRE_LOTES));
+      
+      if (shouldEnrich && allRawOrders.length > 0) {
+        console.log(`🛒 [VENDAS BUSCAR] Enriquecendo ${allRawOrders.length} pedido(s)...`);
+        // Concorrência aumentada para 5 em vez de 2 para acelerar busca sem estourar limiter
+        const CONCURRENCY = 5;
+        const DELAY_ENTRE_LOTES = 200; // ms reduzido de 400 para 200
+        
+        for (let i = 0; i < allRawOrders.length; i += CONCURRENCY) {
+          const batch = allRawOrders.slice(i, i + CONCURRENCY);
+          const results = await Promise.all(batch.map(async (o: any) => {
+            try {
+              const detResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${o.id}`, {
+                headers: { Authorization: token, Accept: 'application/json' },
+              });
+              if (detResp.status === 429) {
+                return o; // rate limit: volta o básico
+              }
+              if (detResp.ok) {
+                const detData = await detResp.json();
+                return detData?.data || o;
+              }
+            } catch { /* ignore */ }
+            return o;
+          }));
+          results.forEach((r, bi) => { 
+            if (i + bi < enrichedRaw.length) enrichedRaw[i + bi] = r; 
+          });
+          if (i + CONCURRENCY < allRawOrders.length) {
+            await new Promise(resolve => setTimeout(resolve, DELAY_ENTRE_LOTES));
+          }
         }
+      } else {
+        // Usa dados da lista sem enriquecer
+        allRawOrders.forEach((o, i) => enrichedRaw[i] = o);
       }
 
       console.log(`🛒 [VENDAS BUSCAR] ${enrichedRaw.length} pedido(s) enriquecidos com detalhes`);

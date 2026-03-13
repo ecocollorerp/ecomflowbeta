@@ -362,7 +362,10 @@ const ProcessingModeModal: React.FC<{
 // --- Main Page Component ---
 const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
     const { settings, onSettingsSave, generalSettings, stockItems, skuLinks, onLinkSku, onAddNewItem, etiquetasState, setEtiquetasState, allOrders, currentUser, onSaveHistory, etiquetasHistory, onGetHistoryDetails, onProcessZpl, isProcessing, progressMessage } = props;
-    const { zplInput, includeDanfe, zplPages, previews, extractedData, printedIndices, warnings } = etiquetasState;
+    const { zplInput, includeMode, zplPages, previews, extractedData, printedIndices, warnings } = etiquetasState;
+
+    const includeDanfe = includeMode === 'both' || includeMode === 'only_danfe';
+    const includeLabel = includeMode === 'both' || includeMode === 'only_label';
 
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
     const [linkModalState, setLinkModalState] = useState<{ isOpen: boolean, skus: string[], color: string }>({ isOpen: false, skus: [], color: '' });
@@ -498,7 +501,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                 await onSaveHistory(historyItem);
             }
 
-            const pdfBlob = await buildPdf(previews, extractedData, settings, includeDanfe, stockItems, skuLinks);
+            const pdfBlob = await buildPdf(previews, extractedData, settings, includeMode, stockItems, skuLinks);
             const url = URL.createObjectURL(pdfBlob);
 
             window.open(url, '_blank');
@@ -512,11 +515,8 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
             const indicesToMark = new Set<number>(printedIndices);
             previews.forEach((p, index) => {
                 if (p && p !== 'SKIPPED' && p !== 'ERROR') {
-                    if (includeDanfe) {
-                        indicesToMark.add(index);
-                    } else if (index % 2 !== 0) {
-                        indicesToMark.add(index);
-                    }
+                    if (includeDanfe && index % 2 === 0) indicesToMark.add(index);
+                    if (includeLabel && index % 2 !== 0) indicesToMark.add(index);
                 }
             });
             setEtiquetasState(prev => ({ ...prev, printedIndices: indicesToMark }));
@@ -526,10 +526,10 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
         } finally {
             setIsGeneratingPdf(false);
         }
-    }, [previews, extractedData, settings, includeDanfe, stockItems, skuLinks, onSaveHistory, currentUser, zplInput, zplPages, printedIndices, setEtiquetasState, pendingItems, setShowPrintedConfirm]);
+    }, [previews, extractedData, settings, includeMode, stockItems, skuLinks, onSaveHistory, currentUser, zplInput, zplPages, printedIndices, setEtiquetasState, pendingItems, setShowPrintedConfirm]);
 
     const handleClear = () => {
-        setEtiquetasState(prev => ({ ...prev, zplInput: '', includeDanfe: true, zplPages: [], previews: [], extractedData: new Map(), warnings: [], printedIndices: new Set() }));
+        setEtiquetasState(prev => ({ ...prev, zplInput: '', includeMode: 'both', zplPages: [], previews: [], extractedData: new Map(), warnings: [], printedIndices: new Set() }));
     };
 
     const handleReloadHistory = async (item: EtiquetaHistoryItem) => {
@@ -747,9 +747,32 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                             {unlinkedSkusData.length > 0 && <div className="flex-shrink-0 p-3 border-l-4 border-yellow-500 bg-yellow-50 rounded-r-lg shadow-sm"><h3 className="font-bold text-yellow-800 flex items-center gap-2"><AlertTriangle size={18} /> Vínculo de SKUs Pendentes ({unlinkedSkusData.length})</h3><div className="space-y-2 mt-2 max-h-32 overflow-y-auto pr-2">{unlinkedSkusData.map(({ sku }) => (<div key={sku} className="flex items-center justify-between bg-white p-2 rounded border border-yellow-200 text-sm"><span className="font-mono text-xs">{sku}</span><div className="flex gap-3"><button onClick={() => setLinkModalState({ isOpen: true, skus: [sku], color: 'Padrão' })} className="font-semibold text-blue-600 hover:underline flex items-center gap-1"><LinkIcon size={14} /> Vincular</button><button onClick={() => setCreateModalState({ isOpen: true, data: { sku, colorSugerida: 'Padrão' } })} className="font-semibold text-green-600 hover:underline flex items-center gap-1"><PlusCircle size={14} /> Criar</button></div></div>))}</div></div>}
 
                             <div className="flex-1 flex flex-col bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 overflow-hidden">
-                                <div className="flex-shrink-0 flex justify-between items-center mb-4"><h2 className="text-lg font-semibold">Pré-visualização ({previews.filter(p => p && p !== 'SKIPPED').length}/{zplPages.length})</h2><div className="flex items-center gap-4"><label className="flex items-center text-sm"><input type="checkbox" checked={includeDanfe} onChange={(e) => setEtiquetasState(p => ({ ...p, includeDanfe: e.target.checked }))} className="h-4 w-4 rounded" /> <span className="ml-2">Incluir DANFE</span></label><button onClick={handlePdfAction} disabled={previews.length === 0 || previews.every(p => !p) || isProcessing} className="flex items-center gap-2 text-sm px-4 py-2 rounded-md bg-blue-600 dark:bg-blue-500 text-white font-semibold disabled:opacity-50"><Printer size={16} /> Gerar PDF</button></div></div>
+                                <div className="flex-shrink-0 flex justify-between items-center mb-4"><h2 className="text-lg font-semibold">Pré-visualização ({previews.filter(p => p && p !== 'SKIPPED').length}/{zplPages.length})</h2><div className="flex items-center gap-4">
+                                    <div className="flex items-center bg-gray-100 dark:bg-gray-700 p-1 rounded-lg border border-gray-200 dark:border-gray-600">
+                                        <button 
+                                            onClick={() => setEtiquetasState(p => ({ ...p, includeMode: 'only_danfe' }))}
+                                            className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-md transition-all ${includeMode === 'only_danfe' ? 'bg-white dark:bg-gray-600 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500'}`}
+                                        >
+                                            Só DANFE
+                                        </button>
+                                        <button 
+                                            onClick={() => setEtiquetasState(p => ({ ...p, includeMode: 'both' }))}
+                                            className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-md transition-all ${includeMode === 'both' ? 'bg-white dark:bg-gray-600 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500'}`}
+                                        >
+                                            Ambos
+                                        </button>
+                                        <button 
+                                            onClick={() => setEtiquetasState(p => ({ ...p, includeMode: 'only_label' }))}
+                                            className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-md transition-all ${includeMode === 'only_label' ? 'bg-white dark:bg-gray-600 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500'}`}
+                                        >
+                                            Só Etiqueta
+                                        </button>
+                                    </div>
+                                    <button onClick={handlePdfAction} disabled={previews.length === 0 || previews.every(p => !p) || isProcessing} className="flex items-center gap-2 text-sm px-4 py-2 rounded-md bg-blue-600 dark:bg-blue-500 text-white font-semibold disabled:opacity-50"><Printer size={16} /> Gerar PDF</button>
+                                </div></div>
                                 <div className="flex-1 overflow-y-auto pr-2"><div className="grid grid-cols-3 gap-6">{previews.map((src, index) => {
                                     if (!includeDanfe && index % 2 === 0) return null;
+                                    if (!includeLabel && index % 2 !== 0) return null;
                                     const isEvenPage = index % 2 !== 0;
                                     const pairData = extractedData.get(Math.floor(index / 2) * 2);
                                     const platformSettings = pairData?.isMercadoLivre ? settings.mercadoLivre : settings.shopee;
