@@ -49,11 +49,17 @@ function handleBlingError(data: any, defaultMessage: string): void {
 /**
  * Detecta o canal de venda (ML, SHOPEE, SITE) a partir de um texto ou ID de loja
  */
-export function parseCanal(raw: any): 'ML' | 'SHOPEE' | 'SITE' {
+export function parseCanal(raw: any, alternative?: string): 'ML' | 'SHOPEE' | 'SITE' {
     const text = String(raw || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    if (text.includes('MERCADO LIVRE') || text.includes('MERCADOLIVRE') || text.includes('MERCADO-LIVRE') || text.includes('MLB') || text.includes('ML ') || text === 'ML' || text.includes('MERCADO')) return 'ML';
-    if (text.includes('SHOPEE')) return 'SHOPEE';
-    if (text.includes('AMAZON') || text.includes('NUVEM') || text.includes('SITE') || text.includes('LOJA VIRTUAL')) return 'SITE';
+    const alt = String(alternative || '').toUpperCase();
+    
+    const isML = (t: string) => t.includes('MERCADO LIVRE') || t.includes('MERCADOLIVRE') || t.includes('MERCADO-LIVRE') || t.includes('MLB') || t.includes('ML ') || t === 'ML' || t.includes('MERCADO') || t.includes('LIVRE');
+    const isShopee = (t: string) => t.includes('SHOPEE') || t.includes('SHP') || t.includes('SPP') || t.startsWith('21') || t.startsWith('22');
+
+    if (isML(text) || isML(alt)) return 'ML';
+    if (isShopee(text) || isShopee(alt)) return 'SHOPEE';
+    
+    if (text.includes('AMAZON') || text.includes('NUVEM') || text.includes('SITE') || text.includes('LOJA VIRTUAL') || text.includes('MAGALU') || text.includes('SHEIN')) return 'SITE';
     return 'SITE';
 }
 
@@ -446,6 +452,11 @@ export interface NfeSaida {
     naturezaOperacao?: string; // natureza da operação (ex: "Venda")
     idTransportador?: number;  // ID do transportador
     rastreamento?: string;     // Código de rastreamento
+    itens?: any[];             // Itens da NF-e
+    itensCount?: number;       // Quantidade total de itens
+    taxas?: number;            // Taxas do marketplace/plataforma
+    frete?: number;            // Valor do frete
+    valorLiquido?: number;     // Valor líquido (Total - Taxas - Frete)
 }
 
 // Mapeamento de situação ID → descrição legível (exportado para uso externo)
@@ -537,15 +548,16 @@ export async function enrichNfeSaida(apiKey: string, nfe: NfeSaida): Promise<Nfe
         if (!d) return nfe;
 
         // --- BUSCA AGRESSIVA PELO ID DA VENDA (Pedido Interno do Bling) ---
-        // Essencial para gerar etiquetas ZPL reais (vendas.php#edit/{id})
         let idVenda = d.vendas?.[0]?.id || 
                       d.pedidoVenda?.id || 
                       d.pedido?.id || 
-                      (Array.isArray(d.vendas) && d.vendas.length > 0 ? d.vendas[0].id : null);
+                      (Array.isArray(d.vendas) && d.vendas.length > 0 ? d.vendas[0].id : null) ||
+                      d.idPedidoVenda || 
+                      d.idVenda;
 
         // Se não achou na estrutura, tenta buscar em notas/observações via Regex
         if (!idVenda) {
-            const obsText = `${d.observações || ''} ${d.observaçõesInternas || ''} ${d.pedido?.observacoes || ''}`;
+            const obsText = `${d.observações || d.observacoes || ''} ${d.observaçõesInternas || d.observacoesInternas || ''} ${d.pedido?.observacoes || ''}`;
             const matchVenda = obsText.match(/(?:ID\s+Venda|Pedido\s+Bling|Venda\s+ID|vendas\.php#edit\/)\s*[:\-]?\s*(\d+)/i);
             if (matchVenda?.[1]) idVenda = Number(matchVenda[1]);
         }
@@ -554,11 +566,13 @@ export async function enrichNfeSaida(apiKey: string, nfe: NfeSaida): Promise<Nfe
         let numeroLoja = d.intermediador?.numeroPedido || 
                          d.numeroPedidoLoja || 
                          d.pedido?.numeroLoja ||
-                         d.vendas?.[0]?.numeroLoja;
+                         d.vendas?.[0]?.numeroLoja ||
+                         d.numeroLoja ||
+                         (d.pedido?.idPedidoLoja);
 
         if (!numeroLoja) {
-             const obsText = `${d.observações || ''} ${d.observaçõesInternas || ''}`;
-             const matchLoja = obsText.match(/(?:Número\s+Pedido\s+Loja|Pedido\s+Original|Order\s+ID)\s*[:\-]?\s*([A-Z0-9\-_]+)/i);
+             const obsText = `${d.observações || d.observacoes || ''} ${d.observaçõesInternas || d.observacoesInternas || ''}`;
+             const matchLoja = obsText.match(/(?:Número\s+Pedido\s+Loja|Pedido\s+Original|Pedido\s+da\s+Loja|Order\s+ID)\s*[:\-]?\s*([A-Z0-9\-_]+)/i);
              if (matchLoja?.[1]) numeroLoja = matchLoja[1];
         }
 
@@ -567,21 +581,42 @@ export async function enrichNfeSaida(apiKey: string, nfe: NfeSaida): Promise<Nfe
         const rastreamento = transporte.objeto?.codigoRastreamento || 
                              transporte.volumes?.[0]?.codigoRastreamento || 
                              transporte.volumes?.[0]?.objeto ||
-                             d.pedido?.transporte?.codigoRastreamento;
+                             d.pedido?.transporte?.codigoRastreamento ||
+                             d.transporte?.rastreamento;
 
-        const lojaNome = d.loja?.descricao || d.vendedor?.descricao || d.pedido?.loja?.nome || nfe.loja;
-        const canal = parseCanal(lojaNome);
+        const itens = d.itens || d.produtos || [];
+        const itensCount = itens.length;
+
+        // --- BUSCA PROFUNDA NO PEDIDO DE VENDA (Se idVenda existir) ---
+        let vData: any = null;
+        if (idVenda) {
+            try {
+                const pedDet = await fetchPedidoVendaDetalhe(token, idVenda);
+                vData = pedDet?.data || pedDet;
+            } catch (e) {
+                console.warn(`[enrichNfeSaida] Falha ao buscar pedido ${idVenda}:`, e);
+            }
+        }
+
+        const lojaNome = vData?.loja?.nome || vData?.loja?.descricao || d.loja?.descricao || d.vendedor?.descricao || d.loja?.nome || nfe.loja;
+        const canal = parseCanal(lojaNome, vData?.canal || nfe.numeroLoja || numeroLoja);
 
         return {
             ...nfe,
-            idVenda: idVenda || nfe.idVenda,
-            numeroVenda: d.numeroPedidoLoja || d.intermediador?.numeroPedido || idVenda || nfe.numeroVenda,
-            numeroLoja: numeroLoja || nfe.numeroLoja,
+            idVenda: idVenda ? Number(idVenda) : nfe.idVenda,
+            numeroVenda: vData?.numero || d.numero || d.pedido?.numero || d.numeroPedidoLoja || d.intermediador?.numeroPedido || idVenda || nfe.numeroVenda,
+            numeroLoja: vData?.numeroLoja || vData?.numeroPedidoLoja || numeroLoja || nfe.numeroLoja,
             loja: lojaNome,
-            lojaId: d.loja?.id ? Number(d.loja.id) : nfe.lojaId,
+            lojaId: vData?.loja?.id || d.loja?.id ? Number(vData?.loja?.id || d.loja.id) : nfe.lojaId,
             canal,
-            rastreamento,
-            idTransportador: transporte.contador?.id || transporte.contato?.id ? Number(transporte.contador?.id || transporte.contato?.id) : nfe.idTransportador,
+            rastreamento: rastreamento || vData?.transporte?.codigoRastreamento || vData?.rastreamento,
+            idTransportador: transporte.contador?.id || transporte.contato?.id || vData?.transporte?.contato?.id ? Number(transporte.contador?.id || transporte.contato?.id || vData?.transporte?.contato?.id) : nfe.idTransportador,
+            itens: itens.length > 0 ? itens : (vData?.itens || []),
+            itensCount: itensCount || vData?.itens?.length || 0,
+            valorTotal: cleanMoney(d.valorNota || d.total || d.valor || vData?.total || nfe.valorTotal),
+            taxas: vData?.taxas ? cleanMoney(vData.taxas) : undefined,
+            frete: cleanMoney(transporte.frete || d.valorFrete || vData?.transporte?.frete || 0) || undefined,
+            valorLiquido: vData?.valorLiquido ? cleanMoney(vData.valorLiquido) : undefined,
         };
     } catch (err) {
         console.error(`Erro ao enriquecer NF-e ${nfe.id}:`, err);

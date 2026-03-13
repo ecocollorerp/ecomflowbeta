@@ -310,8 +310,16 @@ BEGIN
       produtos JSONB DEFAULT '[]'::jsonb,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW(),
-      created_by TEXT
+      created_by TEXT,
+      barcode TEXT
   );
+      
+  -- Garante coluna barcode em estoque_pronto
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='estoque_pronto' AND column_name='barcode') THEN
+    ALTER TABLE public.estoque_pronto ADD COLUMN barcode TEXT;
+  END IF;
+
+  CREATE INDEX IF NOT EXISTS idx_estoque_pronto_barcode ON public.estoque_pronto(barcode);
       
   CREATE INDEX IF NOT EXISTS idx_estoque_pronto_status ON public.estoque_pronto(status);
   CREATE INDEX IF NOT EXISTS idx_estoque_pronto_sku ON public.estoque_pronto(stock_item_id);
@@ -654,7 +662,11 @@ BEGIN
 
     SELECT jsonb_agg(jsonb_build_object('table', t, 'column', c, 'exists', EXISTS (SELECT FROM information_schema.columns WHERE table_name=t AND column_name=c)))
     INTO columns_status
-    FROM (VALUES ('stock_items', 'barcode'), ('stock_items', 'substitute_product_code')) AS v(t, c);
+    FROM (VALUES 
+        ('stock_items', 'barcode'), 
+        ('stock_items', 'substitute_product_code'),
+        ('estoque_pronto', 'barcode')
+    ) AS v(t, c);
 
     RETURN jsonb_build_object(
         'tables_status', tables_status,

@@ -24,6 +24,9 @@ import BulkStockUpdateModal from '../components/BulkStockUpdateModal';
 import BulkAssignCategoryModal from '../components/BulkAssignCategoryModal';
 import UpdatePacksFromSheetModal from '../components/UpdatePacksFromSheetModal';
 import VolatilMovementModal from '../components/VolatilMovementModal';
+import { BarcodeLabelModal } from '../components/BarcodeLabelModal';
+import { Barcode, QrCode } from 'lucide-react';
+
 
 // ... ExpeditionItemsConfigModal e TransferSkuModal permanecem iguais ...
 interface ExpeditionItemsConfigModalProps {
@@ -275,6 +278,7 @@ type ModalState = {
     bulkUpdate: { isOpen: boolean; preselectedCodes?: string[]; title?: string };
     bulkAssignCategory: boolean;
     updatePacksFromSheet: boolean;
+    barcodeModal: { isOpen: boolean; data: any; type: 'item' | 'pack' } | null;
 };
 
 const TabButton: React.FC<{ tab: Tab, activeTab: Tab, label: string, icon: React.ReactNode, onClick: (tab: Tab) => void }> = ({ tab, activeTab, label, icon, onClick }) => (
@@ -302,7 +306,8 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
         packGroup: null, isPackModalOpen: false,
         bulkUpdate: { isOpen: false },
         bulkAssignCategory: false,
-        updatePacksFromSheet: false
+        updatePacksFromSheet: false,
+        barcodeModal: null
     });
     const [expandedMovements, setExpandedMovements] = useState<Set<string>>(new Set());
     const [histSearch, setHistSearch] = useState('');
@@ -386,7 +391,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
     }, [loadPackGroups]);
 
     const closeModal = () => {
-        setModalState(prev => ({ ...prev, addItem: false, editItem: null, bomConfig: null, manualMovement: null, updateStock: null, importXml: false, manageInsumoCategories: false, manageProductCategories: false, expeditionItemsConfig: null, updateFromSheet: false, updateFromSheetShopee: false, packGroup: null, isPackModalOpen: false, bulkUpdate: { isOpen: false }, bulkAssignCategory: false, updatePacksFromSheet: false }));
+        setModalState(prev => ({ ...prev, addItem: false, editItem: null, bomConfig: null, manualMovement: null, updateStock: null, importXml: false, manageInsumoCategories: false, manageProductCategories: false, expeditionItemsConfig: null, updateFromSheet: false, updateFromSheetShopee: false, packGroup: null, isPackModalOpen: false, bulkUpdate: { isOpen: false }, bulkAssignCategory: false, updatePacksFromSheet: false, barcodeModal: null }));
         setIsDeleteModalOpen(false);
         setItemToDelete(null);
         setTransferState(null);
@@ -822,7 +827,11 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
         doc.text('Inventário Atual Detalhado', 14, yPos);
         yPos += 10;
 
-        const itensData = relatorioProdutosProntos.individuais.map(i => [i.nome, i.sku, `Pacote ${i.size} UN`, `${i.total} UN`]);
+        const itensData = relatorioProdutosProntos.individuais.map(i => {
+            const numPacks = i.size > 0 ? (i.total / i.size).toFixed(0) : i.total.toString();
+            const formatado = i.size > 1 ? `${numPacks} de ${i.size}` : `${i.total} UN`;
+            return [i.nome, i.sku, `Pacote ${i.size} UN`, formatado];
+        });
         autoTable(doc, {
             startY: yPos,
             head: [['Nome do Item', 'Código SKU', 'Tamanho', 'Saldo']],
@@ -882,6 +891,17 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
             onAdjustStock: (item: StockItem) => setModalState(prev => ({ ...prev, manualMovement: item })),
             onUpdateStock: (item: StockItem) => setModalState(prev => ({ ...prev, updateStock: item })),
             onResetVolatile: handleResetVolatile,
+            onGenerateBarcode: (item: StockItem) => {
+                const data = {
+                    id: item.id,
+                    nome: item.name,
+                    sku_primario: item.code,
+                    quantidade_total: item.current_qty,
+                    localizacao: item.category || 'N/A',
+                    produtos: [{ sku: item.code, nome: item.name, quantidade: 1 }]
+                };
+                setModalState(prev => ({ ...prev, barcodeModal: { isOpen: true, data, type: 'item' } }));
+            }
         };
         const commonCardProps = {
             ...commonTableProps
@@ -1017,12 +1037,40 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                             <div className="flex justify-between items-end">
                                                 <div>
                                                     <p className="text-[10px] font-black text-gray-400 uppercase mb-1">{isVolatil ? 'Qtd. Manual' : 'Estoque Calculado'}</p>
-                                                    <p className={`text-4xl font-black ${isBelowMin ? 'text-red-600' : 'text-emerald-600'}`}>{currentTotal.toFixed(0)} <span className="text-sm">UN</span></p>
+                                                    <div className="flex items-baseline gap-1">
+                                                        <p className={`text-4xl font-black ${isBelowMin ? 'text-red-600' : 'text-emerald-600'}`}>{currentTotal.toFixed(0)}</p>
+                                                        {(() => {
+                                                            let size = 1;
+                                                            const nameMatch = group.name.match(/(\d+)\s*un/i);
+                                                            if (nameMatch) size = parseInt(nameMatch[1], 10);
+                                                            else if (group.name.toLowerCase().includes('duplo') || group.name.toLowerCase().includes('par')) size = 2;
+
+                                                            if (size > 1) {
+                                                                return <p className="text-sm font-bold text-slate-400">({(currentTotal / size).toFixed(1)} de {size})</p>;
+                                                            }
+                                                            return <span className="text-sm font-black text-slate-400">UN</span>;
+                                                        })()}
+                                                    </div>
                                                 </div>
                                                 <div className="text-right">
                                                     <p className="text-[10px] font-black text-gray-400 uppercase mb-1">Meta Mínima</p>
                                                     <p className="text-xl font-black text-slate-600">{group.min_pack_qty} <span className="text-xs">UN</span></p>
                                                 </div>
+                                            </div>
+                                            <div className="flex gap-2 mt-4 pt-3 border-t border-slate-100">
+                                                <button onClick={() => {
+                                                    const data = {
+                                                        id: group.id,
+                                                        nome: group.name,
+                                                        sku_primario: group.barcode || group.item_codes[0] || 'N/A',
+                                                        quantidade_total: 1,
+                                                        localizacao: 'N/A',
+                                                        produtos: group.item_codes.map(code => ({ sku: code, nome: code, quantidade: 1 }))
+                                                    };
+                                                    setModalState(prev => ({ ...prev, barcodeModal: { isOpen: true, data, type: 'pack' } }));
+                                                }} className="flex-1 flex items-center justify-center gap-1 py-2 bg-slate-100 text-slate-700 text-[10px] font-black uppercase tracking-widest rounded-xl hover:bg-slate-200 transition-all">
+                                                    <Barcode size={14} /> Etiqueta
+                                                </button>
                                             </div>
                                             <div className="w-full bg-slate-200 h-1.5 rounded-full mt-2 overflow-hidden">
                                                 <div
@@ -1101,7 +1149,17 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                                         <span className="text-sm font-black text-slate-700 uppercase">{group.name}</span>
                                                     </td>
                                                     <td className="px-6 py-4">
-                                                        <span className={`text-sm font-black ${isBelowMin ? 'text-red-600' : 'text-emerald-600'}`}>{currentTotal.toFixed(0)} UN</span>
+                                                        <div className="flex flex-col">
+                                                            <span className={`text-sm font-black ${isBelowMin ? 'text-red-600' : 'text-emerald-600'}`}>{currentTotal.toFixed(0)} UN</span>
+                                                            {(() => {
+                                                                let size = 1;
+                                                                const nameMatch = group.name.match(/(\d+)\s*un/i);
+                                                                if (nameMatch) size = parseInt(nameMatch[1], 10);
+                                                                else if (group.name.toLowerCase().includes('duplo') || group.name.toLowerCase().includes('par')) size = 2;
+                                                                if (size > 1) return <span className="text-[10px] text-slate-400 font-bold">({(currentTotal / size).toFixed(1)} de {size})</span>;
+                                                                return null;
+                                                            })()}
+                                                        </div>
                                                     </td>
                                                     <td className="px-6 py-4 text-right">
                                                         <div className="flex justify-end gap-1">
@@ -1111,7 +1169,18 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                                                     <button onClick={() => setVolatilModal({ isOpen: true, group, type: 'saida' })} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-all"><ArrowUpCircle size={14} /></button>
                                                                 </>
                                                             )}
-                                                            <button onClick={() => setModalState(prev => ({ ...prev, packDetail: group }))} className="p-2 text-slate-400 hover:text-blue-600 transition-all"><ArrowRight size={18} /></button>
+                                                                    <button onClick={() => {
+                                                                        const data = {
+                                                                            id: group.id,
+                                                                            nome: group.name,
+                                                                            sku_primario: group.barcode || group.item_codes[0] || 'N/A',
+                                                                            quantidade_total: 1,
+                                                                            localizacao: 'N/A',
+                                                                            produtos: group.item_codes.map(code => ({ sku: code, nome: code, quantidade: 1 }))
+                                                                        };
+                                                                        setModalState(prev => ({ ...prev, barcodeModal: { isOpen: true, data, type: 'pack' } }));
+                                                                    }} className="p-2 bg-slate-50 text-slate-600 rounded-lg hover:bg-slate-600 hover:text-white transition-all" title="Gerar Etiqueta"><Barcode size={14} /></button>
+                                                                    <button onClick={() => setModalState(prev => ({ ...prev, packDetail: group }))} className="p-2 text-slate-400 hover:text-blue-600 transition-all"><ArrowRight size={18} /></button>
                                                         </div>
                                                     </td>
                                                 </tr>
@@ -1276,6 +1345,15 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
             {itemToDelete && <ConfirmActionModal isOpen={!!itemToDelete} onClose={closeModal} onConfirm={handleConfirmDelete} title="Confirmar Exclusão" message={<><p>Você tem certeza que deseja excluir <strong>{itemToDelete.item.name || itemToDelete.item.stockItemName}</strong>?</p><p className="font-bold text-red-700">Esta ação é irreversível.</p></>} confirmButtonText="Excluir Permanentemente" isConfirming={isDeleting} />}
             {isDeleteModalOpen && <ConfirmActionModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} onConfirm={handleDeleteSelected} title="Confirmar Exclusão em Massa" message={<><p>Você tem certeza que deseja excluir <strong>{selectedIds.size} produto(s)</strong> selecionado(s)?</p><p className="font-bold text-red-700">Esta ação é irreversível e removerá os registros permanentemente.</p></>} confirmButtonText="Excluir Permanentemente" isConfirming={isDeleting} />}
             {transferState && <TransferSkuModal isOpen={!!transferState} onClose={closeModal} skuToTransfer={transferState.sku} currentMaster={transferState.currentMaster} allProducts={produtos} onConfirmTransfer={handleConfirmTransfer} />}
+            {modalState.barcodeModal?.isOpen && (
+                <BarcodeLabelModal
+                    isOpen={modalState.barcodeModal.isOpen}
+                    onClose={closeModal}
+                    pacote={modalState.barcodeModal.data}
+                    targetTable={modalState.barcodeModal.type === 'item' ? 'stock_items' : 'estoque_pronto'}
+                    addToast={props.addToast || (() => {})}
+                />
+            )}
         </div>
     );
 };
@@ -1367,6 +1445,7 @@ const StockRow: React.FC<{ item: StockItem, hasAdjustPermission: boolean } & any
                     {item.is_volatile_infinite && onResetVolatile && <button onClick={() => onResetVolatile(item)} title="Desativar Modo Volátil Manualmente" className="p-1 hover:bg-orange-100 text-orange-600 rounded"><RefreshCw size={16} /></button>}
                     {onConfigureBom && <button onClick={() => onConfigureBom(item)} title="Configurar Receita (BOM)" className="p-1 hover:bg-slate-200 text-slate-600 rounded"><Cog size={16} /></button>}
                     {onConfigureExpeditionItems && <button onClick={() => onConfigureExpeditionItems(item)} title="Configurar Itens de Expedição" className="p-1 hover:bg-slate-200 text-slate-600 rounded"><Box size={16} /></button>}
+                    <button onClick={() => props.onGenerateBarcode(item)} title="Gerar Etiqueta" className="p-1 hover:bg-slate-200 text-slate-600 rounded"><Barcode size={16} /></button>
                     {currentUser.role === 'SUPER_ADMIN' && <button onClick={() => onDelete(item)} title="Excluir" className="p-1 hover:bg-red-100 text-red-600 rounded"><Trash2 size={16} /></button>}
                 </div></td>
                 <td className="py-4 px-3 font-mono text-xs">{item.code}</td>
@@ -1434,6 +1513,7 @@ const StockCard: React.FC<{ item: StockItem, hasAdjustPermission: boolean } & an
                     <button onClick={() => onEdit(item)} className="p-2 bg-blue-50 text-blue-600 rounded-xl"><Edit3 size={20} /></button>
                     {hasAdjustPermission && <button onClick={() => onAdjustStock(item)} className="p-2 bg-orange-50 text-orange-600 rounded-xl"><SlidersHorizontal size={20} /></button>}
                     {onProduce && <button onClick={() => onProduce(item)} title={item.kind === 'PRODUTO' ? 'Registrar para Estoque Pronto (BOM)' : 'Produção via BOM'} className="p-2 bg-purple-50 text-purple-600 rounded-xl"><Factory size={20} /></button>}
+                    <button onClick={() => props.onGenerateBarcode(item)} className="p-2 bg-slate-50 text-slate-600 rounded-xl"><Barcode size={20} /></button>
                     {item.is_volatile_infinite && onResetVolatile && <button onClick={() => onResetVolatile(item)} title="Reset Volátil" className="p-2 bg-orange-50 text-orange-600 rounded-xl"><RefreshCw size={20} /></button>}
                 </div>
             </div>

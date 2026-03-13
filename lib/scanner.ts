@@ -105,6 +105,42 @@ export const resolveScan = async (
 
 
     if (!foundOrder) {
+        // --- 1a. Check if it's a Batch/Ready Package barcode ---
+        const { data: batchData, error: batchError } = await db
+            .from('estoque_pronto')
+            .select('*')
+            .eq('barcode', orderCodeToSearch)
+            .maybeSingle();
+
+        if (batchData && !batchError) {
+            // Log as a special scan for a batch
+            const { data: batchScan } = await db
+                .from('scan_logs')
+                .insert({
+                    scanned_at: new Date().toISOString(),
+                    user_id: operatorUser.id,
+                    user_name: operatorUser.name,
+                    device: operatorDevice,
+                    display_key: batchData.batch_id || batchData.barcode,
+                    status: 'OK',
+                    synced: true,
+                    canal: 'AUTO'
+                })
+                .select()
+                .single();
+
+            return {
+                status: 'OK',
+                message: `Lote "${batchData.batch_id}" identificado com sucesso!`,
+                input_code: cleanInput,
+                display_key: batchData.batch_id || batchData.barcode,
+                synced_with_list: true,
+                scan: batchScan ? { id: batchScan.id, at: batchScan.scanned_at } : undefined,
+                user: { name: operatorUser.name, device: operatorDevice }
+            };
+        }
+
+        // --- 1b. Standard Fallback (NOT_FOUND) ---
         // Check for previous NOT_FOUND scans for the same code to avoid cluttering the log
         const { data: existingNotFoundScan, error: notFoundCheckError } = await db
             .from('scan_logs')

@@ -23,8 +23,10 @@ import {
     Save,
     ArrowRight,
     BarChart3,
-    Clock
+    Clock,
+    QrCode
 } from 'lucide-react';
+import { BarcodeLabelModal } from './BarcodeLabelModal';
 
 interface PacoteProto {
     id: string;
@@ -54,6 +56,7 @@ interface PacotesProntosManagerProps {
     onDeletar?: (id: string) => void;
     onMoverPacote?: (id: string, novaLocalizacao: string) => void;
     onMarcarExpedido?: (id: string) => void;
+    addToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
 export const PacotesProntosManager: React.FC<PacotesProntosManagerProps> = ({
@@ -63,13 +66,15 @@ export const PacotesProntosManager: React.FC<PacotesProntosManagerProps> = ({
     onEditar,
     onDeletar,
     onMoverPacote,
-    onMarcarExpedido
+    onMarcarExpedido,
+    addToast
 }) => {
     const [busca, setBusca] = useState('');
     const [filtroStatus, setFiltroStatus] = useState<'todos' | 'PRONTO' | 'RESERVADO' | 'EXPEDIDO'>('PRONTO');
     const [ordenacao, setOrdenacao] = useState<'data' | 'disponibilidade' | 'localizacao'>('data');
     const [pacoteSelecionado, setPacoteSelecionado] = useState<PacoteProto | null>(null);
     const [showDetalhes, setShowDetalhes] = useState(false);
+    const [showLabelModal, setShowLabelModal] = useState(false);
     const [novaLocalizacao, setNovaLocalizacao] = useState('');
 
     // Filtragem e ordenação
@@ -312,6 +317,16 @@ export const PacotesProntosManager: React.FC<PacotesProntosManagerProps> = ({
                                                 <ArrowRight size={16} />
                                             </button>
                                         )}
+                                        <button
+                                            onClick={() => {
+                                                setPacoteSelecionado(pacote);
+                                                setShowLabelModal(true);
+                                            }}
+                                            className="p-2 text-purple-600 hover:bg-purple-100 rounded-lg transition-all"
+                                            title="Gerar Etiquetas"
+                                        >
+                                            <QrCode size={16} />
+                                        </button>
                                     </td>
                                 </tr>
                             ))}
@@ -453,6 +468,16 @@ export const PacotesProntosManager: React.FC<PacotesProntosManagerProps> = ({
                         </div>
                     </div>
                 </div>
+            )}
+
+            {/* Modal de Etiquetas */}
+            {showLabelModal && pacoteSelecionado && (
+                <BarcodeLabelModal
+                    isOpen={showLabelModal}
+                    onClose={() => setShowLabelModal(false)}
+                    pacote={pacoteSelecionado}
+                    addToast={addToast}
+                />
             )}
         </div>
     );

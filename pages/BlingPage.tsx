@@ -5,7 +5,7 @@ import type { NfeSaida } from '../lib/blingApi';
 import { addPendingZplItem } from '../utils/pendingZpl';
 import { BlingSync } from '../components/BlingSync';
 // NFeManager integrado diretamente no BlingPage
-import { Cloud, Zap, Link as LinkIcon, Settings, Loader2, CheckCircle, Info, FileText, ShoppingCart, Download, Printer, Lock, Package, Search, Save, Eye, EyeOff, X, AlertTriangle, RefreshCw, ToggleLeft, ToggleRight, FileOutput, ExternalLink, Filter, HelpCircle, ChevronDown, ChevronRight, Copy, TrendingDown, ShoppingBag, CheckSquare, Square, Tag, Send, History, Clock, User, MapPin, CreditCard, XCircle } from 'lucide-react';
+import { Cloud, Zap, Link as LinkIcon, Settings, Loader2, CheckCircle, Info, FileText, ShoppingCart, Download, Printer, Lock, Package, Search, Save, Eye, EyeOff, X, AlertTriangle, RefreshCw, ToggleLeft, ToggleRight, FileOutput, ExternalLink, Filter, HelpCircle, ChevronDown, ChevronRight, Copy, TrendingDown, ShoppingBag, CheckSquare, Square, Tag, Send, History, Clock, User, MapPin, CreditCard, XCircle, Sparkles } from 'lucide-react';
 
 // Transforma pedido do endpoint de sync para o formato OrderItem do ERP
 const transformSyncedOrder = (o: any): OrderItem => ({
@@ -1732,7 +1732,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 const nfe = enrichedList[i];
                 
                 // Só enriquece se faltar dados críticos
-                if (!nfe.numeroLoja || !nfe.rastreamento || !nfe.loja) {
+                const isMissingData = !nfe.numeroLoja || !nfe.rastreamento || !nfe.loja || !nfe.canal || nfe.valorLiquido === undefined || !nfe.valorTotal;
+                if (isMissingData) {
                     const enriched = await enrichNfeSaida(token, nfe);
                     enrichedList[i] = enriched;
                     changed = true;
@@ -1743,8 +1744,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         persistNfeSaida(enrichedList);
                     }
                     
-                    // Pequeno delay para evitar 429
-                    await new Promise(r => setTimeout(r, 400));
+                    // Delay maior (800ms) para evitar 429 com maior volume de dados (itens)
+                    await new Promise(r => setTimeout(r, 800));
                 }
             }
             
@@ -1836,16 +1837,31 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         try {
             const token = await getValidToken();
             if (!token) throw new Error('Token inválido.');
+            
+            const idVenda = nfe.idVenda || (nfeItemsCache[nfe.id] as any)?.pedido?.id || (nfeItemsCache[nfe.id] as any)?.vendas?.[0]?.id;
 
-            addToast('Buscando conteúdo ZPL (DANFE + Etiqueta)...', 'info');
-            const zpl = await fetchNfeEtiquetaZpl(token, nfe.id);
+            addToast('Buscando conteúdo ZPL (Privilegiando etiqueta de marketplace)...', 'info');
+            
+            let zpl = null;
+            
+            // 1. Tenta buscar via Pedido de Venda se for Marketplace (Shopee/ML)
+            if (idVenda && (nfe.canal === 'SHOPEE' || nfe.canal === 'ML')) {
+                try {
+                    zpl = await fetchEtiquetaZplForPedido(token, String(idVenda));
+                } catch (e) { console.warn('ZPL via Pedido falhou:', e); }
+            }
+            
+            // 2. Tenta via NF-e se falhou ou não for marketplace
+            if (!zpl) {
+                zpl = await fetchNfeEtiquetaZpl(token, nfe.id);
+            }
 
             if (zpl) {
                 const blob = new Blob([zpl], { type: 'text/plain' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `ETIQUETA_DANFE_${nfe.numero || nfe.id}.zpl`;
+                a.download = `ETIQUETA_${nfe.canal || 'NFE'}_${nfe.numero || nfe.id}.zpl`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
@@ -2129,15 +2145,16 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             result = result.filter(n => (n.serie || '').toLowerCase().includes(term));
         }
 
-        // Filtro por Item (SKU ou Descrição - apenas se já estiver em cache)
+        // Filtro por Item (SKU ou Descrição - suporta itens enriquecidos ou em cache)
         if (nfeItemSearch.trim()) {
             const term = nfeItemSearch.trim().toLowerCase();
             result = result.filter(n => {
-                const items = nfeItemsCache[n.id] || [];
-                return items.some((it: any) => 
-                    (it.codigo || '').toLowerCase().includes(term) || 
-                    (it.descricao || '').toLowerCase().includes(term)
-                );
+                const items = n.itens || nfeItemsCache[n.id] || [];
+                return items.some((it: any) => {
+                    const sku = (it.codigo || it.produto?.codigo || '').toLowerCase();
+                    const desc = (it.descricao || it.produto?.descricao || '').toLowerCase();
+                    return sku.includes(term) || desc.includes(term);
+                });
             });
         }
 
@@ -2414,19 +2431,43 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             if (!token) throw new Error('Token inválido.');
 
             // 1. Busca Itens da NF-e
+            let itens = nfeItemsCache[nfe.id] || [];
+            let detalheCompleto: any = null;
+
             if (!nfeItemsCache[nfe.id]) {
                 const detalhe = await fetchNfeDetalhe(token, nfe.id);
-                const itens = detalhe?.data?.itens || detalhe?.itens || [];
+                detalheCompleto = detalhe?.data || detalhe;
+                itens = detalheCompleto?.itens || detalheCompleto?.produtos || [];
                 setNfeItemsCache(prev => ({ ...prev, [nfe.id]: itens }));
             }
 
             // 2. Busca Info do Pedido Vinculado (se houver idVenda)
-            const idVenda = nfe.idVenda || (nfeItemsCache[nfe.id] as any)?.pedido?.id;
+            // Tenta obter idVenda da nota já enriquecida ou do detalhe recém-buscado
+            const idVenda = nfe.idVenda || 
+                            detalheCompleto?.vendas?.[0]?.id || 
+                            detalheCompleto?.pedidoVenda?.id || 
+                            detalheCompleto?.pedido?.id;
+
+            console.log(`[handleExpandNfeItems] NF-e ${nfe.numero || nfe.id}: idVenda=${idVenda} - Itens:`, itens.length);
+
             if (idVenda && !nfeOrderDataCache[nfe.id]) {
                 try {
-                    const pedDet = await fetchPedidoVendaDetalhe(token, idVenda);
-                    if (pedDet?.data) {
-                        setNfeOrderDataCache(prev => ({ ...prev, [nfe.id]: pedDet.data }));
+                    const pedDet = await fetchPedidoVendaDetalhe(token, String(idVenda));
+                    if (pedDet?.data || pedDet) {
+                        const d = pedDet.data || pedDet;
+                        setNfeOrderDataCache(prev => ({ ...prev, [nfe.id]: d }));
+                        console.log(`[handleExpandNfeItems] Order Data carregada para NF-e ${nfe.id}`);
+
+                        // Opcional: Enriquecer o item principal se canal/loja estiverem faltando
+                        if (!nfe.canal || nfe.loja === 'Bling' || !nfe.numeroVenda) {
+                            setNfeSaida(prev => prev.map(item => item.id === nfe.id ? {
+                                ...item,
+                                canal: d.canal || item.canal,
+                                loja: d.loja?.nome || d.loja?.descricao || item.loja,
+                                numeroVenda: d.numero || item.numeroVenda,
+                                numeroLoja: d.numeroLoja || item.numeroLoja
+                            } : item));
+                        }
                     }
                 } catch (pe) { console.warn('Erro ao buscar order info para NF-e:', pe); }
             }
@@ -2675,7 +2716,17 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             const order = targets[i];
             setBatchZplNotasProgress({ current: i + 1, total: targets.length });
             try {
-                let zpl = await fetchEtiquetaZplForPedido(token, order.invoice!.idPedidoVenda!);
+                let zpl: string | null = null;
+                
+                // Tenta primeiro via ID da NF-e (DANFE Simplificada + Etiqueta Real)
+                if (order.invoice?.id) {
+                    zpl = await fetchNfeEtiquetaZpl(token, order.invoice.id);
+                }
+
+                // Se não conseguir via NF-e, tenta via Pedido de Venda
+                if (!zpl && order.invoice?.idPedidoVenda) {
+                    zpl = await fetchEtiquetaZplForPedido(token, order.invoice.idPedidoVenda);
+                }
                 if (zpl) {
                     // Adicionar SKU ao final da etiqueta ZPL se solicitado
                     // O ZPL termina com ^XZ. Vamos injetar campos de texto antes do fim.
@@ -3087,8 +3138,14 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     // ── Map de SKU (Bling/importado) → nome do produto ERP vinculado ─────────
     const erpSkuNameMap = useMemo(() => {
         const m = new Map<string, string>();
+        
+        console.log(`[erpSkuNameMap] Building map with ${erpStockItems.length} items and ${erpSkuLinks.length} links`);
+        
         // Products diretos
-        erpStockItems.forEach(item => m.set(item.code.toUpperCase(), item.name));
+        erpStockItems.forEach(item => {
+            if (item.code) m.set(item.code.toUpperCase(), item.name);
+        });
+
         // Via sku_links: importedSku → masterProductSku → name
         erpSkuLinks.forEach(link => {
             const master = erpStockItems.find(i => i.code.toUpperCase() === link.masterProductSku.toUpperCase());
@@ -3097,6 +3154,11 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 m.set(link.masterProductSku.toUpperCase(), master.name);
             }
         });
+        
+        if (m.size > 0) {
+            console.log(`[erpSkuNameMap] Built map with ${m.size} keys`);
+        }
+        
         return m;
     }, [erpStockItems, erpSkuLinks]);
 
@@ -3604,6 +3666,15 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 {/* Botões baixar XMLs e DANFEs do período */}
                                 {filteredNfeSaida.length > 0 && (
                                     <>
+                                        <button 
+                                            onClick={() => handleEnrichNfeList(selectedNfeSaidaIds.size > 0 ? filteredNfeSaida.filter(n => selectedNfeSaidaIds.has(n.id)) : filteredNfeSaida)} 
+                                            disabled={isEnrichingNfe || filteredNfeSaida.length === 0} 
+                                            className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full bg-purple-50 text-purple-700 border border-purple-100 hover:bg-purple-100 disabled:opacity-50 transition-all font-sans"
+                                            title="Busca itens (SKU), rastreios e valores para as notas filtradas ou selecionadas"
+                                        >
+                                            {isEnrichingNfe ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                                            {isEnrichingNfe ? 'Sincronizando...' : (selectedNfeSaidaIds.size > 0 ? `Enriquecer Selecionadas (${selectedNfeSaidaIds.size})` : 'Enriquecer Lista')}
+                                        </button>
                                         <button onClick={handleBaixarXmlLote} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 hover:bg-blue-100 disabled:opacity-50 transition-all">
                                             {isDownloadingXml ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
                                             {isDownloadingXml ? `XML... ${xmlDownloadProgress?.current || 0}/${xmlDownloadProgress?.total || 0}` : 'XML (Lote)'}
@@ -3898,7 +3969,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                             : <Square size={14} className="text-white/50" />}
                                                     </button>
                                                 </th>
-                                                {['Número', 'Série', 'Nome', 'CNPJ/CPF', 'Data Emissão', 'Pedido (Loja)', 'Pedido Bling', 'Rastreio', 'Loja', 'Situação', 'Valor (R$)', 'Ações'].map(h =>
+                                                <th className="p-3 w-10"></th>
+                                                {['Número', 'Série', 'Nome', 'CNPJ/CPF', 'Data Emissão', 'Itens', 'Pedido (Loja)', 'Pedido Bling', 'Rastreio', 'Loja', 'Situação', 'Valor (R$)', 'Ações'].map(h =>
                                                     <th key={h} className="p-3 text-left text-[9px] font-black uppercase tracking-widest">{h}</th>
                                                 )}
                                             </tr>
@@ -3918,7 +3990,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
 
                                                 const formatDate = (d?: string) => {
                                                     if (!d) return '-';
-                                                    const parts = d.split('T')[0].split('-');
+                                                    const clean = d.split(' ')[0].split('T')[0];
+                                                    const parts = clean.split('-');
                                                     return parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : d;
                                                 };
 
@@ -3952,6 +4025,11 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                             <td className="p-3 font-bold text-slate-600 max-w-[160px] truncate" title={nfe.contato?.nome}>{nfe.contato?.nome || '-'}</td>
                                                             <td className="p-3 font-mono text-[10px] text-slate-400">{formatDoc(nfe.contato?.numeroDocumento)}</td>
                                                             <td className="p-3 font-mono text-xs text-slate-400">{formatDate(nfe.dataEmissao)}</td>
+                                                            <td className="p-3 text-center">
+                                                                <span className="bg-slate-100 text-slate-600 text-[9px] font-black px-2 py-1 rounded-full" title={nfe.itens?.length ? nfe.itens.map((i: any) => i.codigo || i.produto?.codigo).join(', ') : ''}>
+                                                                    {nfe.itensCount || nfe.itens?.length || nfeItemsCache[nfe.id]?.length || 0}
+                                                                </span>
+                                                            </td>
                                                             <td className="p-3 font-mono text-xs text-slate-600 font-bold">
                                                                 {nfe.numeroLoja || '-'}
                                                             </td>
@@ -4077,6 +4155,33 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                                 <p className="text-[9px] text-slate-500">CPF/CNPJ: {formatDoc(nfe.contato?.numeroDocumento)}</p>
                                                                                 {orderInfo?.customer_email && <p className="text-[9px] text-slate-400">{orderInfo.customer_email}</p>}
                                                                                 {orderInfo?.customer_tel && <p className="text-[9px] text-slate-400">{orderInfo.customer_tel}</p>}
+                                                                            </div>
+
+                                                                            {/* Resumo Financeiro (Enriquecido) */}
+                                                                            <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm">
+                                                                                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-1"><CreditCard size={10} /> Resumo Financeiro</p>
+                                                                                {nfe.valorLiquido !== undefined ? (
+                                                                                    <div className="space-y-1">
+                                                                                        <div className="flex justify-between text-[10px]">
+                                                                                            <span className="text-slate-500">Valor Bruto:</span>
+                                                                                            <span className="font-bold text-slate-700">{nfe.valorTotal?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                                                                                        </div>
+                                                                                        <div className="flex justify-between text-[10px]">
+                                                                                            <span className="text-slate-500">Taxas:</span>
+                                                                                            <span className="font-bold text-red-500">-{nfe.taxas?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                                                                                        </div>
+                                                                                        <div className="flex justify-between text-[10px]">
+                                                                                            <span className="text-slate-500">Frete:</span>
+                                                                                            <span className="font-bold text-red-500">-{nfe.frete?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                                                                                        </div>
+                                                                                        <div className="pt-1 border-t border-slate-100 flex justify-between text-[10px]">
+                                                                                            <span className="font-black text-slate-800 uppercase">Líquido:</span>
+                                                                                            <span className="font-black text-emerald-600">{nfe.valorLiquido?.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <p className="text-[10px] text-slate-300 italic">Clique em 'Enriquecer' para ver taxas e lucro.</p>
+                                                                                )}
                                                                             </div>
 
                                                                             {/* Endereço de entrega (se cacheado do pedido) */}

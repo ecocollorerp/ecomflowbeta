@@ -407,6 +407,7 @@ export const PacotesProntosPage: React.FC<PacotesProntosPageProps> = ({ addToast
                             onDeletar={handleDeletarPacote}
                             onMoverPacote={handleMoverPacote}
                             onMarcarExpedido={handleMarcarExpedido}
+                            addToast={addToast}
                         />
                     )}
 
