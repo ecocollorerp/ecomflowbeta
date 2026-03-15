@@ -1,35 +1,36 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { GeneralSettings, OrderItem, BlingInvoice, BlingProduct, BlingSettings, BlingScopeSettings, StockItem, SkuLink, ZplIncludeMode } from '../types';
-import { fetchBlingOrders, fetchBlingInvoices, fetchEtiquetaZplForPedido, fetchEtiquetasLote, fetchBlingProducts, executeBlingTokenExchange, executeTokenRefresh, syncBlingOrders, syncBlingInvoices, fetchNfeSaida, fetchNfeDetalhe, fetchPedidoVendaDetalhe, atualizarPedidoVenda, enviarNfe, fetchNfeEtiquetaZpl, fetchNfePdf, fetchLogisticaEtiquetas, enrichNfeSaida, atualizarNfe } from '../lib/blingApi';
+import { fetchBlingOrders, fetchBlingInvoices, fetchEtiquetaZplForPedido, fetchEtiquetasLote, fetchBlingProducts, executeBlingTokenExchange, executeTokenRefresh, syncBlingOrders, syncBlingInvoices, fetchNfeSaida, fetchNfeDetalhe, fetchPedidoVendaDetalhe, atualizarPedidoVenda, enviarNfe, fetchNfeEtiquetaZpl, fetchNfePdf, fetchLogisticaEtiquetas, enrichNfeSaida, atualizarNfe, searchNfeByOrder, fetchObjetosPostagem } from '../lib/blingApi';
 import type { NfeSaida } from '../lib/blingApi';
 import { addPendingZplItem } from '../utils/pendingZpl';
 import { BlingSync } from '../components/BlingSync';
 // NFeManager integrado diretamente no BlingPage
-import { Cloud, Zap, Link as LinkIcon, Settings, Loader2, CheckCircle, Info, FileText, ShoppingCart, Download, Printer, Lock, Package, Search, Save, Eye, EyeOff, X, AlertTriangle, RefreshCw, ToggleLeft, ToggleRight, FileOutput, ExternalLink, Filter, HelpCircle, ChevronDown, ChevronRight, Copy, TrendingDown, ShoppingBag, CheckSquare, Square, Tag, Send, History, Clock, User, MapPin, CreditCard, XCircle, Sparkles } from 'lucide-react';
+import { Cloud, Zap, Link as LinkIcon, Settings, Loader2, CheckCircle, Info, FileText, ShoppingCart, Download, Printer, Lock, Package, Search, Save, Eye, EyeOff, X, AlertTriangle, RefreshCw, ToggleLeft, ToggleRight, FileOutput, ExternalLink, Filter, HelpCircle, ChevronDown, ChevronRight, ChevronLeft, Copy, TrendingDown, ShoppingBag, CheckSquare, Square, Tag, Send, History, Clock, User, MapPin, CreditCard, XCircle, Sparkles, Files } from 'lucide-react';
 
 // Transforma pedido do endpoint de sync para o formato OrderItem do ERP
 const transformSyncedOrder = (o: any): OrderItem => ({
     id: o.id || `sync-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-    orderId: o.orderId || '',           // = numeroLoja (pedido da loja virtual/marketplace)
+    orderId: o.orderId || o.numeroPedidoLoja || '',           // = numeroLoja (pedido da loja virtual/marketplace)
     blingId: o.blingId || '',           // = ID interno do Bling
-    blingNumero: o.blingNumero || '',   // = número do pedido no Bling
+    blingNumero: o.blingNumero || o.numero || '',   // = número do pedido no Bling
     tracking: o.rastreamento || o.tracking || '', // código de rastreio do transporte
     sku: o.sku || '',
-    qty_original: Number(o.quantity || 1),
+    qty_original: Number(o.quantity || o.quantidade || 1),
     multiplicador: 1,
-    qty_final: Number(o.quantity || 1),
+    qty_final: Number(o.quantity || o.quantidade || 1),
     color: '',
     canal: (o.canal || 'SITE') as any,
+    idLojaVirtual: o.idLojaVirtual || o.idLoja || '',
     data: o.data || new Date().toISOString().split('T')[0],
     status: 'NORMAL',
-    customer_name: o.customer_name || 'Não informado',
-    customer_cpf_cnpj: o.customer_cpf_cnpj || '',
-    price_gross: Number(o.unit_price || 0),
-    price_total: Number(o.total || 0),
+    customer_name: o.customer_name || o.cliente?.nome || 'Não informado',
+    customer_cpf_cnpj: o.customer_cpf_cnpj || o.cliente?.numeroDocumento || '',
+    price_gross: Number(o.unit_price || o.valorUnitario || 0),
+    price_total: Number(o.total || o.valorTotal || 0),
     platform_fees: 0,
     shipping_fee: 0,
     shipping_paid_by_customer: 0,
-    price_net: Number(o.unit_price || 0),
+    price_net: Number(o.unit_price || o.valorUnitario || 0),
 });
 
 interface BlingPageProps {
@@ -275,7 +276,27 @@ const BlingConfigModal: React.FC<{
         // Ensure no trailing slash for the redirect URI construction
         const redirectUri = currentOrigin;
 
-        const url = `https://www.bling.com.br/Api/v3/oauth/authorize?response_type=code&client_id=${clientId}&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+        // Mapeia os escopos booleanos para as strings da API v3 do Bling
+        const getBlingScopeString = (s: BlingScopeSettings): string => {
+            const scopes: string[] = [];
+            // Mapeamento direto para v3
+            if (s.pedidosVenda || s.importarPedidos) scopes.push('pedidos.vendas');
+            if (s.produtos || s.importarProdutos) scopes.push('produtos');
+            if (s.contatos) scopes.push('contatos');
+            if (s.estoque) scopes.push('estoque');
+            if (s.nfe || s.importarNotasFiscais) scopes.push('nfe');
+            if (s.logistica || s.gerarEtiquetas) scopes.push('logisticas');
+            if (s.financeiro) scopes.push('financeiro');
+            if (s.webhooks) scopes.push('webhooks');
+            
+            // Fallback se nada estiver marcado (evita erro de privilégios)
+            if (scopes.length === 0) return 'pedidos.vendas produtos nfe logisticas contatos estoque financeiro';
+            
+            return scopes.join(' ');
+        };
+
+        const scopeString = getBlingScopeString(scope);
+        const url = `https://www.bling.com.br/Api/v3/oauth/authorize?response_type=code&client_id=${clientId}&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${encodeURIComponent(scopeString)}`;
 
         // Open in Popup
         const width = 600;
@@ -968,11 +989,13 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     const [vendasStartDate, setVendasStartDate] = useState(() => localStorage.getItem('vendasStartDate') || getSevenDaysAgo());
     const [vendasEndDate, setVendasEndDate] = useState(() => localStorage.getItem('vendasEndDate') || new Date().toISOString().split('T')[0]);
     const [vendasSituacao, setVendasSituacao] = useState<string>(() => localStorage.getItem('vendasSituacao') || '6');
-    const [vendasCanalFilter, setVendasCanalFilter] = useState<'TODOS' | 'ML' | 'SHOPEE' | 'SITE'>(() => (localStorage.getItem('vendasCanalFilter') as any) || 'TODOS');
+    const [vendasCanalFilter, setVendasCanalFilter] = useState<string>(() => localStorage.getItem('vendasCanalFilter') || 'TODOS');
     const [vendasSearch, setVendasSearch] = useState('');
     const [selectedVendasIds, setSelectedVendasIds] = useState<Set<string>>(new Set());
     const [isGeneratingBatchZpl, setIsGeneratingBatchZpl] = useState(false);
     const [expandedVendasIds, setExpandedVendasIds] = useState<Set<string>>(new Set());
+    const [vendasPage, setVendasPage] = useState(1);
+    const [vendasHasMore, setVendasHasMore] = useState(true);
 
     // ── Estado da aba Notas Fiscais (multi-select ZPL) ───────────────────────
     const [nfeCanalFilter, setNfeCanalFilter] = useState<string>('TODOS');
@@ -991,6 +1014,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     const [isPullingEtiquetas, setIsPullingEtiquetas] = useState(false);
     // Canais de venda do Bling — carregados uma vez para detecção dinâmica de canal
     const [blingCanais, setBlingCanais] = useState<{ id: number; descricao: string; tipo: string }[]>([]);
+    const [blingCanaisDict, setBlingCanaisDict] = useState<Record<string, string>>({});
     // Modal NF-e — escolha entre Bling ou ERP próprio
     const [showGerarNFeModal, setShowGerarNFeModal] = useState(false);
     const [showBatchGerarNFeModal, setShowBatchGerarNFeModal] = useState(false);
@@ -1005,20 +1029,21 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         return [];
     });
     const [isLoadingNfeSaida, setIsLoadingNfeSaida] = useState(false);
-    const [nfeSaidaFiltro, setNfeSaidaFiltro] = useState<'todas' | 'pendentes' | 'autorizadas_sem_danfe' | 'emitida_danfe'>('todas');
+    const [nfeSaidaFiltro, setNfeSaidaFiltro] = useState<'todas' | 'pendentes' | 'autorizadas' | 'emitidas' | 'canceladas' | 'rejeitadas' | 'aguardando_recibo' | 'denegadas' | 'encerradas' | 'autorizadas_sem_danfe' | 'emitida_danfe'>('todas');
     const [nfeSaidaSearch, setNfeSaidaSearch] = useState('');
     const [selectedNfeSaidaIds, setSelectedNfeSaidaIds] = useState<Set<number>>(new Set());
     const [emitindoNfeId, setEmitindoNfeId] = useState<number | null>(null);
     const [isBatchEmitindo, setIsBatchEmitindo] = useState(false);
+    const [nfePage, setNfePage] = useState(1);
+    const [nfeHasMore, setNfeHasMore] = useState(true);
     // Filtro de loja/canal e tipo de perfil na aba NF-e
     const [nfeLojaFilter, setNfeLojaFilter] = useState<string>('TODOS');
     const [nfeTipoFilter, setNfeTipoFilter] = useState<string>('TODOS');
     const [nfeBatchErrors, setNfeBatchErrors] = useState<Record<number, string>>({});
     
     // Filtros de Importação do Marketplace
-    const [importCanalFilter, setImportCanalFilter] = useState<'TODOS' | 'ML' | 'SHOPEE' | 'SITE'>(() => (localStorage.getItem('importCanalFilter') as any) || 'TODOS');
-    const [importSearch, setImportSearch] = useState('');
     const [showOnlyWithLink, setShowOnlyWithLink] = useState(false);
+    const [showOnlyWithoutLink, setShowOnlyWithoutLink] = useState(false);
     
     const [nfeCpfCnpjFilter, setNfeCpfCnpjFilter] = useState('');
     const [nfePedidoLojaFilter, setNfePedidoLojaFilter] = useState('');
@@ -1050,7 +1075,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     });
     const [showNfeSaveConfirm, setShowNfeSaveConfirm] = useState(false);
     // Filtro de canal na aba NF-e de saída
-    const [nfeSaidaCanalFilter, setNfeSaidaCanalFilter] = useState<'TODOS' | 'ML' | 'SHOPEE' | 'SITE'>('TODOS');
+    const [nfeSaidaCanalFilter, setNfeSaidaCanalFilter] = useState<string>(() => localStorage.getItem('nfeSaidaCanalFilter') || 'TODOS');
     // Modal de vínculo catálogo Bling → ERP
     const [catalogLinkModal, setCatalogLinkModal] = useState<{ blingCode: string; blingName: string } | null>(null);
     const [catalogLinkTarget, setCatalogLinkTarget] = useState<string>('');
@@ -1080,6 +1105,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     const [importQuantityLimit, setImportQuantityLimit] = useState(50);
     const [isImportingToERP, setIsImportingToERP] = useState(false);
 
+
     // Filters State
     const [filters, setFilters] = useState(() => {
         try {
@@ -1096,6 +1122,156 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     const [searchTerm, setSearchTerm] = useState('');
     const [filterNfeStatus, setFilterNfeStatus] = useState<'TODOS' | 'EMITIDA' | 'PENDENTE' | 'SEM_NOTA' | 'AUTORIZADA_SEM_DANFE'>('TODOS');
     const [enrichedOrders, setEnrichedOrders] = useState<EnrichedBlingOrder[]>([]);
+    
+    // Mapeamentos ERP (movidos para baixo das declarações de estado)
+    const erpImportedBlingIds = useMemo(() => {
+        const s = new Set<string>();
+        syncedOrders.forEach(o => {
+            if (o.blingId) s.add(String(o.blingId));
+            if (o.orderId) s.add(String(o.orderId));
+            if (o.blingNumero) s.add(String(o.blingNumero));
+        });
+        return s;
+    }, [syncedOrders]);
+
+    const vendasInvoiceMap = useMemo(() => {
+        const map = new Map<string, BlingInvoice>();
+        enrichedOrders.forEach(o => {
+            if (o.invoice) {
+                if (o.blingId) map.set(o.blingId, o.invoice);
+                if (o.orderId) map.set(o.orderId, o.invoice);
+            }
+        });
+        return map;
+    }, [enrichedOrders]);
+
+    // Filter logic for Vendas (Importação)
+    const filteredVendasOrders = useMemo(() => {
+        let list = [...vendasDirectOrders];
+
+        // Search filter
+        if (vendasSearch) {
+            const lowSearch = vendasSearch.toLowerCase();
+            list = list.filter(o => 
+                (o.customer_name || '').toLowerCase().includes(lowSearch) ||
+                (o.orderId || '').toLowerCase().includes(lowSearch) ||
+                (o.blingId || '').toString().includes(lowSearch) ||
+                (o.loja || '').toLowerCase().includes(lowSearch) ||
+                (o.venda_origem || '').toLowerCase().includes(lowSearch)
+            );
+        }
+
+        // Channel/Store ID filter
+        if (vendasCanalFilter !== 'TODOS') {
+            list = list.filter(o => {
+                const orderStoreId = String(o.idLojaVirtual || o.id_loja_virtual || o.loja?.id || o.loja || '').toLowerCase();
+                const canalRaw = String(o.canal || o.venda_origem || o.loja?.descricao || '').toLowerCase();
+                const filter = vendasCanalFilter.toLowerCase();
+                
+                if (filter === 'ml') return canalRaw.includes('mercado') || orderStoreId.includes('mercado');
+                if (filter === 'shopee') return canalRaw.includes('shopee') || orderStoreId.includes('shopee');
+                if (filter === 'site') return canalRaw.includes('site') || (!o.canal && (!orderStoreId || orderStoreId === '0'));
+                
+                // Filtro dinâmico por ID ou Nome
+                return orderStoreId === filter || canalRaw.includes(filter) || String(o.idLojaVirtual) === filter;
+            });
+        }
+
+        if (showOnlyWithLink) {
+            list = list.filter(o => erpImportedBlingIds.has(String(o.blingId || '')) || erpImportedBlingIds.has(String(o.orderId || '')));
+        }
+        
+        if (showOnlyWithoutLink) {
+            list = list.filter(o => !erpImportedBlingIds.has(String(o.blingId || '')) && !erpImportedBlingIds.has(String(o.orderId || '')));
+        }
+
+        return list;
+    }, [vendasDirectOrders, vendasSearch, vendasCanalFilter, showOnlyWithLink, showOnlyWithoutLink, erpImportedBlingIds]);
+
+    // Filter logic for NF-e de Saída
+    const filteredNfeSaida = useMemo(() => {
+        let list = [...nfeSaida];
+
+        // Search filter
+        if (nfeSaidaSearch) {
+            const lowSearch = nfeSaidaSearch.toLowerCase();
+            list = list.filter(n => 
+                (n.contato?.nome || '').toLowerCase().includes(lowSearch) ||
+                (n.numero || '').toString().includes(lowSearch) ||
+                (n.numeroVenda || '').toString().includes(lowSearch) ||
+                (n.rastreamento || '').toLowerCase().includes(lowSearch) ||
+                (n.loja || '').toLowerCase().includes(lowSearch)
+            );
+        }
+
+        if (nfeSaidaFiltro !== 'todas') {
+            list = list.filter(n => {
+                const situacao = n.situacao;
+                if (nfeSaidaFiltro === 'pendentes') return situacao === 1;
+                if (nfeSaidaFiltro === 'canceladas') return situacao === 2;
+                if (nfeSaidaFiltro === 'aguardando_recibo') return situacao === 3;
+                if (nfeSaidaFiltro === 'rejeitadas') return situacao === 4;
+                if (nfeSaidaFiltro === 'autorizadas') return situacao === 5 || situacao === 6 || situacao === 9;
+                if (nfeSaidaFiltro === 'emitidas') return situacao === 11;
+                if (nfeSaidaFiltro === 'denegadas') return situacao === 7;
+                if (nfeSaidaFiltro === 'encerradas') return situacao === 8;
+                if (nfeSaidaFiltro === 'autorizadas_sem_danfe') return (situacao === 5 || situacao === 6 || situacao === 9) && !n.rastreamento;
+                if (nfeSaidaFiltro === 'emitida_danfe') return (situacao === 5 || situacao === 6 || situacao === 9) && !!n.rastreamento;
+                return true;
+            });
+        }
+
+        // Loja/Canal filter (idLojaVirtual)
+        if (nfeSaidaCanalFilter !== 'TODOS') {
+            list = list.filter(n => {
+                const orderStoreId = String(n.idLojaVirtual || n.id_loja_virtual || n.loja?.id || n.loja || '').toLowerCase();
+                const canalRaw = String(n.canal || n.origem || n.loja?.descricao || '').toLowerCase();
+                const filter = nfeSaidaCanalFilter.toLowerCase();
+                
+                if (filter === 'ml') return canalRaw.includes('mercado') || orderStoreId.includes('mercado');
+                if (filter === 'shopee') return canalRaw.includes('shopee') || orderStoreId.includes('shopee');
+                if (filter === 'site') return canalRaw.includes('site') || (!n.canal && (!orderStoreId || orderStoreId === '0' || orderStoreId === 'site'));
+                
+                return orderStoreId === filter || canalRaw.includes(filter) || String(n.idLojaVirtual) === filter;
+            });
+        }
+
+        // CPF/CNPJ filter
+        if (nfeCpfCnpjFilter) {
+            list = list.filter(n => (n.contato?.numeroDocumento || '').includes(nfeCpfCnpjFilter));
+        }
+
+        // Filtro por loja específica (retrocompatibilidade)
+        if (nfeLojaFilter !== 'TODOS') {
+            list = list.filter(n => {
+                const loja = (n.loja || '').toLowerCase();
+                const filter = nfeLojaFilter.toLowerCase();
+                return loja.includes(filter);
+            });
+        }
+
+        // Perfil/Filtros Avançados
+        if (nfeTipoFilter !== 'TODOS') list = list.filter(n => (n.contato?.numeroDocumento || '') === nfeTipoFilter);
+        if (nfePedidoLojaFilter.trim()) list = list.filter(n => (n.numeroLoja || '').toLowerCase().includes(nfePedidoLojaFilter.trim().toLowerCase()));
+        if (nfeRastreioFilter.trim()) list = list.filter(n => (n.rastreamento || '').toLowerCase().includes(nfeRastreioFilter.trim().toLowerCase()));
+        if (nfeChaveFilter.trim()) list = list.filter(n => (n.chaveAcesso || '').toLowerCase().includes(nfeChaveFilter.trim().toLowerCase()));
+        if (nfeTransportadorFilter.trim()) list = list.filter(n => String(n.idTransportador || '').toLowerCase().includes(nfeTransportadorFilter.trim().toLowerCase()));
+        if (nfeSerieFilter.trim()) list = list.filter(n => (n.serie || '').toLowerCase().includes(nfeSerieFilter.trim().toLowerCase()));
+        
+        if (nfeItemSearch.trim()) {
+            const term = nfeItemSearch.trim().toLowerCase();
+            list = list.filter(n => {
+                const items = n.itens || nfeItemsCache[n.id] || [];
+                return items.some((it: any) => {
+                    const sku = (it.codigo || it.produto?.codigo || it.sku || '').toLowerCase();
+                    const desc = (it.descricao || it.produto?.descricao || '').toLowerCase();
+                    return sku.includes(term) || desc.includes(term);
+                });
+            });
+        }
+
+        return list;
+    }, [nfeSaida, nfeSaidaSearch, nfeSaidaFiltro, nfeSaidaCanalFilter, nfeCpfCnpjFilter, nfeLojaFilter, nfeTipoFilter, nfePedidoLojaFilter, nfeRastreioFilter, nfeChaveFilter, nfeTransportadorFilter, nfeSerieFilter, nfeItemSearch, nfeItemsCache]);
     const [products, setProducts] = useState<BlingProduct[]>([]);
     const [productSearch, setProductSearch] = useState('');
 
@@ -1282,8 +1458,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 });
                 if (!resp.ok) return;
                 const data = await resp.json();
-                // Suporta ambos formatos: { canais: [...] } (endpoint dedicado) ou { data: [...] } (proxy Bling)
+                
+                // Pega a lista original
                 const list = Array.isArray(data?.canais) ? data.canais : (Array.isArray(data?.data) ? data.data : []);
+                
                 // Normaliza campos usando 'descricao' ou 'nome' e 'tipo' ou 'sigla'
                 const normalized = list.map((c: any) => ({
                     id: Number(c.id || 0),
@@ -1291,7 +1469,17 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     tipo: String(c.tipo || c.sigla || '').toLowerCase(),
                 }));
                 setBlingCanais(normalized);
-                console.log('[Bling] canais-venda carregados:', normalized.length, normalized.map((c: any) => `${c.id}:${c.descricao}(${c.tipo})`).join(', '));
+
+                // Carrega o dicionário id -> nome (vindo do backend ou montado aqui como fallback)
+                if (data.dicionario) {
+                    setBlingCanaisDict(data.dicionario);
+                } else {
+                    const dict: Record<string, string> = {};
+                    normalized.forEach(c => dict[String(c.id)] = c.descricao);
+                    setBlingCanaisDict(dict);
+                }
+
+                console.log('[Bling] canais-venda carregados:', normalized.length);
             } catch (e) {
                 console.warn('[Bling] Não foi possível carregar canais-venda:', e);
             }
@@ -1657,6 +1845,77 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         }
     };
 
+    /**
+     * Gera NF-e em lote para pedidos do Marketplace selecionados.
+     */
+    const handleBatchGerarNfe = async (emitir = false) => {
+        const selectedIds = Array.from(selectedVendasIds);
+        if (selectedIds.length === 0) {
+            addToast('Nenhum pedido selecionado.', 'warning');
+            return;
+        }
+
+        if (!confirm(`Deseja gerar NF-e para ${selectedIds.length} pedido(s)?${emitir ? ' As notas também serão enviadas para o SEFAZ.' : ''}`)) return;
+
+        setIsBatchEmitindo(true);
+        setShowBatchGerarNFeModal(false);
+        setNfeBatchErrors({});
+        
+        let sucessos = 0;
+        let falhas = 0;
+
+        try {
+            for (let i = 0; i < selectedIds.length; i++) {
+                const orderId = selectedIds[i];
+                // Busca na lista filtrada ou original para garantir que temos os dados
+                const order = (vendasDirectOrders as any[]).find(o => String(o.orderId || o.id || o.blingId) === String(orderId));
+                
+                if (!order) {
+                    console.warn(`[handleBatchGerarNfe] Pedido ${orderId} não encontrado na lista local.`);
+                    falhas++;
+                    continue;
+                }
+
+                setGerandoNFeId(String(orderId));
+                try {
+                    // Aqui forçamos mode='bling' pois é o recomendado no modal de lote
+                    await handleGerarNFeDoPedido(String(orderId), order, emitir, 'bling');
+                    sucessos++;
+                } catch (err: any) {
+                    falhas++;
+                    setNfeBatchErrors(prev => ({ ...prev, [Number(orderId)]: err.message }));
+                }
+
+                // Delay entre criações para não estourar rate limit
+                if (i < selectedIds.length - 1) await new Promise(r => setTimeout(r, 600));
+            }
+
+            addToast(`Processamento de lote concluído: ${sucessos} sucesso(s), ${falhas} falha(s).`, sucessos > 0 ? 'success' : 'error');
+            await handleFetchInvoicesMetadata(); // Atualiza status das notas na aba vendas
+        } catch (err: any) {
+            addToast(`Erro crítico no lote: ${err.message}`, 'error');
+        } finally {
+            setIsBatchEmitindo(false);
+            setGerandoNFeId(null);
+            setSelectedVendasIds(new Set());
+        }
+    };
+
+    const handleFetchInvoicesMetadata = async () => {
+        try {
+            const token = await getValidToken();
+            if (!token) return;
+            const invoicesResp = await syncBlingInvoices(token, filters.startDate, filters.endDate, 'TODOS');
+            const list = invoicesResp.invoices || invoicesResp.data || [];
+            const invoiceMap = new Map<string, BlingInvoice>(list.map((inv: any) => [String(inv.idPedidoVenda!), inv]));
+            
+            setEnrichedOrders(prev => prev.map(o => ({
+                ...o,
+                invoice: invoiceMap.get(String(o.blingId || o.orderId)) || o.invoice
+            })));
+        } catch (e) { console.warn('Erro ao atualizar metadata das notas:', e); }
+    };
+
     const handleGenerateZpl = async (invoice: BlingInvoice) => {
         if (!invoice.idPedidoVenda) return addToast('Nota fiscal sem pedido de venda associado.', 'error');
         setGeneratingZplId(invoice.id);
@@ -1682,21 +1941,43 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         } catch { /* ignore */ }
     };
 
-    const handleFetchNfeSaida = async () => {
+    const handleFetchNfeSaida = async (targetPage?: number, status?: number) => {
         setIsLoadingNfeSaida(true);
+        const pageToFetch = targetPage !== undefined ? targetPage : nfePage;
         try {
             const token = await getValidToken();
             if (!token) throw new Error('Token inválido.');
-            // Busca TODAS as notas (sem filtro de situação na API), filtragem é local
-            const notas = await fetchNfeSaida(token, {
+            
+            const situacaoBusca = status !== undefined ? String(status) : (nfeSaidaFiltro === 'pendentes' ? '1' : '');
+            
+            const isDynamicStore = !['TODOS', 'ML', 'SHOPEE', 'SITE'].includes(nfeSaidaCanalFilter);
+            
+            const qs = new URLSearchParams({
                 dataInicial: filters.startDate,
                 dataFinal: filters.endDate,
+                pagina: String(pageToFetch),
+                ...(situacaoBusca ? { situacao: situacaoBusca } : {}),
+                ...(isDynamicStore ? { idLoja: nfeSaidaCanalFilter } : {}),
+            }).toString();
+            
+            const resp = await fetch(`/api/bling/nfe/listar-saida?${qs}`, {
+                headers: { Authorization: token },
             });
+            const result = await resp.json();
+            
+            if (!result.success) throw new Error(result.error || 'Erro ao buscar notas');
+            
+            const notas = result.notas || result.data || [];
+            setNfeHasMore(!!result.hasMore);
+            
             // Não salva automaticamente — exibe modal de confirmação
             setPendingNfeSaida(notas);
             setShowNfeSaveConfirm(true);
             setSelectedNfeSaidaIds(new Set());
-            addToast(`${notas.length} nota(s) encontrada(s). Confirme se deseja salvar.`, notas.length > 0 ? 'info' : 'info');
+            if (targetPage !== undefined) setNfePage(targetPage);
+            if (status === 1) setNfeSaidaFiltro('pendentes');
+            
+            addToast(`${notas.length} nota(s) encontrada(s) na página ${pageToFetch}.`, notas.length > 0 ? 'info' : 'info');
         } catch (err: any) {
             addToast(`Erro ao buscar NF-e de saída: ${err.message}`, 'error');
         } finally {
@@ -1793,6 +2074,68 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         }
     };
 
+    const handleDownloadDanfe = async (nfe: NfeSaida, type: 'normal' | 'simplified' | 'combined' = 'normal') => {
+        try {
+            const token = await getValidToken();
+            if (!token) throw new Error('Token inválido.');
+
+            let nfeId = nfe.id;
+            let numeroPedidoLoja = nfe.numeroLoja || nfe.numeroPedidoLoja || nfe.numeroVenda;
+
+            // Se for simplificado ou combinado, precisamos garantir que temos o numeroPedidoLoja
+            if ((type === 'simplified' || type === 'combined') && !numeroPedidoLoja) {
+                const detalhe = await fetchNfeDetalhe(token, nfe.id);
+                const d = detalhe?.data || detalhe;
+                numeroPedidoLoja = d.numeroPedidoLoja || d.pedido?.numeroPedidoLoja || d.intermediador?.numeroPedido;
+            }
+
+            const downloadUrl = `/api/bling/download/pdf/${nfeId}?type=${type}${numeroPedidoLoja ? `&numeroPedidoLoja=${encodeURIComponent(numeroPedidoLoja)}` : ''}`;
+            
+            const label = type === 'simplified' ? 'Simplificado' : type === 'combined' ? 'DANFE + Etiqueta' : 'Normal';
+            addToast(`Iniciando download ${label}...`, 'info');
+
+            const resp = await fetch(downloadUrl, {
+                headers: { Authorization: token.startsWith('Bearer ') ? token : `Bearer ${token}` }
+            });
+
+            if (!resp.ok) {
+                const data = await resp.json().catch(() => ({}));
+                throw new Error(data.error || `Erro ${resp.status} ao baixar PDF`);
+            }
+
+            const contentType = resp.headers.get('Content-Type') || '';
+            if (contentType.includes('application/json')) {
+                const data = await resp.json();
+                if (data.redirect && data.url) {
+                    console.log('🔗 [DownloadDanfe] Link direto retornado pelo servidor:', data.url);
+                    window.open(data.url, '_blank');
+                    addToast('Abrindo DANFE em nova aba (download direto).', 'success');
+                    return;
+                }
+            }
+
+            // Se o conteúdo for retornado como stream/blob
+            const blob = await resp.blob();
+            
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const prefix = type === 'simplified' ? 'SIMPLIFICADA' : type === 'combined' ? 'COMBINADA' : 'DANFE';
+            a.download = `${prefix}_${nfe.numero || nfe.id}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+            
+            addToast('Download concluído!', 'success');
+        } catch (err: any) {
+            console.error('[DownloadDanfe] Erro:', err);
+            addToast(`Erro ao baixar DANFE: ${err.message}`, 'error');
+            // Último recurso: Link Danfe se for normal
+            if (type === 'normal' && nfe.linkDanfe) window.open(nfe.linkDanfe, '_blank');
+        }
+    };
+
     const handleAbrirDanfe = async (nfe: NfeSaida) => {
         try {
             const token = await getValidToken();
@@ -1853,7 +2196,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             
             // 2. Tenta via NF-e se falhou ou não for marketplace
             if (!zpl) {
-                zpl = await fetchNfeEtiquetaZpl(token, nfe.id);
+                zpl = await fetchNfeEtiquetaZpl(token, nfe.id, nfe.canal);
             }
 
             if (zpl) {
@@ -1921,76 +2264,6 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         }
     };
 
-    // ── Emitir NF-e em lote (envia todas selecionadas para SEFAZ) ───────────
-    const handleBatchEmitirNfe = async () => {
-        const pendentes = nfeSaida.filter(n => selectedNfeSaidaIds.has(n.id) && n.situacao === 1);
-        if (pendentes.length === 0) {
-            addToast('Nenhuma NF-e pendente selecionada para emissão.', 'warning');
-            return;
-        }
-        setIsBatchEmitindo(true);
-        setLabelDownloadProgress({ current: 0, total: pendentes.length });
-        setNfeBatchErrors({});
-        let ok = 0, fail = 0;
-        const loteId = `EMISSAO-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
-        const successfulNfes: { nfeNumero: string, pedidoVendaId: string }[] = [];
-        const orderIdsToUpdate: string[] = [];
-
-        for (const nfe of pendentes) {
-            try {
-                const token = await getValidToken();
-                if (!token) throw new Error('Token inválido ou expirado.');
-                await enviarNfe(token, nfe.id);
-                ok++;
-                successfulNfes.push({ nfeNumero: nfe.numero || String(nfe.id), pedidoVendaId: nfe.numeroVenda || '' });
-                if (nfe.numeroVenda) orderIdsToUpdate.push(nfe.numeroVenda);
-
-                setNfeSaida(prev => prev.map(n => n.id === nfe.id ? { ...n, situacao: 3, situacaoDescr: 'Aguardando Recibo' } : n));
-            } catch (err: any) {
-                fail++;
-                setNfeBatchErrors(prev => ({ ...prev, [nfe.id]: err.message || 'Erro desconhecido' }));
-            } finally {
-                setLabelDownloadProgress(prev => prev ? { ...prev, current: prev.current + 1 } : null);
-            }
-            // delay entre emissões para rate limit
-            await new Promise(r => setTimeout(r, 600));
-        }
-
-        if (ok > 0) {
-            // Persistir lote localmente para o DANFEManagerPage
-            try {
-                const cachedLotes = JSON.parse(localStorage.getItem('nfe_lotes_diarios') || '[]');
-                const newLote = {
-                    id: loteId,
-                    data: new Date().toISOString(),
-                    total: ok + fail,
-                    ok,
-                    fail,
-                    nfes: successfulNfes
-                };
-                localStorage.setItem('nfe_lotes_diarios', JSON.stringify([newLote, ...cachedLotes].slice(0, 50)));
-            } catch (e) {
-                console.error('Erro ao salvar lote local:', e);
-            }
-
-            // Atualizar banco de dados
-            if (onUpdateOrdersBatch && orderIdsToUpdate.length > 0) {
-                await onUpdateOrdersBatch(orderIdsToUpdate, loteId);
-            }
-        }
-
-        persistNfeSaida(nfeSaida);
-        // Não limpamos a seleção se houver falhas, para permitir reprocessamento fácil
-        if (fail === 0) setSelectedNfeSaidaIds(new Set());
-        setIsBatchEmitindo(false);
-        setLabelDownloadProgress(null);
-        
-        if (fail > 0) {
-            addToast(`${ok} NF-e sucesso, ${fail} falha(s). Verifique os erros na tabela.`, 'error');
-        } else {
-            addToast(`${ok} NF-e enviada(s) para SEFAZ com sucesso!`, 'success');
-        }
-    };
 
     const handleClearNfeError = (id: number) => {
         setNfeBatchErrors(prev => {
@@ -2053,136 +2326,21 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         }
     };
 
-    // ── NF-e — filtro local ─────────────────────────────────────────────────
-    const filteredNfeSaida = useMemo(() => {
-        // Detecta canal de uma NF-e com base no campo loja
-        const getNfeCanal = (nfe: NfeSaida): 'ML' | 'SHOPEE' | 'SITE' => {
-            // 1. Tentar mapeamento dinâmico via ID da loja carregado do Bling
-            if (nfe.lojaId && blingCanais.length > 0) {
-                const c = blingCanais.find(bc => bc.id === nfe.lojaId);
-                if (c) {
-                    if (c.tipo.includes('mercadolivre') || c.tipo.includes('mercado_livre')) return 'ML';
-                    if (c.tipo.includes('shopee')) return 'SHOPEE';
-                }
-            }
-
-            // 2. Fallback para string matching (legado/segurança)
-            const l = (nfe.loja || '').toUpperCase();
-            const nv = (nfe.numeroVenda || '').toUpperCase();
-            const nloja = (nfe.numeroLoja || '').toUpperCase();
-
-            if (l.includes('MERCADO') || l.includes('LIVRE') || l.includes('MLB') || l.startsWith('ML') || nv.startsWith('MLB') || nloja.startsWith('MLB')) return 'ML';
-            if (l.includes('SHOPEE') || nv.includes('SHP') || nv.startsWith('21') || nv.startsWith('22') || nloja.includes('SHP')) return 'SHOPEE';
-            if (l.includes('MAGALU') || l.includes('MAGAZINE') || l.includes('MGL')) return 'SITE';
-            if (l.includes('SHEIN')) return 'SITE';
-            return 'SITE';
-        };
-
-        let result = nfeSaida;
-        // Filtro por situação
-        if (nfeSaidaFiltro === 'pendentes') {
-            result = result.filter(n => n.situacao === 1);
-        } else if (nfeSaidaFiltro === 'autorizadas_sem_danfe') {
-            result = result.filter(n => n.situacao === 5 && !n.linkDanfe);
-        } else if (nfeSaidaFiltro === 'emitida_danfe') {
-            result = result.filter(n => n.situacao === 6 || (n.situacao === 5 && !!n.linkDanfe));
-        }
-
-        // Filtro por canal (ML / Shopee / Site)
-        if (nfeSaidaCanalFilter !== 'TODOS') {
-            result = result.filter(n => (n.canal === nfeSaidaCanalFilter));
-        }
-
-        // Filtro por loja específica
-        if (nfeLojaFilter !== 'TODOS') {
-            result = result.filter(n => {
-                const loja = (n.loja || '').toLowerCase();
-                const filter = nfeLojaFilter.toLowerCase();
-                return loja.includes(filter);
-            });
-        }
-
-        // --- FILTROS AVANÇADOS ---
-
-        // Filtro por tipo/perfil (CNPJ do emitente se houver múltiplo)
-        if (nfeTipoFilter !== 'TODOS') {
-            result = result.filter(n => (n.contato?.numeroDocumento || '') === nfeTipoFilter);
-        }
-
-        // Filtro por CPF/CNPJ do destinatário
-        if (nfeCpfCnpjFilter.trim()) {
-            const term = nfeCpfCnpjFilter.trim().toLowerCase();
-            result = result.filter(n => (n.contato?.numeroDocumento || '').toLowerCase().includes(term));
-        }
-
-        // Filtro por Pedido na Loja
-        if (nfePedidoLojaFilter.trim()) {
-            const term = nfePedidoLojaFilter.trim().toLowerCase();
-            result = result.filter(n => (n.numeroLoja || '').toLowerCase().includes(term));
-        }
-
-        // Filtro por Rastreio
-        if (nfeRastreioFilter.trim()) {
-            const term = nfeRastreioFilter.trim().toLowerCase();
-            result = result.filter(n => (n.rastreamento || '').toLowerCase().includes(term));
-        }
-
-        // Filtro por Chave de Acesso
-        if (nfeChaveFilter.trim()) {
-            const term = nfeChaveFilter.trim().toLowerCase();
-            result = result.filter(n => (n.chaveAcesso || '').toLowerCase().includes(term));
-        }
-
-        // Filtro por ID Transportador
-        if (nfeTransportadorFilter.trim()) {
-            const term = nfeTransportadorFilter.trim().toLowerCase();
-            result = result.filter(n => String(n.idTransportador || '').toLowerCase().includes(term));
-        }
-
-        // Filtro por Série
-        if (nfeSerieFilter.trim()) {
-            const term = nfeSerieFilter.trim().toLowerCase();
-            result = result.filter(n => (n.serie || '').toLowerCase().includes(term));
-        }
-
-        // Filtro por Item (SKU ou Descrição - suporta itens enriquecidos ou em cache)
-        if (nfeItemSearch.trim()) {
-            const term = nfeItemSearch.trim().toLowerCase();
-            result = result.filter(n => {
-                const items = n.itens || nfeItemsCache[n.id] || [];
-                return items.some((it: any) => {
-                    const sku = (it.codigo || it.produto?.codigo || '').toLowerCase();
-                    const desc = (it.descricao || it.produto?.descricao || '').toLowerCase();
-                    return sku.includes(term) || desc.includes(term);
-                });
-            });
-        }
-
-        // Filtro por busca global
-        if (nfeSaidaSearch.trim()) {
-            const term = nfeSaidaSearch.trim().toLowerCase();
-            result = result.filter(n =>
-                (n.numero && n.numero.toLowerCase().includes(term)) ||
-                (n.contato?.nome && n.contato.nome.toLowerCase().includes(term)) ||
-                (n.chaveAcesso && n.chaveAcesso.includes(term)) ||
-                (n.numeroVenda && n.numeroVenda.toLowerCase().includes(term)) ||
-                (n.numeroLoja && n.numeroLoja.toLowerCase().includes(term))
-            );
-        }
-
-        return result;
-    }, [
-        nfeSaida, nfeSaidaFiltro, nfeSaidaSearch, nfeLojaFilter, nfeTipoFilter, 
-        nfeSaidaCanalFilter, nfeCpfCnpjFilter, nfePedidoLojaFilter, nfeRastreioFilter, 
-        nfeChaveFilter, nfeTransportadorFilter, nfeSerieFilter, nfeItemSearch, nfeItemsCache
-    ]);
+    // ── NF-e — filtros consolidados no topo ─────────────────────────────────────────────────
 
     // Contadores por situação
     const nfeCounts = useMemo(() => ({
         todas: nfeSaida.length,
         pendentes: nfeSaida.filter(n => n.situacao === 1).length,
-        autorizadas_sem_danfe: nfeSaida.filter(n => n.situacao === 5 && !n.linkDanfe).length,
-        emitida_danfe: nfeSaida.filter(n => n.situacao === 6 || (n.situacao === 5 && !!n.linkDanfe)).length,
+        canceladas: nfeSaida.filter(n => n.situacao === 2).length,
+        aguardando_recibo: nfeSaida.filter(n => n.situacao === 3).length,
+        rejeitadas: nfeSaida.filter(n => n.situacao === 4).length,
+        autorizadas: nfeSaida.filter(n => n.situacao === 5 || n.situacao === 6 || n.situacao === 9).length,
+        autorizadas_sem_danfe: nfeSaida.filter(n => (n.situacao === 5 || n.situacao === 6 || n.situacao === 9) && !n.rastreamento).length,
+        emitida_danfe: nfeSaida.filter(n => (n.situacao === 5 || n.situacao === 6 || n.situacao === 9) && !!n.rastreamento).length,
+        emitidas: nfeSaida.filter(n => n.situacao === 11).length,
+        denegadas: nfeSaida.filter(n => n.situacao === 7).length,
+        encerradas: nfeSaida.filter(n => n.situacao === 8).length,
     }), [nfeSaida]);
 
     // Lojas únicas extraídas das NF-e
@@ -2337,7 +2495,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     };
 
     // ── Helper interno: baixa DANFEs de uma lista de NF-es ───────────────────
-    const baixarDanfesLista = async (notasList: NfeSaida[], nomeArquivo: (i: number) => string) => {
+    const baixarDanfesLista = async (notasList: NfeSaida[], nomeArquivo: (i: number) => string, type: 'normal' | 'simplified' = 'normal') => {
         setIsDownloadingDanfe(true);
         setDanfeDownloadProgress({ current: 0, total: notasList.length });
         try {
@@ -2347,27 +2505,44 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             for (let i = 0; i < notasList.length; i++) {
                 const nfe = notasList[i];
                 setDanfeDownloadProgress({ current: i + 1, total: notasList.length });
-                let danfeUrl = "";
                 if (nfe.id) {
                     try {
-                        // NOVO: Chama a rota de download direto via PROXY ERP
-                        const resp = await fetch(`/api/bling/download/pdf/${nfe.id}`, {
+                        // NOVO: Chama a rota de download direto via PROXY ERP com suporte a type
+                        const params = new URLSearchParams();
+                        params.set('type', type);
+                        if (type === 'simplified' && nfe.numeroLoja) {
+                           params.set('numeroPedidoLoja', String(nfe.numeroLoja));
+                        }
+
+                        const resp = await fetch(`/api/bling/download/pdf/${nfe.id}?${params.toString()}`, {
                             headers: { Authorization: token }
                         });
                         
                         if (resp.ok) {
-                            const blob = await resp.blob();
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a');
-                            a.href = url;
-                            a.download = nomeArquivo(i);
-                            document.body.appendChild(a);
-                            a.click();
-                            document.body.removeChild(a);
-                            // NOVO: Abrir também em nova aba para garantir visibilidade
-                            window.open(url, '_blank');
-                            URL.revokeObjectURL(url);
-                            baixados++;
+                            const contentType = resp.headers.get('Content-Type') || '';
+                            
+                            // SE for JSON, significa um REDIRECT do Bling (usamos window.open)
+                            if (contentType.includes('application/json')) {
+                                const json = await resp.json();
+                                if (json.link) {
+                                    window.open(json.link, '_blank');
+                                    baixados++;
+                                } else {
+                                    throw new Error("Link de download não retornado.");
+                                }
+                            } else {
+                                // SE for PDF, baixa o blob normalmente
+                                const blob = await resp.blob();
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = nomeArquivo(i);
+                                document.body.appendChild(a);
+                                a.click();
+                                document.body.removeChild(a);
+                                URL.revokeObjectURL(url);
+                                baixados++;
+                            }
                         } else {
                             // Fallback para o link original se o proxy falhar
                             if (nfe.linkDanfe) window.open(nfe.linkDanfe, '_blank');
@@ -2375,7 +2550,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         }
                     } catch (err) {
                         console.error("Erro no download via proxy:", err);
-                        if (nfe.linkDanfe) window.open(nfe.linkDanfe, '_blank');
+                        if (type === 'normal' && nfe.linkDanfe) window.open(nfe.linkDanfe, '_blank');
                         baixados++;
                     }
                 }
@@ -2384,7 +2559,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             if (baixados === 0) {
                 addToast('Nenhum DANFE disponível para download.', 'warning');
             } else {
-                addToast(`${baixados} DANFE(s) baixado(s)!`, 'success');
+                addToast(`${baixados} DANFE(s) (${type === 'simplified' ? 'Simplificado' : 'Normal'}) baixado(s)!`, 'success');
             }
         } catch (err: any) {
             addToast(`Erro ao baixar DANFEs: ${err.message}`, 'error');
@@ -2395,19 +2570,19 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     };
 
     // ── Download DANFE do período (todas as autorizadas/emitidas filtradas) ──
-    const handleBaixarDanfeLote = async () => {
-        const notas = filteredNfeSaida.filter(n => n.situacao === 5 || n.situacao === 6 || n.situacao === 8);
+    const handleBaixarDanfeLote = async (type: 'normal' | 'simplified' = 'normal') => {
+        const notas = filteredNfeSaida.filter(n => n.situacao === 5 || n.situacao === 6 || n.situacao === 8 || n.situacao === 9 || n.situacao === 11);
         if (notas.length === 0) { addToast('Nenhuma nota autorizada/emitida no período.', 'warning'); return; }
-        await baixarDanfesLista(notas, (i) => `DANFE_${notas[i].numero || notas[i].id}.pdf`);
+        await baixarDanfesLista(notas, (i) => `DANFE_${type === 'simplified' ? 'SIMPLIF_' : ''}${notas[i].numero || notas[i].id}.pdf`, type);
     };
 
     // ── Download DANFE apenas para NF-es selecionadas ────────────────────────
-    const handleBaixarDanfeSelecionados = async () => {
+    const handleBaixarDanfeSelecionados = async (type: 'normal' | 'simplified' = 'normal') => {
         const notas = nfeSaida.filter(n =>
-            selectedNfeSaidaIds.has(n.id) && (n.situacao === 5 || n.situacao === 6 || n.situacao === 8)
+            selectedNfeSaidaIds.has(n.id) && (n.situacao === 5 || n.situacao === 6 || n.situacao === 8 || n.situacao === 9 || n.situacao === 11)
         );
         if (notas.length === 0) { addToast('Nenhuma nota selecionada com DANFE disponível.', 'warning'); return; }
-        await baixarDanfesLista(notas, (i) => `DANFE_${notas[i].numero || notas[i].id}.pdf`);
+        await baixarDanfesLista(notas, (i) => `DANFE_${type === 'simplified' ? 'SIMPLIF_' : ''}${notas[i].numero || notas[i].id}.pdf`, type);
     };
 
     // ── Buscar itens/produtos de uma NF-e (para vincular ao estoque) ────────
@@ -2512,75 +2687,116 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             return;
         }
         setIsBatchEmitindo(true);
-        setLabelDownloadProgress({ current: 0, total: notasSel.length });
-        const zplParts: string[] = [];
-        let ok = 0, fail = 0;
-        const successIds: string[] = [];
-        for (const nfe of notasSel) {
-            try {
-                const token = await getValidToken();
-                if (!token) throw new Error('Token inválido.');
+        try {
+            const token = await getValidToken();
+            if (!token) throw new Error('Token inválido.');
 
-                // 1. Tenta ZPL REAL direto do endpoint NF-e no Bling
-                const zplReal = await fetchNfeEtiquetaZpl(token, nfe.id);
-                if (zplReal) {
-                    zplParts.push(zplReal);
-                    ok++;
-                    successIds.push(nfe.numero || nfe.id);
-                } else {
-                    // 2. Fallback via pedido vinculado
-                    // PRIORIDADE: nfe.idVenda (capturado no enriquecimento)
-                    const pedidoVendaId = nfe.idVenda || (nfeItemsCache[nfe.id] as any)?.vendas?.[0]?.id || (nfeItemsCache[nfe.id] as any)?.pedidoVenda?.id;
-                    
-                    if (pedidoVendaId) {
-                        const zpl = await fetchEtiquetaZplForPedido(token, String(pedidoVendaId));
-                        if (zpl) { 
-                            zplParts.push(zpl); 
-                            ok++; 
-                            successIds.push(nfe.numero || nfe.id);
-                        }
-                        else fail++;
+            const ids = notasSel.map(n => n.id);
+            const response = await fetch('/api/bling/lotes/gerar-zpl', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ ids, createdBy: 'Usuário' })
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.error || 'Erro ao gerar lote de etiquetas');
+            }
+
+            const result = await response.json();
+            const combinedZpl = result.zpl;
+
+            if (combinedZpl) {
+                const loteId = `ETIQ-DANFE-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
+                
+                // Atualiza o histórico local (opcional, como o backend já salva no banco)
+                const newLote: ZplLoteItem = {
+                    id: loteId,
+                    timestamp: new Date().toISOString(),
+                    total: ids.length,
+                    success: result.count,
+                    successIds: ids.filter(id => !result.failures?.some((f: any) => f.id === id)),
+                    failed: result.failures || [],
+                    zplContent: combinedZpl,
+                };
+                setZplLotes(prev => [newLote, ...prev]);
+                setLastCompletedLote(newLote);
+
+                setZplModeModal({ zpl: combinedZpl, loteId, descricao: `${result.count} etiqueta(s) + DANFE` });
+                addToast(`${result.count} etiqueta(s) gerada(s)!${result.failures?.length > 0 ? ` ${result.failures.length} falha(s).` : ''}`, result.count > 0 ? 'success' : 'warning');
+            } else {
+                addToast('Nenhum ZPL retornado pelo servidor.', 'warning');
+            }
+        } catch (err: any) {
+            addToast(`Erro: ${err.message}`, 'error');
+        } finally {
+            setIsBatchEmitindo(false);
+            setSelectedNfeSaidaIds(new Set());
+        }
+    };
+
+    const handleBatchEmitirNfe = async () => {
+        const notasPendentes = nfeSaida.filter(n => selectedNfeSaidaIds.has(n.id) && (n.situacao === 1 || n.situacao === 4 || n.situacao === 2));
+        if (notasPendentes.length === 0) {
+            addToast('Nenhuma nota pendente ou rejeitada selecionada para emissão.', 'warning');
+            return;
+        }
+
+        if (!confirm(`Deseja emitir ${notasPendentes.length} nota(s) fiscal(is) no SEFAZ?`)) return;
+
+        setIsBatchEmitindo(true);
+        setNfeBatchErrors({});
+        let sucessos = 0;
+        let falhas = 0;
+
+        try {
+            const token = await getValidToken();
+            if (!token) throw new Error('Token inválido.');
+
+            for (let i = 0; i < notasPendentes.length; i++) {
+                const nfe = notasPendentes[i];
+                setEmitindoNfeId(nfe.id);
+                
+                try {
+                    const response = await fetch('/api/bling/nfe/criar-emitir', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', Authorization: token },
+                        body: JSON.stringify({ 
+                            blingOrderId: nfe.idVenda, // Tenta passar o ID da venda se tiver
+                            nfeId: nfe.id, 
+                            emitir: true 
+                        }),
+                    });
+                    const result = await response.json();
+
+                    if (result.success && result.emitida) {
+                        sucessos++;
                     } else {
-                        // Tenta buscar detalhe se não tiver em cache
-                        const detalhe = await fetchNfeDetalhe(token, nfe.id);
-                        const vId = detalhe?.data?.vendas?.[0]?.id || detalhe?.data?.pedidoVenda?.id || detalhe?.vendas?.[0]?.id;
-                        if (vId) {
-                            const zpl = await fetchEtiquetaZplForPedido(token, String(vId));
-                            if (zpl) { 
-                                zplParts.push(zpl); 
-                                ok++; 
-                                successIds.push(nfe.numero || nfe.id);
-                            }
-                            else fail++;
-                        } else fail++;
+                        falhas++;
+                        const msg = typeof result.error === 'string' ? result.error : (result.error?.description || result.error?.message || 'Erro na emissão');
+                        setNfeBatchErrors(prev => ({ ...prev, [nfe.id]: msg }));
                     }
+                } catch (err: any) {
+                    falhas++;
+                    setNfeBatchErrors(prev => ({ ...prev, [nfe.id]: err.message }));
                 }
-            } catch { fail++; }
-            setLabelDownloadProgress(prev => prev ? { ...prev, current: prev.current + 1 } : null);
-            await new Promise(r => setTimeout(r, 500));
+
+                // Delay entre emissões para rate limit
+                if (i < notasPendentes.length - 1) await new Promise(r => setTimeout(r, 1000));
+            }
+
+            addToast(`Processamento concluído: ${sucessos} sucesso(s), ${falhas} falha(s).`, sucessos > 0 ? 'success' : 'error');
+            await handleFetchNfeSaida(); // Recarrega para ver status atualizados
+        } catch (err: any) {
+            addToast(`Erro no processamento em lote: ${err.message}`, 'error');
+        } finally {
+            setIsBatchEmitindo(false);
+            setEmitindoNfeId(null);
+            setSelectedNfeSaidaIds(new Set());
         }
-        if (zplParts.length > 0) {
-            const loteId = `ETIQ-DANFE-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
-            const combined = zplParts.join('\n');
-            const newLote: ZplLoteItem = {
-                id: loteId,
-                timestamp: new Date().toISOString(),
-                total: notasSel.length,
-                success: ok,
-                successIds: successIds,
-                failed: fail > 0 ? [{ orderId: 'Vários', blingId: '', error: 'Falha em alguns itens' }] : [],
-                zplContent: combined,
-            };
-            setZplLotes(prev => [newLote, ...prev]);
-            setLastCompletedLote(newLote);
-            setZplModeModal({ zpl: combined, loteId, descricao: `${ok} etiqueta(s) + DANFE` });
-            addToast(`${ok} etiqueta(s) gerada(s)!${fail > 0 ? ` ${fail} falha(s).` : ''}`, ok > 0 ? 'success' : 'warning');
-        } else {
-            addToast(`Nenhuma etiqueta gerada. ${fail} falha(s).`, 'error');
-        }
-        setIsBatchEmitindo(false);
-        setLabelDownloadProgress(null);
-        setSelectedNfeSaidaIds(new Set());
     };
 
     const handleBatchPdfEtiquetas = async () => {
@@ -2856,33 +3072,43 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
      * Busca pedidos de vendas diretamente do Bling com “Situação: Em Aberto”.
      * Usa o endpoint dedicado que envia idsSituacoes[0]=6 ao Bling.
      */
-    const handleFetchVendasEmAberto = async (replace = false) => {
+    const handleFetchVendasEmAberto = async (replace = false, targetPage?: number) => {
         const token = await getValidToken();
         if (!token) return addToast('Token do Bling expirado. Reconecte a integração.', 'error');
         setIsLoadingVendas(true);
+        const pageToFetch = targetPage !== undefined ? targetPage : vendasPage;
         try {
             const situacoesParam = vendasSituacao === 'TODOS' ? '' : vendasSituacao;
+            const isDynamicStore = !['TODOS', 'ML', 'SHOPEE', 'SITE'].includes(vendasCanalFilter);
             const qs = new URLSearchParams({
                 dataInicio: vendasStartDate,
                 dataFim: vendasEndDate,
+                pagina: String(pageToFetch),
                 ...(situacoesParam ? { situacoes: situacoesParam } : {}),
+                ...(isDynamicStore ? { idLoja: vendasCanalFilter } : {}),
             }).toString();
             const resp = await fetch(`/api/bling/vendas/buscar?${qs}`, {
                 headers: { Authorization: token },
             });
             const data = await resp.json();
             if (!resp.ok || !data.success) throw new Error(data.error || `Erro ${resp.status}`);
+            
+            setVendasHasMore(!!data.hasMore);
+            
             setVendasDirectOrders(prev => {
-                if (replace) return data.orders || [];
+                if (replace || targetPage !== undefined) return data.orders || [];
                 const existingIds = new Set(prev.map((o: any) => o.blingId || o.orderId));
                 const newOrders = (data.orders || []).filter((o: any) => !existingIds.has(o.blingId || o.orderId));
                 return [...prev, ...newOrders];
             });
+            
+            if (targetPage !== undefined) setVendasPage(targetPage);
+            
             setSelectedVendasIds(new Set());
             // Debug: log dos canais detectados
             const canais = [...new Set((data.orders || []).map((o: any) => `${o.canal}(${o.canalRaw || '?'})`))].join(', ');
             console.log('[Marketplace] canais detectados:', canais);
-            addToast(`✅ ${data.total} pedido(s) carregado(s) do Bling!`, 'success');
+            addToast(`✅ ${data.orders?.length || 0} pedido(s) carregados da página ${pageToFetch}!`, 'success');
         } catch (err: any) {
             addToast(`Erro ao buscar pedidos: ${err.message}`, 'error');
         } finally {
@@ -2890,83 +3116,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         }
     };
 
-    // ── Mapeamento lojaId → canal baseado nos canais-venda do Bling ──────────────
-    const lojaIdToCanal = useMemo((): Map<number, 'ML' | 'SHOPEE' | 'SITE'> => {
-        const map = new Map<number, 'ML' | 'SHOPEE' | 'SITE'>();
-        blingCanais.forEach(c => {
-            const tipo = c.tipo.toLowerCase();
-            const descr = c.descricao.toUpperCase();
-            let canal: 'ML' | 'SHOPEE' | 'SITE' = 'SITE';
-            if (tipo.includes('mercadolivre') || tipo.includes('ml') || descr.includes('MERCADO LIVRE') || descr.includes('MERCADOLIVRE') || descr.includes('MLB') || descr.includes('ML')) {
-                canal = 'ML';
-            } else if (tipo.includes('shopee') || descr.includes('SHOPEE')) {
-                canal = 'SHOPEE';
-            }
-            map.set(c.id, canal);
-        });
-        return map;
-    }, [blingCanais]);
-
-    const filteredVendasOrders = useMemo(() => {
-        return vendasDirectOrders.map(o => {
-            // Prioridade 1: canal já detectado pelo servidor com base em loja.nome
-            if (o.canal && o.canal !== 'SITE') return o;
-
-            // Prioridade 2: mapa lojaId → canal (via canais-venda do Bling)
-            if (lojaIdToCanal.size > 0 && o.lojaId && lojaIdToCanal.has(o.lojaId)) {
-                return { ...o, canal: lojaIdToCanal.get(o.lojaId) };
-            }
-
-            // Prioridade 3: detectar pelo canalRaw retornado pelo servidor
-            if (o.canalRaw) {
-                const raw = (o.canalRaw as string).toLowerCase();
-                if (raw.includes('shopee')) return { ...o, canal: 'SHOPEE' };
-                if (raw.includes('mercado') || raw.includes('mlb') || raw.includes('ml ') || raw.includes('mercadolivre')) return { ...o, canal: 'ML' };
-            }
-
-            // Prioridade 4: detectar pelo campo loja (string display)
-            if (o.loja) {
-                const loja = (o.loja as string).toLowerCase();
-                if (loja.includes('shopee')) return { ...o, canal: 'SHOPEE' };
-                if (loja.includes('mercado') || loja.includes('ml') || loja.includes('mlb')) return { ...o, canal: 'ML' };
-            }
-
-            return o;
-        }).filter(o => {
-            const matchCanal = vendasCanalFilter === 'TODOS' || o.canal === vendasCanalFilter;
-            const s = vendasSearch.toLowerCase();
-            const matchSearch = !vendasSearch ||
-                (o.orderId || '').toLowerCase().includes(s) ||
-                (o.blingNumero || '').toLowerCase().includes(s) ||
-                (o.customer_name || '').toLowerCase().includes(s) ||
-                (o.loja || '').toLowerCase().includes(s) ||
-                (o.itens || []).some((it: any) => (it.sku || '').toLowerCase().includes(s));
-            return matchCanal && matchSearch;
-        });
-    }, [vendasDirectOrders, vendasCanalFilter, vendasSearch, lojaIdToCanal]);
-
-    // Set de blingIds já importados para o ERP (syncedOrders)
-    const erpImportedBlingIds = useMemo(() => {
-        const s = new Set<string>();
-        syncedOrders.forEach(o => {
-            if (o.blingId) s.add(String(o.blingId));
-            if (o.orderId) s.add(String(o.orderId));
-            if (o.blingNumero) s.add(String(o.blingNumero));
-        });
-        return s;
-    }, [syncedOrders]);
-
-    // Mapa blingId/orderId → invoice para a aba marketplace
-    const vendasInvoiceMap = useMemo(() => {
-        const map = new Map<string, BlingInvoice>();
-        enrichedOrders.forEach(o => {
-            if (o.invoice) {
-                if (o.blingId) map.set(o.blingId, o.invoice);
-                if (o.orderId) map.set(o.orderId, o.invoice);
-            }
-        });
-        return map;
-    }, [enrichedOrders]);
+    // ── Mapeamentos ERP movidos para o topo do componente ─────────────────────────────────────────────────
 
     const handleBatchZpl = async () => {
         if (selectedVendasIds.size === 0) return;
@@ -3009,14 +3159,12 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
 
             let ids: string[] = [];
             if (etiquetaPullSource === 'importacao') {
-                // Pega os pedidos selecionados da aba Importação, ou todos se nenhum selecionado
                 if (selectedVendasIds.size > 0) {
                     ids = Array.from(selectedVendasIds);
                 } else {
                     ids = filteredVendasOrders.slice(0, 50).map(o => o.blingId || o.orderId).filter(Boolean);
                 }
             } else {
-                // Pega dos pedidos com NF-e (aba NF-e)
                 ids = filteredEnrichedOrders.slice(0, 50).map(o => o.blingId || o.orderId).filter(Boolean);
             }
 
@@ -3025,31 +3173,42 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 return;
             }
 
-            const result = await fetchEtiquetasLote(token, ids);
+            const response = await fetch('/api/bling/lotes/gerar-zpl', {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ ids, createdBy: 'Usuário' })
+            });
 
-            const successZpls = result.results.filter(r => r.success && r.zpl);
-            const failedItems = result.results.filter(r => !r.success);
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.error || 'Erro ao puxar etiquetas');
+            }
 
-            if (successZpls.length > 0) {
-                const batchZpl = successZpls.map(r => r.zpl!).join('\n');
+            const result = await response.json();
+            const combinedZpl = result.zpl;
+
+            if (combinedZpl) {
                 const loteId = `LOTE-BLING-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}`;
                 const newLote: ZplLoteItem = {
                     id: loteId,
                     timestamp: new Date().toISOString(),
                     total: ids.length,
-                    success: successZpls.length,
-                    successIds: successZpls.map(r => String(r.pedidoVendaId || '')),
-                    failed: failedItems.map(f => ({ orderId: String(f.pedidoVendaId), blingId: String(f.pedidoVendaId), error: f.error || 'Erro desconhecido' })),
-                    zplContent: batchZpl,
+                    success: result.count,
+                    successIds: ids.filter(id => !result.failures?.some((f: any) => f.id === id)),
+                    failed: result.failures || [],
+                    zplContent: combinedZpl,
                 };
                 setZplLotes(prev => [newLote, ...prev]);
                 setLastCompletedLote(newLote);
-                addToast(`${successZpls.length} etiqueta(s) puxada(s) do Bling.${failedItems.length > 0 ? ` ${failedItems.length} falha(s).` : ''}`, failedItems.length > 0 ? 'info' : 'success');
+                addToast(`${result.count} etiqueta(s) puxada(s).${result.failures?.length > 0 ? ` ${result.failures.length} falha(s).` : ''}`, result.failures?.length > 0 ? 'info' : 'success');
             } else {
-                addToast(`Nenhuma etiqueta puxada. ${failedItems.length} falha(s).`, 'error');
+                addToast(`Nenhuma etiqueta puxada. ${result.failures?.length || 0} falha(s).`, 'error');
             }
         } catch (err: any) {
-            addToast(`Erro ao puxar etiquetas: ${err.message}`, 'error');
+            addToast(`Erro: ${err.message}`, 'error');
         } finally {
             setIsPullingEtiquetas(false);
         }
@@ -3198,12 +3357,56 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         });
     }, [enrichedOrders, searchTerm, filterNfeStatus, nfeCanalFilter]);
 
-    // Helper reutilizável fora do useMemo (para uso no JSX)
     const getNfeCanal = (nfe: NfeSaida): 'ML' | 'SHOPEE' | 'SITE' => {
         const l = (nfe.loja || '').toUpperCase();
         if (l.includes('MERCADO') || l.includes('LIVRE') || l.includes('MLB') || l.startsWith('ML')) return 'ML';
         if (l.includes('SHOPEE')) return 'SHOPEE';
         return 'SITE';
+    };
+
+    /**
+     * Helper para renderizar o badge do canal de venda de forma dinâmica
+     */
+    const renderCanalBadge = (canalIdOrName: string | number | undefined, lojaNome?: string) => {
+        const idStr = String(canalIdOrName || '');
+        const nomeMapeado = blingCanaisDict[idStr];
+        
+        // Se temos um nome mapeado (do dicionário Bling), usamos ele
+        if (nomeMapeado) {
+            const isML = nomeMapeado.toUpperCase().includes('MERCADO');
+            const isShopee = nomeMapeado.toUpperCase().includes('SHOPEE');
+            const colorClass = isML ? 'bg-yellow-100 text-yellow-800 border-yellow-200' 
+                             : isShopee ? 'bg-orange-100 text-orange-700 border-orange-200' 
+                             : 'bg-blue-100 text-blue-700 border-blue-200';
+            
+            return (
+                <div className="flex flex-col gap-0.5" title={`ID Loja: ${idStr}`}>
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border whitespace-nowrap ${colorClass}`}>
+                        {isML ? '🟡 ' : isShopee ? '🟠 ' : '🔵 '} {nomeMapeado}
+                    </span>
+                    {lojaNome && lojaNome !== nomeMapeado && <span className="text-[9px] text-slate-400 truncate max-w-[100px]">{lojaNome}</span>}
+                </div>
+            );
+        }
+
+        // Fallback: Lógica estática se o ID não estiver no dicionário
+        const c = String(canalIdOrName || '').toUpperCase();
+        const isML = c === 'ML' || c.includes('MERCADO');
+        const isShopee = c === 'SHOPEE' || c.includes('SHOPEE');
+        const isSite = !isML && !isShopee;
+
+        const badge = isML ? 'bg-yellow-100 text-yellow-800 border-yellow-200' 
+                    : isShopee ? 'bg-orange-100 text-orange-700 border-orange-200' 
+                    : 'bg-blue-100 text-blue-700 border-blue-200';
+        
+        const label = isML ? '🟡 Mercado Livre' : isShopee ? '🟠 Shopee' : '🔵 Loja / Site';
+
+        return (
+            <div className="flex flex-col gap-0.5">
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border whitespace-nowrap ${badge}`}>{label}</span>
+                {lojaNome && <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={lojaNome}>{lojaNome}</span>}
+            </div>
+        );
     };
 
     if (isHandlingCallback) {
@@ -3387,14 +3590,33 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 </button>
                                 {vendasDirectOrders.length > 0 && (
                                     <>
+                                        <div className="flex items-center gap-2 ml-auto bg-yellow-100/50 p-1 rounded-xl border border-yellow-200">
+                                            <button
+                                                onClick={() => handleFetchVendasEmAberto(true, vendasPage - 1)}
+                                                disabled={isLoadingVendas || vendasPage <= 1}
+                                                className="p-1.5 bg-white text-yellow-600 rounded-lg hover:bg-yellow-50 disabled:opacity-30 transition-all shadow-sm"
+                                                title="Página Anterior"
+                                            >
+                                                <ChevronLeft size={16} />
+                                            </button>
+                                            <span className="text-[10px] font-black text-yellow-700 uppercase tracking-tighter px-1">Pág {vendasPage}</span>
+                                            <button
+                                                onClick={() => handleFetchVendasEmAberto(true, vendasPage + 1)}
+                                                disabled={isLoadingVendas || !vendasHasMore}
+                                                className="p-1.5 bg-white text-yellow-600 rounded-lg hover:bg-yellow-50 disabled:opacity-30 transition-all shadow-sm"
+                                                title="Próxima Página"
+                                            >
+                                                <ChevronRight size={16} />
+                                            </button>
+                                        </div>
                                         <span className="text-[10px] font-bold text-yellow-700 bg-yellow-100 px-3 py-1.5 rounded-full">
-                                            {vendasDirectOrders.length} pedido(s) carregado(s)
+                                            {vendasDirectOrders.length} pedido(s) (Pág {vendasPage})
                                         </span>
                                         <button
-                                            onClick={() => { setVendasDirectOrders([]); setSelectedVendasIds(new Set()); }}
+                                            onClick={() => { setVendasDirectOrders([]); setSelectedVendasIds(new Set()); setVendasPage(1); }}
                                             className="text-[10px] font-black uppercase tracking-widest px-3 py-1.5 bg-red-50 text-red-500 border border-red-200 rounded-full hover:bg-red-100 transition-all"
                                         >
-                                            Limpar Lista
+                                            Limpar
                                         </button>
                                     </>
                                 )}
@@ -3402,17 +3624,40 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         </div>
 
                         {/* Filtros locais */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-2">
-                            <div className="relative md:col-span-2">
+                        <div className="flex flex-col md:flex-row gap-3 mb-2">
+                            <div className="relative flex-1">
                                 <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                                 <input type="text" value={vendasSearch} onChange={e => setVendasSearch(e.target.value)} placeholder="Nº pedido, cliente, loja, SKU..." className="w-full pl-9 p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-yellow-400" />
                             </div>
-                            <select value={vendasCanalFilter} onChange={e => setVendasCanalFilter(e.target.value as any)} className="p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-yellow-400">
-                                <option value="TODOS">Todos os canais</option>
-                                <option value="ML">🟡 Mercado Livre</option>
-                                <option value="SHOPEE">🟠 Shopee</option>
-                                <option value="SITE">🔵 Site / Outros</option>
-                            </select>
+                            <div className="flex gap-2">
+                                <select value={vendasCanalFilter} onChange={e => {
+                                    const val = e.target.value;
+                                    setVendasCanalFilter(val);
+                                    localStorage.setItem('vendasCanalFilter', val);
+                                }} className="p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-yellow-400 min-w-[200px]">
+                                    <option value="TODOS">Todos os canais</option>
+                                    <option value="ML">🟡 Mercado Livre</option>
+                                    <option value="SHOPEE">🟠 Shopee</option>
+                                    <option value="SITE">🔵 Site / Outros</option>
+                                    {blingCanais.filter(c => !['ml', 'shopee', 'site'].includes(c.tipo) && !['MERCADO LIVRE', 'SHOPEE'].includes(c.descricao.toUpperCase())).map(c => (
+                                        <option key={c.id} value={String(c.id)}>{c.descricao}</option>
+                                    ))}
+                                </select>
+                                <div className="flex items-center gap-1 bg-slate-50 border-2 border-slate-100 rounded-xl p-1">
+                                    <button 
+                                        onClick={() => { setShowOnlyWithLink(!showOnlyWithLink); if(!showOnlyWithLink) setShowOnlyWithoutLink(false); }}
+                                        className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase tracking-tighter transition-all ${showOnlyWithLink ? 'bg-emerald-500 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-100'}`}
+                                    >
+                                        Vinculados
+                                    </button>
+                                    <button 
+                                        onClick={() => { setShowOnlyWithoutLink(!showOnlyWithoutLink); if(!showOnlyWithoutLink) setShowOnlyWithLink(false); }}
+                                        className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase tracking-tighter transition-all ${showOnlyWithoutLink ? 'bg-orange-500 text-white shadow-sm' : 'text-slate-400 hover:bg-slate-100'}`}
+                                    >
+                                        Não Vincular
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -3469,15 +3714,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                 isExpanded ? next.delete(key) : next.add(key);
                                                 return next;
                                             });
-                                            const canalColors: Record<string, string> = {
-                                                ML: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-                                                SHOPEE: 'bg-orange-100 text-orange-700 border-orange-200',
-                                                SITE: 'bg-blue-100 text-blue-700 border-blue-200',
-                                            };
-                                            const canalLabels: Record<string, string> = { ML: 'Mercado Livre', SHOPEE: 'Shopee', SITE: 'Site' };
-                                            const canalStyle = canalColors[order.canal] || 'bg-slate-100 text-slate-600 border-slate-200';
+                                            
                                             const vendasInv = vendasInvoiceMap.get(key);
                                             const nfeEmitida = !!(vendasInv && (vendasInv.situacao?.toLowerCase().includes('emitida') || vendasInv.situacao?.toLowerCase().includes('autoriz')));
+
                                             return (
                                                 <React.Fragment key={key}>
                                                     <tr className={`transition-colors ${isSelected ? 'bg-yellow-50' : isExpanded ? 'bg-slate-50' : 'hover:bg-slate-50'}`}>
@@ -3492,9 +3732,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                 : <span className="w-3 inline-block" />}
                                                         </td>
                                                         <td className="p-3">
-                                                            <span className={`text-[9px] font-black px-2 py-1 rounded-full border uppercase tracking-widest ${canalStyle}`}>
-                                                                {canalLabels[order.canal] || order.canal}
-                                                            </span>
+                                                            {renderCanalBadge((order as any).idLojaVirtual || order.canal, (order as any).loja)}
                                                         </td>
                                                         <td className="p-3 font-black text-slate-800 whitespace-nowrap">{order.orderId || '-'}</td>
                                                         <td className="p-3 font-mono text-xs text-slate-400">{order.blingId || '-'}</td>
@@ -3506,7 +3744,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                         <td className="p-3 text-xs">
                                                             {order.rastreamento
                                                                 ? <span className="font-mono text-blue-700 bg-blue-50 px-2 py-1 rounded text-[9px]">{order.rastreamento}</span>
-                                                                : <span className="text-slate-300 text-[9px]">—</span>}
+                                                                : <span className="text-slate-300 text-[9px">—</span>}
                                                         </td>
                                                         <td className="p-3 font-black text-emerald-600 whitespace-nowrap">{Number(order.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
                                                         <td className="p-3"><span className="text-[9px] font-black px-2 py-1 rounded-full bg-slate-100 text-slate-600 uppercase">{order.status || '-'}</span></td>
@@ -3696,24 +3934,40 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                         {/* Contadores rápidos */}
                         {nfeSaida.length > 0 && (
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-                                <div className="bg-slate-50 rounded-2xl p-3 border border-slate-100 text-center">
+                                <button 
+                                    onClick={() => setNfeSaidaFiltro('todas')}
+                                    className={`bg-slate-50 rounded-2xl p-3 border text-center transition-all hover:scale-105 active:scale-95 ${nfeSaidaFiltro === 'todas' ? 'border-slate-400 ring-2 ring-slate-100' : 'border-slate-100 hover:bg-slate-100'}`}
+                                >
                                     <p className="text-2xl font-black text-slate-800">{nfeCounts.todas}</p>
                                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total</p>
-                                </div>
-                                <div className="bg-yellow-50 rounded-2xl p-3 border border-yellow-100 text-center">
+                                </button>
+                                <button 
+                                    onClick={() => {
+                                        setNfeSaidaFiltro('pendentes');
+                                        handleFetchNfeSaida(1, 1);
+                                    }}
+                                    className={`bg-yellow-50 rounded-2xl p-3 border text-center transition-all hover:scale-105 active:scale-95 ${nfeSaidaFiltro === 'pendentes' ? 'border-yellow-400 ring-2 ring-yellow-100' : 'border-yellow-100 hover:bg-yellow-100'}`}
+                                >
                                     <p className="text-2xl font-black text-yellow-700">{nfeCounts.pendentes}</p>
                                     <p className="text-[10px] font-black text-yellow-600 uppercase tracking-widest">Pendentes</p>
-                                </div>
-                                <div className="bg-blue-50 rounded-2xl p-3 border border-blue-100 text-center">
+                                </button>
+                                <button 
+                                    onClick={() => setNfeSaidaFiltro('autorizadas_sem_danfe')}
+                                    className={`bg-blue-50 rounded-2xl p-3 border text-center transition-all hover:scale-105 active:scale-95 ${nfeSaidaFiltro === 'autorizadas_sem_danfe' ? 'border-blue-400 ring-2 ring-blue-100' : 'border-blue-100 hover:bg-blue-100'}`}
+                                >
                                     <p className="text-2xl font-black text-blue-700">{nfeCounts.autorizadas_sem_danfe}</p>
                                     <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Autoriz. s/ DANFE</p>
-                                </div>
-                                <div className="bg-green-50 rounded-2xl p-3 border border-green-100 text-center">
+                                </button>
+                                <button 
+                                    onClick={() => setNfeSaidaFiltro('emitida_danfe')}
+                                    className={`bg-green-50 rounded-2xl p-3 border text-center transition-all hover:scale-105 active:scale-95 ${nfeSaidaFiltro === 'emitida_danfe' ? 'border-green-400 ring-2 ring-green-100' : 'border-green-100 hover:bg-green-100'}`}
+                                >
                                     <p className="text-2xl font-black text-green-700">{nfeCounts.emitida_danfe}</p>
                                     <p className="text-[10px] font-black text-green-600 uppercase tracking-widest">Emitida DANFE</p>
-                                </div>
+                                </button>
                             </div>
                         )}
+
 
                         {/* Filtros de data + buscar + loja + perfil */}
                         <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 mb-6">
@@ -3727,11 +3981,19 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                     <input type="date" value={filters.endDate} onChange={e => setFilters(p => ({ ...p, endDate: e.target.value }))} className="w-full p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500" />
                                 </div>
                                 <div>
-                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Loja / Canal</label>
-                                    <select value={nfeLojaFilter} onChange={e => setNfeLojaFilter(e.target.value)} className="w-full p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500">
-                                        <option value="TODOS">Todas as Lojas</option>
-                                        {blingCanais.map(c => <option key={c.id} value={c.descricao}>{c.descricao}</option>)}
-                                        {nfeLojas.filter(l => !blingCanais.some(c => c.descricao === l)).map(l => <option key={l} value={l}>{l}</option>)}
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Canal Marketplace</label>
+                                    <select value={nfeSaidaCanalFilter} onChange={e => {
+                                        const val = e.target.value;
+                                        setNfeSaidaCanalFilter(val);
+                                        localStorage.setItem('nfeSaidaCanalFilter', val);
+                                    }} className="w-full p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500">
+                                        <option value="TODOS">Todos os Canais</option>
+                                        <option value="ML">🟡 Mercado Livre</option>
+                                        <option value="SHOPEE">🟠 Shopee</option>
+                                        <option value="SITE">🔵 Site / Outros</option>
+                                        {blingCanais.filter(c => !['ml', 'shopee', 'site'].includes(c.tipo) && !['MERCADO LIVRE', 'SHOPEE'].includes(c.descricao.toUpperCase())).map(c => (
+                                            <option key={c.id} value={String(c.id)}>{c.descricao}</option>
+                                        ))}
                                     </select>
                                 </div>
                                 <div>
@@ -3748,13 +4010,34 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                         <input type="text" value={nfeSaidaSearch} onChange={e => setNfeSaidaSearch(e.target.value)} placeholder="Nº, cliente, chave..." className="w-full pl-10 p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500" />
                                     </div>
                                 </div>
-                                <div className="flex gap-2">
-                                    <button onClick={handleFetchNfeSaida} disabled={isLoadingNfeSaida} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-emerald-600 text-white font-black uppercase text-xs tracking-widest rounded-xl hover:bg-emerald-700 disabled:opacity-50 transition-all shadow-lg shadow-emerald-100 active:scale-95">
+                                <div className="flex gap-2 items-center">
+                                    <button onClick={() => handleFetchNfeSaida()} disabled={isLoadingNfeSaida} className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-emerald-600 text-white font-black uppercase text-xs tracking-widest rounded-xl hover:bg-emerald-700 disabled:opacity-50 transition-all shadow-lg shadow-emerald-100 active:scale-95">
                                         {isLoadingNfeSaida ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />} {isLoadingNfeSaida ? 'Buscando...' : 'Buscar NF-e'}
                                     </button>
+                                    
+                                    {nfeSaida.length > 0 && (
+                                        <div className="flex items-center gap-1 bg-white p-1 rounded-xl border-2 border-slate-200 h-[42px]">
+                                            <button
+                                                onClick={() => handleFetchNfeSaida(nfePage - 1)}
+                                                disabled={isLoadingNfeSaida || nfePage <= 1}
+                                                className="p-1 text-emerald-600 rounded-lg hover:bg-emerald-50 disabled:opacity-30 transition-all"
+                                            >
+                                                <ChevronLeft size={16} />
+                                            </button>
+                                            <span className="text-[10px] font-black text-emerald-700 px-1">P{nfePage}</span>
+                                            <button
+                                                onClick={() => handleFetchNfeSaida(nfePage + 1)}
+                                                disabled={isLoadingNfeSaida || !nfeHasMore}
+                                                className="p-1 text-emerald-600 rounded-lg hover:bg-emerald-50 disabled:opacity-30 transition-all"
+                                            >
+                                                <ChevronRight size={16} />
+                                            </button>
+                                        </div>
+                                    )}
+
                                     <button 
                                         onClick={() => setIsAdvancedFiltersOpen(!isAdvancedFiltersOpen)} 
-                                        className={`flex items-center justify-center gap-2 py-2.5 px-4 font-black uppercase text-xs tracking-widest rounded-xl transition-all border-2 ${isAdvancedFiltersOpen ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}
+                                        className={`flex items-center justify-center gap-2 py-2.5 px-3 font-black uppercase text-xs tracking-widest rounded-xl transition-all border-2 h-[42px] ${isAdvancedFiltersOpen ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}
                                         title="Filtros Avançados"
                                     >
                                         <Filter size={14} />
@@ -3818,8 +4101,11 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                             {([
                                 { key: 'todas', label: 'Todas', count: nfeCounts.todas, color: 'slate' },
                                 { key: 'pendentes', label: 'Pendentes', count: nfeCounts.pendentes, color: 'yellow' },
-                                { key: 'autorizadas_sem_danfe', label: 'Autorizada sem DANFE', count: nfeCounts.autorizadas_sem_danfe, color: 'blue' },
-                                { key: 'emitida_danfe', label: 'Emitida DANFE', count: nfeCounts.emitida_danfe, color: 'green' },
+                                { key: 'autorizadas', label: 'Autorizadas', count: nfeCounts.autorizadas, color: 'blue' },
+                                { key: 'emitidas', label: 'Emitidas', count: nfeCounts.emitidas, color: 'green' },
+                                { key: 'rejeitadas', label: 'Rejeitadas', count: nfeCounts.rejeitadas, color: 'red' },
+                                { key: 'canceladas', label: 'Canceladas', count: nfeCounts.canceladas, color: 'slate' },
+                                { key: 'aguardando_recibo', label: 'Recibo', count: nfeCounts.aguardando_recibo, color: 'yellow' },
                             ] as const).map(tab => {
                                 const isActive = nfeSaidaFiltro === tab.key;
                                 const colors: Record<string, string> = {
@@ -3890,15 +4176,22 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                             </button>
                                         </div>
                                     )}
-                                    {/* Download XMLs e DANFEs selecionados */}
-                                    <button onClick={handleBaixarXmlSelecionados} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-all shadow shadow-blue-200">
-                                        {isDownloadingXml ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-                                        {isDownloadingXml ? `XML... ${xmlDownloadProgress?.current || 0}/${xmlDownloadProgress?.total || 0}` : 'Baixar XML'}
-                                    </button>
-                                    <button onClick={handleBaixarDanfeSelecionados} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-all shadow shadow-green-200">
-                                        {isDownloadingDanfe ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
-                                        {isDownloadingDanfe ? `DANFE... ${danfeDownloadProgress?.current || 0}/${danfeDownloadProgress?.total || 0}` : 'DANFE Simplificada (Lotes)'}
-                                    </button>
+                                    <div className="flex bg-blue-600 rounded-xl overflow-hidden shadow shadow-blue-200">
+                                        <button onClick={() => handleBaixarXmlSelecionados()} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50 transition-all border-r border-blue-500">
+                                            {isDownloadingXml ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                                            {isDownloadingXml ? `XML... ${xmlDownloadProgress?.current || 0}/${xmlDownloadProgress?.total || 0}` : 'Download XML'}
+                                        </button>
+                                    </div>
+                                    <div className="flex bg-green-600 rounded-xl overflow-hidden shadow shadow-green-200">
+                                        <button onClick={() => handleBaixarDanfeSelecionados('normal')} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 text-white hover:bg-green-700 disabled:opacity-50 transition-all border-r border-green-500">
+                                            {isDownloadingDanfe ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
+                                            DANFE Normal (Lotes)
+                                        </button>
+                                        <button onClick={() => handleBaixarDanfeSelecionados('simplified')} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 text-white hover:bg-green-700 disabled:opacity-50 transition-all">
+                                            {isDownloadingDanfe ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
+                                            DANFE Simplif. (Lotes)
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -3979,10 +4272,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                             {filteredNfeSaida.map(nfe => {
                                                 const isSelected = selectedNfeSaidaIds.has(nfe.id);
                                                 const isPendente = nfe.situacao === 1;
-                                                const isAutorizada = nfe.situacao === 5;
-                                                const isEmitida = nfe.situacao === 6;
+                                                const isAutorizada = nfe.situacao === 6 || nfe.situacao === 9;
+                                                const isEmitida = nfe.situacao === 11 || (nfe.situacao === 6 && !!nfe.linkDanfe);
                                                 const isAutorizadaSemDanfe = isAutorizada && !nfe.linkDanfe;
-                                                const isEmitidaDanfe = isEmitida || (isAutorizada && !!nfe.linkDanfe);
+                                                const isEmitidaDanfe = isEmitida || (nfe.situacao === 5 && !!nfe.linkDanfe);
                                                 const isLoading = emitindoNfeId === nfe.id;
                                                 const isExpanded = expandedNfeItemsId === nfe.id;
                                                 const nfeItems = nfeItemsCache[nfe.id] || [];
@@ -4043,17 +4336,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                 </div>
                                                             </td>
                                                             <td className="p-3">
-                                                                {(() => {
-                                                                    const c = nfe.canal || 'SITE';
-                                                                    const badge = c === 'ML' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' : c === 'SHOPEE' ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-blue-100 text-blue-700 border-blue-200';
-                                                                    const label = c === 'ML' ? '🟡 Mercado Livre' : c === 'SHOPEE' ? '🟠 Shopee' : '🔵 Site';
-                                                                    return (
-                                                                        <div className="flex flex-col gap-0.5">
-                                                                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border whitespace-nowrap ${badge}`}>{label}</span>
-                                                                            {nfe.loja && <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={nfe.loja}>{nfe.loja}</span>}
-                                                                        </div>
-                                                                    );
-                                                                })()}
+                                                                <div className="flex flex-col gap-0.5">
+                                                                    {renderCanalBadge(nfe as any)}
+                                                                    {nfe.loja && <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={nfe.loja}>{nfe.loja}</span>}
+                                                                </div>
                                                             </td>
                                                             <td className="p-3">
                                                                 <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest whitespace-nowrap ${isPendente ? 'bg-yellow-100 text-yellow-700 border border-yellow-200' :
@@ -4091,12 +4377,22 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                     {/* DANFE */}
                                                                     {(isEmitidaDanfe || isAutorizadaSemDanfe) && (
                                                                         <div className="flex items-center gap-1">
-                                                                            <button onClick={() => handleAbrirDanfe(nfe)} title="Abrir DANFE"
-                                                                                className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-orange-50 text-orange-600 px-2.5 py-1.5 rounded-l-lg hover:bg-orange-100 border border-orange-100 transition-all border-r-0">
-                                                                                <Eye size={11} /> DANFE
+                                                                            <div className="flex bg-orange-50 rounded-lg border border-orange-100 overflow-hidden shadow-sm">
+                                                                                <button onClick={() => handleDownloadDanfe(nfe, 'normal')} title="Baixar DANFE Normal"
+                                                                                    className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-1.5 hover:bg-orange-100 transition-all border-r border-orange-100 text-orange-700">
+                                                                                    <Download size={11} /> Normal
+                                                                                </button>
+                                                                                <button onClick={() => handleDownloadDanfe(nfe, 'simplified')} title="Baixar DANFE Simplificado (Logística)"
+                                                                                    className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-1.5 hover:bg-orange-100 transition-all text-orange-700">
+                                                                                    <Zap size={11} /> Simplif.
+                                                                                </button>
+                                                                            </div>
+                                                                            <button onClick={() => handleDownloadDanfe(nfe, 'combined')} title="Baixar DANFE + Etiqueta (PDF Único)"
+                                                                                className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-orange-600 text-white px-2.5 py-1.5 rounded-lg hover:bg-orange-700 border border-orange-700 transition-all">
+                                                                                <Files size={11} /> DANFE + Etiqueta
                                                                             </button>
                                                                             <button onClick={() => handleDownloadZpl(nfe)} title="Baixar ZPL (DANFE Simplificada + Etiqueta)"
-                                                                                className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-amber-50 text-amber-600 px-2.5 py-1.5 rounded-r-lg hover:bg-amber-100 border border-amber-100 transition-all">
+                                                                                className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-amber-50 text-amber-600 px-2.5 py-1.5 rounded-lg hover:bg-amber-100 border border-amber-100 transition-all">
                                                                                 <Printer size={11} /> ZPL
                                                                             </button>
                                                                         </div>
@@ -4514,9 +4810,13 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                     {lote.failed.length > 0 && (
                                         <div className="bg-red-50 rounded-xl p-2 space-y-1 max-h-20 overflow-y-auto border border-red-100">
                                             {lote.failed.map(f => (
-                                                <p key={f.orderId} className="text-[9px] text-red-700">
-                                                    <span className="font-black">{f.orderId}:</span> {f.error.slice(0, 80)}
-                                                </p>
+                                                <div key={f.id || f.orderId} className="text-[9px] text-red-700 leading-tight">
+                                                    <p className="font-black flex items-center gap-1">
+                                                        <span>{f.id || f.orderId}:</span>
+                                                        {f.step && <span className="bg-red-100 px-1 rounded uppercase text-[7px]">{f.step}</span>}
+                                                    </p>
+                                                    <p className="opacity-80">{f.error.slice(0, 100)}</p>
+                                                </div>
                                             ))}
                                         </div>
                                     )}
@@ -4680,6 +4980,15 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 className="w-full flex items-center gap-2 text-sm font-black uppercase bg-slate-50 text-slate-600 px-4 py-3 rounded-xl hover:bg-slate-100 border border-slate-200 transition-all"
                             >
                                 📋 Só Copiar ZPL
+                            </button>
+                            <button
+                                onClick={() => {
+                                    const encodedZpl = encodeURIComponent(zplModeModal.zpl);
+                                    window.open(`http://labelary.com/viewer.html?zpl=${encodedZpl}`, '_blank');
+                                }}
+                                className="w-full flex items-center gap-2 text-sm font-black uppercase border-2 border-dashed border-blue-200 text-blue-500 px-4 py-3 rounded-xl hover:bg-blue-50 transition-all font-mono"
+                            >
+                                <Eye size={14} /> Visualizar no Labelary
                             </button>
                         </div>
                         <button onClick={() => setZplModeModal(null)} className="mt-4 w-full text-xs text-slate-400 hover:text-slate-600 font-semibold py-1.5">

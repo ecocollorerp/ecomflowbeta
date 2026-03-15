@@ -7,12 +7,13 @@ interface AddFuncionarioModalProps {
     onClose: () => void;
     onAddUser: (name: string, setor: UserSetor[], role: UserRole, email?: string, password?: string) => Promise<{ success: boolean; message?: string; }>;
     generalSettings: GeneralSettings;
+    sectors: any[];
 }
 
-const AddFuncionarioModal: React.FC<AddFuncionarioModalProps> = ({ isOpen, onClose, onAddUser, generalSettings }) => {
+const AddFuncionarioModal: React.FC<AddFuncionarioModalProps> = ({ isOpen, onClose, onAddUser, generalSettings, sectors }) => {
     const [newUserName, setNewUserName] = useState('');
     const [newUserRole, setNewUserRole] = useState<UserRole>('OPERATOR');
-    const [newUserSetores, setNewUserSetores] = useState<UserSetor[]>(generalSettings.setorList.length > 0 ? [generalSettings.setorList[0]] : []);
+    const [newUserSetores, setNewUserSetores] = useState<UserSetor[]>(sectors.length > 0 ? [sectors[0].name] : []);
     const [newUserPassword, setNewUserPassword] = useState('');
     const [newUserEmail, setNewUserEmail] = useState('');
     const [isAdding, setIsAdding] = useState(false);
@@ -35,7 +36,7 @@ const AddFuncionarioModal: React.FC<AddFuncionarioModalProps> = ({ isOpen, onClo
             // Reset state for next time
             setNewUserName('');
             setNewUserRole('OPERATOR');
-            setNewUserSetores(generalSettings.setorList.length > 0 ? [generalSettings.setorList[0]] : []);
+            setNewUserSetores(sectors.length > 0 ? [sectors[0].name] : []);
             setNewUserPassword('');
             setNewUserEmail('');
         } else {
@@ -88,18 +89,20 @@ const AddFuncionarioModal: React.FC<AddFuncionarioModalProps> = ({ isOpen, onClo
                             </select>
                         </div>
                     </div>
-                     <div>
+                    <div>
                         <label className="text-sm font-medium text-gray-700">Setores</label>
                         <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 p-3 border rounded-md">
-                            {generalSettings.setorList.map(setor => (
-                                <label key={setor} className="flex items-center space-x-2 cursor-pointer">
+                            {sectors.length === 0 ? (
+                                <p className="text-xs text-gray-400 col-span-full">Nenhum setor cadastrado.</p>
+                            ) : sectors.map(sector => (
+                                <label key={sector.id} className="flex items-center space-x-2 cursor-pointer">
                                     <input 
                                         type="checkbox"
-                                        checked={newUserSetores.includes(setor)}
-                                        onChange={() => handleSetorChange(setor)}
+                                        checked={newUserSetores.includes(sector.name)}
+                                        onChange={() => handleSetorChange(sector.name)}
                                         className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                                     />
-                                    <span className="text-sm text-gray-700">{setor}</span>
+                                    <span className="text-sm text-gray-700">{sector.name}</span>
                                 </label>
                             ))}
                         </div>

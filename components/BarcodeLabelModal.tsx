@@ -29,29 +29,56 @@ interface PacoteProto {
     produtos: Product[];
 }
 
+type LabelType = 'barcode' | 'qrcode';
+type LabelScope = 'batch' | 'products';
+
 interface BarcodeLabelModalProps {
     isOpen: boolean;
     onClose: () => void;
-    pacote: PacoteProto;
+    pacote: PacoteProto & { final_product_code?: string };
     targetTable?: 'estoque_pronto' | 'stock_items';
     addToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    skuLinks?: any[];
 }
-
-type LabelType = 'barcode' | 'qrcode';
-type LabelScope = 'batch' | 'products';
 
 export const BarcodeLabelModal: React.FC<BarcodeLabelModalProps> = ({ 
     isOpen, 
     onClose, 
     pacote,
     targetTable = 'estoque_pronto',
-    addToast
+    addToast,
+    skuLinks = []
 }) => {
     const [labelType, setLabelType] = useState<LabelType>('barcode');
     const [labelScope, setLabelScope] = useState<LabelScope>('batch');
     const [previews, setPreviews] = useState<{ id: string, name: string, dataUrl: string }[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+    
+    // Novas opções
+    const [useFinalProduct, setUseFinalProduct] = useState(false);
+    const [labelQty, setLabelQty] = useState(1);
+    const [observation, setObservation] = useState('');
+    const [labelWidth, setLabelWidth] = useState(100);
+    const [labelHeight, setLabelHeight] = useState(50);
+    const [cols, setCols] = useState(1);
+    const [rows, setRows] = useState(1);
+    const [pageSize, setPageSize] = useState<[number, number] | null>(null);
+
+    const getMasterSku = useCallback((sku: string) => {
+        const link = skuLinks.find((l: any) => l.importedSku === sku);
+        return link ? link.masterProductSku : sku;
+    }, [skuLinks]);
+
+    const presets = [
+        { name: 'Padrão (100x50)', width: 100, height: 50, cols: 1, rows: 1, pageSize: null },
+        { name: 'Padrão (40x25mm)', width: 40, height: 25, cols: 1, rows: 1, pageSize: null },
+        { name: 'Pequena (33x21mm) - 3 Colunas', width: 33, height: 21, cols: 3, rows: 1, pageSize: null },
+        { name: 'A6 (3x3 - 9 Etiquetas)', width: 33, height: 48, cols: 3, rows: 3, pageSize: [105, 148] as [number, number] },
+        { name: 'A6 Retrato (100x150mm)', width: 100, height: 150, cols: 1, rows: 1, pageSize: null },
+        { name: 'A6 Paisagem (150x100mm)', width: 150, height: 100, cols: 1, rows: 1, pageSize: null },
+        { name: 'A4 Folha Inteira (210x297mm)', width: 210, height: 297, cols: 1, rows: 1, pageSize: null },
+    ];
 
     const generatePreviews = useCallback(async () => {
         setIsLoading(true);
@@ -59,7 +86,7 @@ export const BarcodeLabelModal: React.FC<BarcodeLabelModalProps> = ({
             const newPreviews: { id: string, name: string, dataUrl: string }[] = [];
             
             if (labelScope === 'batch') {
-                const code = pacote.sku_primario; // Ou gerar um ID único se preferir
+                const code = getMasterSku((useFinalProduct && pacote.final_product_code) ? pacote.final_product_code : pacote.sku_primario);
                 const dataUrl = labelType === 'barcode' 
                     ? await generateBarcodeBase64(code) 
                     : await generateQRCodeBase64(code);
@@ -67,11 +94,12 @@ export const BarcodeLabelModal: React.FC<BarcodeLabelModalProps> = ({
                 newPreviews.push({ id: code, name: `Lote: ${pacote.nome}`, dataUrl });
             } else {
                 for (const prod of pacote.produtos) {
+                    const code = getMasterSku((useFinalProduct && pacote.final_product_code) ? pacote.final_product_code : prod.sku);
                     const dataUrl = labelType === 'barcode' 
-                        ? await generateBarcodeBase64(prod.sku) 
-                        : await generateQRCodeBase64(prod.sku);
+                        ? await generateBarcodeBase64(code) 
+                        : await generateQRCodeBase64(code);
                     
-                    newPreviews.push({ id: prod.sku, name: prod.nome, dataUrl });
+                    newPreviews.push({ id: code, name: prod.nome, dataUrl });
                 }
             }
             
@@ -82,7 +110,14 @@ export const BarcodeLabelModal: React.FC<BarcodeLabelModalProps> = ({
         } finally {
             setIsLoading(false);
         }
-    }, [labelType, labelScope, pacote, addToast]);
+    }, [labelType, labelScope, pacote, addToast, useFinalProduct, getMasterSku]);
+
+    useEffect(() => {
+        if (labelWidth === 33 && labelHeight === 21) setCols(3);
+        else if (labelWidth >= 100) setCols(1);
+        else if (labelWidth >= 60) setCols(1);
+        else setCols(1);
+    }, [labelWidth, labelHeight]);
 
     useEffect(() => {
         if (isOpen) {
@@ -92,46 +127,78 @@ export const BarcodeLabelModal: React.FC<BarcodeLabelModalProps> = ({
 
     const handlePrint = async () => {
         try {
+            const docWidth = pageSize ? pageSize[0] : labelWidth * cols;
+            const docHeight = pageSize ? pageSize[1] : labelHeight * rows;
+            
             const doc = new jsPDF({
-                orientation: 'portrait',
+                orientation: docWidth > docHeight ? 'landscape' : 'portrait',
                 unit: 'mm',
-                format: [100, 50] // Exemplo de tamanho de etiqueta térmica 100x50mm
+                format: [docWidth, docHeight]
             });
 
-            previews.forEach((preview, index) => {
-                if (index > 0) doc.addPage([100, 50], 'portrait');
-                
-                // Desenhar borda (opcional)
-                doc.setDrawColor(200);
-                doc.rect(2, 2, 96, 46);
+            let currentLabelIndex = 0;
+            const labelsPerSet = labelQty;
+            const totalLabels = previews.length * labelsPerSet;
+            const labelsPerPage = cols * rows;
+            const totalPages = Math.ceil(totalLabels / labelsPerPage);
+            let currentPageNum = 1;
+            
+            for (let i = 0; i < previews.length; i++) {
+                const preview = previews[i];
+                for (let q = 0; q < labelsPerSet; q++) {
+                    const labelInPageIndex = currentLabelIndex % labelsPerPage;
+                    const colIndex = labelInPageIndex % cols;
+                    const rowIndex = Math.floor(labelInPageIndex / cols);
+                    
+                    if (labelInPageIndex === 0 && currentLabelIndex > 0) {
+                        doc.addPage([docWidth, docHeight], docWidth > docHeight ? 'landscape' : 'portrait');
+                        currentPageNum++;
+                    }
+                    
+                    const offsetX = colIndex * labelWidth;
+                    const offsetY = rowIndex * labelHeight;
+                    
+                    // Desenhar borda
+                    doc.setDrawColor(200);
+                    doc.rect(offsetX + 2, offsetY + 2, labelWidth - 4, labelHeight - 4);
 
-                // Título
-                doc.setFontSize(10);
-                doc.setFont('helvetica', 'bold');
-                doc.text(preview.name.substring(0, 40), 5, 8);
-                
-                // Código
-                doc.setFontSize(8);
-                doc.setFont('helvetica', 'normal');
-                doc.text(`ID: ${preview.id}`, 5, 13);
+                    // Título
+                    doc.setFontSize(10);
+                    doc.setFont('helvetica', 'bold');
+                    doc.text(preview.name.substring(0, 40), offsetX + 5, offsetY + 8);
+                    
+                    // Código
+                    doc.setFontSize(8);
+                    doc.setFont('helvetica', 'normal');
+                    doc.text(`ID: ${preview.id}`, offsetX + 5, offsetY + 13);
 
-                // Imagem do código
-                if (labelType === 'barcode') {
-                    doc.addImage(preview.dataUrl, 'PNG', 5, 15, 90, 25);
-                } else {
-                    doc.addImage(preview.dataUrl, 'PNG', 35, 15, 30, 30);
+                    // Imagem do código
+                    const imgWidth = labelWidth - 10;
+                    const imgHeight = (labelHeight / 2);
+                    
+                    if (labelType === 'barcode') {
+                        doc.addImage(preview.dataUrl, 'PNG', offsetX + 5, offsetY + 15, imgWidth, imgHeight);
+                    } else {
+                        const qrSize = Math.min(imgWidth, imgHeight);
+                        doc.addImage(preview.dataUrl, 'PNG', offsetX + (labelWidth - qrSize) / 2, offsetY + 15, qrSize, qrSize);
+                    }
+
+                    // Info adicional e Observação
+                    doc.setFontSize(7);
+                    if (observation) {
+                        doc.text(`OBS: ${observation}`, offsetX + 5, offsetY + labelHeight - 10, { maxWidth: labelWidth - 10 });
+                    }
+                    doc.text(`Data: ${new Date().toLocaleDateString()}`, offsetX + 5, offsetY + labelHeight - 5);
+                    doc.text(`Loc: ${pacote.localizacao}`, offsetX + labelWidth - 5, offsetY + labelHeight - 5, { align: 'right' });
+                    doc.text(`Pág: ${currentPageNum}/${totalPages}`, offsetX + labelWidth / 2, offsetY + labelHeight - 5, { align: 'center' });
+                    
+                    currentLabelIndex++;
                 }
-
-                // Info adicional
-                doc.setFontSize(7);
-                doc.text(`Gerado em: ${new Date().toLocaleDateString()}`, 5, 45);
-                doc.text(`Loc: ${pacote.localizacao}`, 80, 45, { align: 'right' });
-            });
+            }
 
             doc.save(`etiquetas_${pacote.sku_primario}.pdf`);
             addToast('PDF gerado com sucesso!', 'success');
             
-            // Se for etiqueta de lote, salvar o código no banco
             if (labelScope === 'batch') {
                 await saveBarcodeToDb();
             }
@@ -226,6 +293,103 @@ export const BarcodeLabelModal: React.FC<BarcodeLabelModalProps> = ({
                                         <p className="text-[10px] opacity-70">Gera {pacote.produtos.length} códigos individuais</p>
                                     </div>
                                 </button>
+                            </div>
+                        </div>
+
+                        {/* Opções de Customização */}
+                        <div className="space-y-4 pt-4 border-t border-slate-100">
+                            <div>
+                                <label className="flex items-center gap-2 cursor-pointer group">
+                                    <div className={`w-10 h-5 rounded-full p-1 transition-all ${useFinalProduct ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                                        <div className={`w-3 h-3 bg-white rounded-full transition-all ${useFinalProduct ? 'ml-5' : 'ml-0'}`} />
+                                    </div>
+                                    <input type="checkbox" className="hidden" checked={useFinalProduct} onChange={e => setUseFinalProduct(e.target.checked)} />
+                                    <span className="text-xs font-bold text-slate-600">Produtos (SKU)</span>
+                                </label>
+                                {useFinalProduct && !pacote.final_product_code && (
+                                    <p className="text-[9px] text-amber-600 mt-1 italic font-bold">⚠️ O pacote não tem SKU configurado em Produtos (SKU).</p>
+                                )}
+                            </div>
+
+                            <div>
+                                <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block">Quantidade de Cópias</label>
+                                <input 
+                                    type="number" 
+                                    min={1} 
+                                    value={labelQty} 
+                                    onChange={e => setLabelQty(Number(e.target.value))}
+                                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold focus:border-emerald-500 outline-none"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block">Sugestões de Tamanho</label>
+                                <div className="grid grid-cols-2 gap-2 mb-3">
+                                    {presets.map(p => (
+                                        <button 
+                                            key={p.name}
+                                            onClick={() => { 
+                                                setLabelWidth(p.width); 
+                                                setLabelHeight(p.height); 
+                                                setCols(p.cols); 
+                                                setRows(p.rows); 
+                                                setPageSize(p.pageSize);
+                                            }}
+                                            className={`text-[9px] font-black p-2 bg-white border rounded-lg transition-all uppercase ${labelWidth === p.width && labelHeight === p.height ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-200 hover:bg-slate-100 hover:border-slate-300'}`}
+                                        >
+                                            {p.name}
+                                        </button>
+                                    ))}
+                                </div>
+                                <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block">Tamanho customizado (L x A mm)</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <input 
+                                        type="number" 
+                                        value={labelWidth} 
+                                        onChange={e => setLabelWidth(Number(e.target.value))}
+                                        className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold focus:border-emerald-500 outline-none"
+                                        placeholder="L mm"
+                                    />
+                                    <input 
+                                        type="number" 
+                                        value={labelHeight} 
+                                        onChange={e => setLabelHeight(Number(e.target.value))}
+                                        className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold focus:border-emerald-500 outline-none"
+                                        placeholder="A mm"
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block">Configuração de Impressão</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[9px] font-bold text-slate-400">Colunas</label>
+                                        <input 
+                                            type="number" min={1} value={cols} 
+                                            onChange={e => setCols(Number(e.target.value))}
+                                            className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold focus:border-emerald-500 outline-none"
+                                        />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[9px] font-bold text-slate-400">Linhas</label>
+                                        <input 
+                                            type="number" min={1} value={rows} 
+                                            onChange={e => setRows(Number(e.target.value))}
+                                            className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold focus:border-emerald-500 outline-none"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="text-[10px] font-black text-slate-400 uppercase mb-1 block">Observação na Etiqueta</label>
+                                <textarea 
+                                    value={observation}
+                                    onChange={e => setObservation(e.target.value)}
+                                    placeholder="Ex: Frágil / Manusear com cuidado"
+                                    className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs font-bold focus:border-emerald-500 outline-none h-20 resize-none"
+                                />
                             </div>
                         </div>
 

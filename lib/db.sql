@@ -108,7 +108,8 @@ ALTER TABLE stock_items
     ADD COLUMN IF NOT EXISTS sell_price              REAL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS cost_price              REAL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS description             TEXT,
-    ADD COLUMN IF NOT EXISTS status                  TEXT DEFAULT 'ATIVO';
+    ADD COLUMN IF NOT EXISTS status                  TEXT DEFAULT 'ATIVO',
+    ADD COLUMN IF NOT EXISTS mixed_qty               REAL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_stock_items_code ON stock_items (code);
 CREATE INDEX IF NOT EXISTS idx_stock_items_kind ON stock_items (kind);
@@ -342,7 +343,18 @@ ALTER TABLE weighing_batches
     ADD COLUMN IF NOT EXISTS stock_item_code TEXT NOT NULL DEFAULT '',
     ADD COLUMN IF NOT EXISTS stock_item_name TEXT NOT NULL DEFAULT '',
     ADD COLUMN IF NOT EXISTS created_by_id   TEXT,
-    ADD COLUMN IF NOT EXISTS created_by_name TEXT;
+    ADD COLUMN IF NOT EXISTS created_by_name TEXT,
+    ADD COLUMN IF NOT EXISTS product_code    TEXT,
+    ADD COLUMN IF NOT EXISTS qty_produced    REAL,
+    ADD COLUMN IF NOT EXISTS operador_maquina TEXT,
+    ADD COLUMN IF NOT EXISTS operador_batedor TEXT,
+    ADD COLUMN IF NOT EXISTS quantidade_batedor REAL,
+    ADD COLUMN IF NOT EXISTS com_cor         BOOLEAN,
+    ADD COLUMN IF NOT EXISTS tipo_operacao   TEXT,
+    ADD COLUMN IF NOT EXISTS equipe_mistura  TEXT,
+    ADD COLUMN IF NOT EXISTS destino         TEXT,
+    ADD COLUMN IF NOT EXISTS base_sku       TEXT,
+    ADD COLUMN IF NOT EXISTS batch_name      TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_weighing_item_code  ON weighing_batches (stock_item_code);
 CREATE INDEX IF NOT EXISTS idx_weighing_created_at ON weighing_batches (created_at DESC);
@@ -731,23 +743,98 @@ $$;
 
 -- ── 22.5  record_weighing_and_deduct_stock ────────────────────────────────────
 CREATE OR REPLACE FUNCTION record_weighing_and_deduct_stock(
-    item_code           TEXT,
-    quantity_to_weigh   REAL,
-    weighing_type_text  TEXT,
-    user_id             TEXT,
-    user_name           TEXT
+    p_product_code       TEXT,
+    p_qty_produced       REAL,
+    p_user_id            TEXT,
+    p_batch_name         TEXT,
+    p_operador_maquina   TEXT,
+    p_operador_batedor   TEXT,
+    p_quantidade_batedor REAL,
+    p_com_cor            BOOLEAN,
+    p_tipo_operacao      TEXT,
+    p_equipe_mistura     TEXT,
+    p_destino            TEXT,
+    p_base_sku           TEXT
 )
 RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
     v_item_name TEXT;
+    v_user_name TEXT;
+    v_bom_data  JSONB;
+    v_bom_item  JSONB;
+    v_insumo_code TEXT;
+    v_qty_needed  REAL;
+    v_qty_to_deduct_from_mixed REAL;
 BEGIN
-    SELECT name INTO v_item_name FROM stock_items WHERE code = item_code;
+    -- Obter nome do produto
+    SELECT name INTO v_item_name FROM public.stock_items WHERE code = p_product_code;
+    IF v_item_name IS NULL THEN
+        SELECT name INTO v_item_name FROM public.product_boms WHERE code = p_product_code;
+    END IF;
 
-    INSERT INTO weighing_batches (stock_item_code, stock_item_name, initial_qty, weighing_type, created_by_id, created_by_name)
-    VALUES (item_code, COALESCE(v_item_name, item_code), quantity_to_weigh, weighing_type_text, user_id, user_name);
+    -- Obter nome do usuário
+    SELECT name INTO v_user_name FROM public.users WHERE id::text = p_user_id;
 
-    PERFORM adjust_stock_quantity(item_code, quantity_to_weigh, 'PESAGEM', 'Lote Pesado', user_name);
+    -- Registrar o lote na tabela de histórico
+    INSERT INTO public.weighing_batches (
+        stock_item_code, stock_item_name, initial_qty, weighing_type, created_by_id, created_by_name,
+        product_code, qty_produced, operador_maquina, operador_batedor, quantidade_batedor,
+        com_cor, tipo_operacao, equipe_mistura, destino, base_sku, batch_name
+    )
+    VALUES (
+        p_product_code, COALESCE(v_item_name, p_product_code), p_qty_produced, 'daily', p_user_id, v_user_name,
+        p_product_code, p_qty_produced, p_operador_maquina, p_operador_batedor, p_quantidade_batedor,
+        p_com_cor, p_tipo_operacao, p_equipe_mistura, p_destino, p_base_sku, p_batch_name
+    );
+
+    -- Lógica baseada no Tipo de Operação
+    IF p_tipo_operacao = 'SO_BATEU' THEN
+        -- Modo SÓ BATEU: Consome insumos do BOM e adiciona no SALDO DE MISTURA (mixed_qty)
+        SELECT items INTO v_bom_data FROM public.product_boms WHERE code = p_product_code;
+        IF v_bom_data IS NOT NULL THEN
+            FOR v_bom_item IN SELECT * FROM jsonb_array_elements(v_bom_data)
+            LOOP
+                v_insumo_code := v_bom_item->>'stockItemCode';
+                v_qty_needed  := (v_bom_item->>'qty_per_pack')::real * p_quantidade_batedor;
+                PERFORM public.adjust_stock_quantity(v_insumo_code, -v_qty_needed, 'ENSACAMENTO', 'Consumo Mistura (Só Bateu)', v_user_name);
+            END LOOP;
+        END IF;
+
+        -- Adiciona ao saldo de mistura
+        UPDATE public.stock_items SET mixed_qty = COALESCE(mixed_qty, 0) + p_quantidade_batedor WHERE code = p_product_code;
+
+    ELSIF p_tipo_operacao = 'SO_ENSACADEIRA' THEN
+        -- Modo SÓ ENSACADEIRA: Retira do SALDO DE MISTURA (mixed_qty) e adiciona no ESTOQUE PRONTO
+        UPDATE public.stock_items SET mixed_qty = COALESCE(mixed_qty, 0) - p_qty_produced WHERE code = p_product_code;
+        PERFORM public.adjust_stock_quantity(p_product_code, p_qty_produced, 'ENSACAMENTO', 'Produção (Só Ensacadeira)', v_user_name);
+
+    ELSE
+        -- Modo BATEDOR + ENSACADEIRA (ou similar): Consome insumos, adiciona no estoque pronto 
+        -- e se houver sobra de batedor vs ensacado, joga o excesso no mixed_qty
+        SELECT items INTO v_bom_data FROM public.product_boms WHERE code = p_product_code;
+        IF v_bom_data IS NOT NULL THEN
+            FOR v_bom_item IN SELECT * FROM jsonb_array_elements(v_bom_data)
+            LOOP
+                v_insumo_code := v_bom_item->>'stockItemCode';
+                v_qty_needed  := (v_bom_item->>'qty_per_pack')::real * p_quantidade_batedor;
+                PERFORM public.adjust_stock_quantity(v_insumo_code, -v_qty_needed, 'ENSACAMENTO', 'Consumo Mistura (Bateu+Ensacou)', v_user_name);
+            END LOOP;
+        END IF;
+
+        -- Se foi com cor e tem base_sku, deduz a base
+        IF p_com_cor AND p_base_sku IS NOT NULL AND p_base_sku != '' THEN
+            PERFORM public.adjust_stock_quantity(p_base_sku, -p_qty_produced, 'ENSACAMENTO', 'Consumo Base (Cor)', v_user_name);
+        END IF;
+
+        -- Adiciona ao estoque pronto
+        PERFORM public.adjust_stock_quantity(p_product_code, p_qty_produced, 'ENSACAMENTO', 'Produção (Bateu+Ensacou)', v_user_name);
+
+        -- Se bateu mais do que ensacou, o resto fica como mixed_qty
+        IF p_quantidade_batedor > p_qty_produced THEN
+            UPDATE public.stock_items SET mixed_qty = COALESCE(mixed_qty, 0) + (p_quantidade_batedor - p_qty_produced) WHERE code = p_product_code;
+        END IF;
+    END IF;
 END;
 $$;
 
@@ -943,3 +1030,110 @@ ORDER BY table_name;
 -- ============================================================================
 -- FIM DA MIGRAÇÃO v4.0
 -- ============================================================================
+
+-- ── 24. FUNÇÃO: record_weighing_and_deduct_stock ──────────────────────────────
+-- Registra um ensacamento/batida e deduz o estoque conforme a BOM do produto.
+CREATE OR REPLACE FUNCTION record_weighing_and_deduct_stock(
+  p_product_code TEXT,
+  p_qty_produced NUMERIC,
+  p_user_id UUID,
+  p_batch_name TEXT DEFAULT NULL,
+  p_operador_maquina TEXT DEFAULT NULL,
+  p_operador_batedor TEXT DEFAULT NULL,
+  p_quantidade_batedor NUMERIC DEFAULT NULL,
+  p_com_cor BOOLEAN DEFAULT FALSE,
+  p_tipo_operacao TEXT DEFAULT 'ensacamento'
+) RETURNS JSONB AS $$
+DECLARE
+  v_batch_id UUID;
+  v_bom_row RECORD;
+  v_current_qty NUMERIC;
+BEGIN
+  -- Criar o lote de produção
+  INSERT INTO public.weighing_batches (
+    product_code, 
+    quantity, 
+    created_by, 
+    status, 
+    batch_name,
+    operador_maquina,
+    operador_batedor,
+    quantidade_batedor,
+    com_cor,
+    tipo_operacao
+  )
+  VALUES (
+    p_product_code, 
+    p_qty_produced, 
+    p_user_id, 
+    'completed', 
+    p_batch_name,
+    p_operador_maquina,
+    p_operador_batedor,
+    p_quantidade_batedor,
+    p_com_cor,
+    p_tipo_operacao
+  )
+  RETURNING id INTO v_batch_id;
+
+  -- Para cada insumo na receita (BOM), deduzir o estoque
+  FOR v_bom_row IN 
+    SELECT component_code, quantity_required 
+    FROM public.product_boms 
+    WHERE product_code = p_product_code
+  LOOP
+    -- Atualizar estoque do insumo
+    UPDATE public.stock_items 
+    SET current_qty = current_qty - (v_bom_row.quantity_required * p_qty_produced),
+        updated_at = NOW()
+    WHERE code = v_bom_row.component_code;
+
+    -- Registrar movimento de saída
+    INSERT INTO public.stock_movements (
+      stock_item_code,
+      qty_delta,
+      type,
+      origin,
+      reference_id,
+      created_by
+    )
+    VALUES (
+      v_bom_row.component_code,
+      -(v_bom_row.quantity_required * p_qty_produced),
+      'out',
+      'production',
+      v_batch_id::text,
+      p_user_id
+    );
+  END LOOP;
+
+  -- Adicionar o produto pronto ao estoque
+  UPDATE public.stock_items 
+  SET current_qty = current_qty + p_qty_produced,
+      updated_at = NOW()
+  WHERE code = p_product_code;
+
+  -- Registrar movimento de entrada do produto pronto
+  INSERT INTO public.stock_movements (
+    stock_item_code,
+    qty_delta,
+    type,
+    origin,
+    reference_id,
+    created_by
+  )
+  VALUES (
+    p_product_code,
+    p_qty_produced,
+    'in',
+    'production',
+    v_batch_id::text,
+    p_user_id
+  );
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'batch_id', v_batch_id
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;

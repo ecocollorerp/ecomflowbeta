@@ -41,6 +41,7 @@ interface PacoteProto {
     data_disponibilidade: number;
     operador: string;
     observacoes?: string;
+    final_product_code?: string;
     produtos: Array<{
         sku: string;
         nome: string;
@@ -57,6 +58,7 @@ interface PacotesProntosManagerProps {
     onMoverPacote?: (id: string, novaLocalizacao: string) => void;
     onMarcarExpedido?: (id: string) => void;
     addToast: (message: string, type: 'success' | 'error' | 'info') => void;
+    skuLinks?: any[];
 }
 
 export const PacotesProntosManager: React.FC<PacotesProntosManagerProps> = ({
@@ -67,7 +69,8 @@ export const PacotesProntosManager: React.FC<PacotesProntosManagerProps> = ({
     onDeletar,
     onMoverPacote,
     onMarcarExpedido,
-    addToast
+    addToast,
+    skuLinks = []
 }) => {
     const [busca, setBusca] = useState('');
     const [filtroStatus, setFiltroStatus] = useState<'todos' | 'PRONTO' | 'RESERVADO' | 'EXPEDIDO'>('PRONTO');
@@ -477,6 +480,7 @@ export const PacotesProntosManager: React.FC<PacotesProntosManagerProps> = ({
                     onClose={() => setShowLabelModal(false)}
                     pacote={pacoteSelecionado}
                     addToast={addToast}
+                    skuLinks={skuLinks}
                 />
             )}
         </div>

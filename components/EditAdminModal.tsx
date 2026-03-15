@@ -8,9 +8,10 @@ interface EditAdminModalProps {
     userToEdit: User | null;
     onConfirmUpdate: (updatedUser: User) => Promise<boolean>;
     generalSettings: GeneralSettings;
+    sectors: any[];
 }
 
-const EditAdminModal: React.FC<EditAdminModalProps> = ({ isOpen, onClose, userToEdit, onConfirmUpdate, generalSettings }) => {
+const EditAdminModal: React.FC<EditAdminModalProps> = ({ isOpen, onClose, userToEdit, onConfirmUpdate, generalSettings, sectors }) => {
     const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
@@ -132,10 +133,12 @@ const EditAdminModal: React.FC<EditAdminModalProps> = ({ isOpen, onClose, userTo
                     <div>
                         <label className="text-sm font-medium text-gray-700">Setores</label>
                         <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-2 p-3 border rounded-md">
-                            {generalSettings.setorList.map(setor => (
-                                <label key={setor} className="flex items-center space-x-2 cursor-pointer">
-                                    <input type="checkbox" checked={setores.includes(setor)} onChange={() => handleSetorChange(setor)} className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"/>
-                                    <span className="text-sm text-gray-700">{setor}</span>
+                            {sectors.length === 0 ? (
+                                <p className="text-xs text-gray-400 col-span-full">Nenhum setor cadastrado.</p>
+                            ) : sectors.map(sector => (
+                                <label key={sector.id} className="flex items-center space-x-2 cursor-pointer">
+                                    <input type="checkbox" checked={setores.includes(sector.name)} onChange={() => handleSetorChange(sector.name)} className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"/>
+                                    <span className="text-sm text-gray-700">{sector.name}</span>
                                 </label>
                             ))}
                         </div>

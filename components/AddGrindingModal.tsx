@@ -23,6 +23,7 @@ const AddGrindingModal: React.FC<AddGrindingModalProps> = ({ isOpen, onClose, in
     const [mode, setMode] = useState<'manual' | 'automatico'>('manual');
     const [selectedUserId, setSelectedUserId] = useState('');
     const [categoryFilter, setCategoryFilter] = useState('ALL');
+    const [selectedSector, setSelectedSector] = useState('');
 
     const filteredInsumos = useMemo(() => {
         if (categoryFilter === 'ALL') {
@@ -46,16 +47,20 @@ const AddGrindingModal: React.FC<AddGrindingModalProps> = ({ isOpen, onClose, in
             setOutputName('');
             setOutputQty(1);
             setMode('manual');
+            setSelectedSector('');
             const isCurrentUserInList = users.some(u => u.id === currentUser.id);
             if (isCurrentUserInList) {
                 setSelectedUserId(currentUser.id);
-            } else if (users.length > 0) {
-                setSelectedUserId(users[0].id);
             } else {
                 setSelectedUserId('');
             }
         }
-    }, [isOpen, insumos, users, currentUser]);
+    }, [isOpen, users, currentUser, insumos]);
+
+    const filteredUsers = useMemo(() => {
+        if (!selectedSector) return [];
+        return users.filter(u => Array.isArray(u.setor) && u.setor.includes(selectedSector));
+    }, [users, selectedSector]);
 
     useEffect(() => {
         // When filter changes, if the selected item is no longer in the list, select the first available one.
@@ -171,11 +176,35 @@ const AddGrindingModal: React.FC<AddGrindingModalProps> = ({ isOpen, onClose, in
                                 </div>
                             </div>
                             {mode === 'manual' && (
-                                <div className="flex-1">
-                                    <label htmlFor="user-select" className="text-sm flex items-center"><UserIcon size={14} className="mr-1"/> Operador</label>
-                                    <select id="user-select" value={selectedUserId} onChange={e => setSelectedUserId(e.target.value)} className="mt-1 block w-full border-[var(--color-border)] bg-[var(--color-surface)] rounded-md shadow-sm p-2">
-                                        {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                                    </select>
+                                <div className="flex-1 space-y-2">
+                                    <div>
+                                        <label className="text-sm font-bold text-gray-600 block mb-1">Setor do Operador</label>
+                                        <select 
+                                            value={selectedSector} 
+                                            onChange={e => setSelectedSector(e.target.value)}
+                                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold"
+                                        >
+                                            <option value="">Escolha um setor...</option>
+                                            {generalSettings.customSectors.map(s => (
+                                                <option key={s.id} value={s.id}>{s.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    
+                                    {selectedSector && (
+                                        <div>
+                                            <label htmlFor="user-select" className="text-sm flex items-center font-bold text-gray-600 mb-1"><UserIcon size={14} className="mr-1"/> Operador</label>
+                                            <select 
+                                                id="user-select" 
+                                                value={selectedUserId} 
+                                                onChange={e => setSelectedUserId(e.target.value)} 
+                                                className="mt-1 block w-full border-[var(--color-border)] bg-[var(--color-surface)] rounded-md shadow-sm p-2 text-sm font-bold"
+                                            >
+                                                <option value="">Selecionar...</option>
+                                                {filteredUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                                            </select>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>

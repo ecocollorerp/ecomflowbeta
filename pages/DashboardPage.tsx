@@ -225,7 +225,7 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
                                 const isVolatil = group.tipo === 'volatil';
                                 const currentTotal = isVolatil
                                     ? (group.quantidade_volatil || 0)
-                                    : stockItems.filter(i => group.item_codes.includes(i.code)).reduce((sum, i) => sum + i.current_qty, 0);
+                                    : stockItems.filter(i => group.item_codes.some(c => c.toUpperCase() === i.code.toUpperCase())).reduce((sum, i) => sum + i.current_qty, 0);
                                 const isBelowMin = currentTotal < group.min_pack_qty;
                                 return (
                                     <div key={group.id} onClick={() => setViewingPackGroup(group)} className={`p-4 rounded-2xl border-2 transition-all cursor-pointer hover:shadow-xl group relative overflow-hidden ${isBelowMin ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-100 hover:border-blue-300'}`}>

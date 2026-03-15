@@ -5,7 +5,7 @@ import React from 'react';
 export type Period = 'today' | 'yesterday' | 'last7days' | 'thisMonth' | 'lastMonth' | 'custom' | 'last_upload';
 export type Canal = 'ML' | 'SHOPEE' | 'SITE' | 'ALL' | 'AUTO';
 export type UserRole = 'SUPER_ADMIN' | 'ADMIN' | 'OPERATOR';
-export type UserSetor = 'ADMINISTRATIVO' | 'EMBALAGEM' | 'PESAGEM' | 'MOAGEM';
+export type UserSetor = string;
 
 // UI & Settings
 export interface UiSettings {
@@ -46,6 +46,12 @@ export interface AttendanceRecord {
     doctorsNoteFile?: any;
     leftEarly?: string | null;
     overtime?: string | null;
+}
+
+export interface Setor {
+    id: string;
+    name: string;
+    created_at?: string;
 }
 
 export interface User {
@@ -177,6 +183,8 @@ export interface StockItem {
     barcode?: string;
     is_volatile_infinite?: boolean;
     base_type?: 'branca' | 'preta' | 'especial';
+    localizacao?: string;
+    mixed_qty?: number;
     // optional BOM/composition information (parent products may list children here)
     bom_composition?: {
         items: Array<{
@@ -191,7 +199,7 @@ export interface StockItem {
     items?: any[];
 }
 
-export type StockMovementOrigin = 'AJUSTE_MANUAL' | 'PRODUCAO_MANUAL' | 'BIP' | 'PESAGEM' | 'MOAGEM' | 'IMPORT_XML' | 'PRODUCAO_INTERNA';
+export type StockMovementOrigin = 'AJUSTE_MANUAL' | 'PRODUCAO_MANUAL' | 'BIP' | 'ENSACAMENTO' | 'MOAGEM' | 'IMPORT_XML' | 'PRODUCAO_INTERNA';
 
 export interface StockMovement {
     id: string;
@@ -224,6 +232,11 @@ export interface StockPackGroup {
     min_pack_qty: number;
     tipo?: 'volatil' | 'tradicional';
     quantidade_volatil?: number;
+    final_product_code?: string;
+    localizacao?: string;
+    pallet?: string;
+    galpao?: string;
+    com_desempenadeira?: boolean;
     created_at?: string;
 }
 
@@ -231,6 +244,14 @@ export type StockDeductionMode = 'STOCK' | 'PRODUCTION';
 
 // Production: Weighing & Grinding
 export type WeighingType = 'daily' | 'hourly';
+
+export interface WeighingBatchProduct {
+    sku: string;
+    nome: string;
+    cor?: string;
+    qty_batida: number;
+    qty_ensacada: number;
+}
 
 export interface WeighingBatch {
     id: string;
@@ -246,6 +267,24 @@ export interface WeighingBatch {
     createdBy: string;
     weighingType: WeighingType;
     weighing_type?: WeighingType;
+    // Novos campos Ensacamento/Batedor
+    operadorMaquina?: string;
+    operador_maquina?: string;
+    operadorBatedor?: string;
+    operador_batedor?: string;
+    quantidade_batedor?: number;
+    comCor?: boolean;
+    com_cor?: boolean;
+    tipoOperacao?: 'SO_BATEU' | 'SO_ENSACADEIRA' | 'BATEU_ENSACOU';
+    tipo_operacao?: string;
+    equipeMistura?: string;
+    equipe_mistura?: string;
+    destino?: string;
+    baseSku?: string;
+    base_sku?: string;
+    batchName?: string;
+    batch_name?: string;
+    produtos?: WeighingBatchProduct[];
 }
 
 export interface GrindingBatch {
@@ -308,6 +347,7 @@ export interface OrderItem {
     etiqueta_gerada?: boolean;
     lote_id?: string;
     descontar_volatil?: boolean;
+    idLojaVirtual?: string;
 }
 
 export interface ScanLogItem {
@@ -465,6 +505,7 @@ export interface BlingInvoice {
     idPedidoVenda?: string;
     numeroLoja?: string;
     linkDanfe?: string;
+    idLojaVirtual?: string;
 }
 
 export interface BlingProduct {
@@ -1004,6 +1045,12 @@ export interface ProductBaseConfig {
     specialBaseSku?: string;
 }
 
+export interface CustomSector {
+    id: string;
+    name: string;
+    allowedPages: string[];
+}
+
 export interface GeneralSettings {
     companyName: string;
     appIcon: string;
@@ -1043,7 +1090,9 @@ export interface GeneralSettings {
         mercadoLivre?: MLSettings;
         shopee?: ShopeeSettings;
     };
-    setorList: UserSetor[];
+    setorList: string[];
+    setorDisplayNames: Record<string, string>;
+    customSectors?: CustomSector[];
 }
 
 export const defaultGeneralSettings: GeneralSettings = {
@@ -1119,7 +1168,9 @@ export const defaultGeneralSettings: GeneralSettings = {
         }
     },
     pedidos: { errorReasons: ["Sem cola", "Quantidade errada", "Cor errada"], resolutionTypes: ["Reenviado", "Reembolso"], displayCustomerIdentifier: false },
-    setorList: ['ADMINISTRATIVO', 'EMBALAGEM', 'PESAGEM', 'MOAGEM'],
+    setorList: [],
+    setorDisplayNames: {},
+    customSectors: []
 };
 
 // BI Data

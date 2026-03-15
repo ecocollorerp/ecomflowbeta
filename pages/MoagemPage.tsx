@@ -7,6 +7,8 @@ import {
 import AddGrindingModal from '../components/AddGrindingModal';
 import GrindingBatchList from '../components/GrindingBatchList';
 
+import { canAccessPage } from '../lib/accessControl';
+
 type PeriodFilter = 'today' | '7d' | '30d' | 'custom';
 const MEDALS = ['🥇', '🥈', '🥉'];
 
@@ -31,7 +33,9 @@ const MoagemPage: React.FC<MoagemPageProps> = ({
     const [searchTerm,   setSearchTerm]       = useState('');
 
     const grindableItems = useMemo(() => stockItems.filter(i => i.kind === 'INSUMO'), [stockItems]);
-    const moagemUsers    = useMemo(() => users.filter(u => Array.isArray(u.setor) && u.setor.includes('MOAGEM')), [users]);
+    const moagemUsers    = useMemo(() => {
+        return users.filter(u => canAccessPage(u, 'moagem', generalSettings));
+    }, [users, generalSettings]);
 
     const dateCutoff = useMemo((): Date | null => {
         const now = new Date();

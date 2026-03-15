@@ -10,23 +10,21 @@ BEGIN
   CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
   -- 2. ENUMS (Atualização Segura)
-  DO $$ 
+  DO $do$ 
   BEGIN 
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'canal_type') THEN 
         CREATE TYPE public.canal_type AS ENUM ('ML', 'SHOPEE', 'SITE', 'ALL'); 
     ELSE
-        -- Tenta adicionar o valor SITE se não existir (Postgres não suporta IF NOT EXISTS no ADD VALUE diretamente de forma simples em bloco anônimo antigo, mas em versoes recentes sim)
-        -- Workaround seguro: Catch error se ja existe
+        -- Tenta adicionar o valor SITE se não existir
         BEGIN
             ALTER TYPE public.canal_type ADD VALUE 'SITE';
         EXCEPTION WHEN duplicate_object THEN
-            -- Ignorar erro se ja existe
             NULL;
         END;
     END IF; 
-  END $$;
+  END $do$;
 
-  DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'order_status_value') THEN CREATE TYPE public.order_status_value AS ENUM ('NORMAL', 'ERRO', 'DEVOLVIDO', 'BIPADO', 'SOLUCIONADO'); END IF; END $$;
+  DO $do$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'order_status_value') THEN CREATE TYPE public.order_status_value AS ENUM ('NORMAL', 'ERRO', 'DEVOLVIDO', 'BIPADO', 'SOLUCIONADO'); END IF; END $do$;
 
   -- 3. TABELAS ESSENCIAIS
 
@@ -67,6 +65,7 @@ BEGIN
       expedition_items JSONB DEFAULT '[]'::jsonb,
       substitute_product_code TEXT,
       barcode TEXT,
+      localizacao TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
   );
   
@@ -78,6 +77,11 @@ BEGIN
   -- Garante coluna base_type
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_items' AND column_name='base_type') THEN
     ALTER TABLE public.stock_items ADD COLUMN base_type TEXT;
+  END IF;
+
+  -- Garante coluna localizacao em stock_items
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_items' AND column_name='localizacao') THEN
+    ALTER TABLE public.stock_items ADD COLUMN localizacao TEXT;
   END IF;
 
   -- Movimentações de Estoque
@@ -96,10 +100,39 @@ BEGIN
 
   -- Receitas (BOM)
   CREATE TABLE IF NOT EXISTS public.product_boms (
-      product_sku TEXT PRIMARY KEY,
-      items JSONB DEFAULT '[]'::jsonb,
+      code TEXT PRIMARY KEY,
+      name TEXT,
+      description TEXT,
+      kind TEXT DEFAULT 'PRODUTO',
+      current_qty REAL DEFAULT 0,
+      reserved_qty REAL DEFAULT 0,
+      ready_qty REAL DEFAULT 0,
+      is_ready BOOLEAN DEFAULT FALSE,
+      ready_location TEXT,
+      ready_date TIMESTAMPTZ,
+      ready_batch_id TEXT,
+      cost_price REAL DEFAULT 0,
+      sell_price REAL DEFAULT 0,
+      bling_id TEXT,
+      bling_sku TEXT,
+      unit TEXT DEFAULT 'un',
+      category TEXT,
+      status TEXT DEFAULT 'ATIVO',
+      bom_composition JSONB DEFAULT '{"items": []}'::jsonb,
+      min_qty REAL DEFAULT 0,
+      is_volatile_infinite BOOLEAN DEFAULT FALSE,
       updated_at TIMESTAMPTZ DEFAULT NOW()
   );
+
+  -- Migração: Garantir que product_boms use 'code' e tenha colunas necessárias
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_boms' AND column_name='product_sku') THEN
+    ALTER TABLE public.product_boms RENAME COLUMN product_sku TO code;
+  END IF;
+  
+  -- Garantir coluna items (para retrocompatibilidade com código que usa 'items' em vez de 'bom_composition')
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_boms' AND column_name='items') THEN
+    ALTER TABLE public.product_boms ADD COLUMN items JSONB DEFAULT '[]'::jsonb;
+  END IF;
 
   -- Pedidos
   CREATE TABLE IF NOT EXISTS public.orders (
@@ -153,7 +186,44 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='venda_origem') THEN
     ALTER TABLE public.orders ADD COLUMN venda_origem TEXT;
   END IF;
+
+  -- Campos p/ Sincronização Bling v3
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='id_bling') THEN
+    ALTER TABLE public.orders ADD COLUMN id_bling TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='situacao_id') THEN
+    ALTER TABLE public.orders ADD COLUMN situacao_id INT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='orders' AND column_name='situacao_valor') THEN
+    ALTER TABLE public.orders ADD COLUMN situacao_valor TEXT;
+  END IF;
+
   CREATE UNIQUE INDEX IF NOT EXISTS orders_order_id_sku_idx ON public.orders (order_id, sku);
+
+  -- Tabela de NF-e Bling (Cache Local / Sincronização)
+  CREATE TABLE IF NOT EXISTS public.bling_nfe (
+      id TEXT PRIMARY KEY,
+      bling_id TEXT NOT NULL,
+      numero TEXT,
+      serie TEXT,
+      situacao INT,
+      situacao_descricao TEXT,
+      data_emissao TIMESTAMPTZ,
+      valor_total NUMERIC DEFAULT 0,
+      chave_acesso TEXT,
+      link_danfe TEXT,
+      cliente_nome TEXT,
+      cliente_doc TEXT,
+      id_venda TEXT,
+      id_loja_virtual TEXT,
+      canal_nome TEXT,
+      tipo INT DEFAULT 1,
+      last_sync TIMESTAMPTZ DEFAULT NOW(),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_bling_nfe_bling_id ON public.bling_nfe(bling_id);
+  CREATE INDEX IF NOT EXISTS idx_bling_nfe_id_venda ON public.bling_nfe(id_venda);
+  CREATE INDEX IF NOT EXISTS idx_bling_nfe_chave ON public.bling_nfe(chave_acesso);
 
   -- Migração: stock_pack_groups - Tipo (volatil/tradicional)
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_pack_groups' AND column_name='tipo') THEN
@@ -182,7 +252,7 @@ BEGIN
       master_product_sku TEXT NOT NULL
   );
 
-  -- Pesagem
+  -- Pesagem / Ensacamento
   CREATE TABLE IF NOT EXISTS public.weighing_batches (
       id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
       stock_item_code TEXT NOT NULL,
@@ -192,8 +262,48 @@ BEGIN
       weighing_type TEXT DEFAULT 'daily',
       created_by_id TEXT,
       created_by_name TEXT,
+      product_code    TEXT,
+      qty_produced    REAL,
+      operador_maquina TEXT,
+      operador_batedor TEXT,
+      quantidade_batedor NUMERIC,
+      com_cor BOOLEAN DEFAULT FALSE,
+      tipo_operacao TEXT DEFAULT 'ENSACAMENTO',
+      equipe_mistura  TEXT,
+      destino         TEXT,
+      base_sku        TEXT,
+      batch_name      TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW()
   );
+
+  -- Adiciona colunas se não existirem
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='weighing_batches' AND column_name='operador_maquina') THEN
+    ALTER TABLE public.weighing_batches ADD COLUMN operador_maquina TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='weighing_batches' AND column_name='operador_batedor') THEN
+    ALTER TABLE public.weighing_batches ADD COLUMN operador_batedor TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='weighing_batches' AND column_name='quantidade_batedor') THEN
+    ALTER TABLE public.weighing_batches ADD COLUMN quantidade_batedor NUMERIC;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='weighing_batches' AND column_name='com_cor') THEN
+    ALTER TABLE public.weighing_batches ADD COLUMN com_cor BOOLEAN DEFAULT FALSE;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='weighing_batches' AND column_name='tipo_operacao') THEN
+    ALTER TABLE public.weighing_batches ADD COLUMN tipo_operacao TEXT DEFAULT 'ENSACAMENTO';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='weighing_batches' AND column_name='equipe_mistura') THEN
+    ALTER TABLE public.weighing_batches ADD COLUMN equipe_mistura TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='weighing_batches' AND column_name='destino') THEN
+    ALTER TABLE public.weighing_batches ADD COLUMN destino TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='weighing_batches' AND column_name='base_sku') THEN
+    ALTER TABLE public.weighing_batches ADD COLUMN base_sku TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='weighing_batches' AND column_name='produtos') THEN
+    ALTER TABLE public.weighing_batches ADD COLUMN produtos JSONB DEFAULT '[]'::jsonb;
+  END IF;
 
   -- Moagem
   CREATE TABLE IF NOT EXISTS public.grinding_batches (
@@ -284,17 +394,20 @@ BEGIN
       created_at TIMESTAMPTZ DEFAULT NOW()
   );
 
-  -- Grupos de Pacotes
-  CREATE TABLE IF NOT EXISTS public.stock_pack_groups (
+    CREATE TABLE IF NOT EXISTS public.stock_pack_groups (
       id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
       name TEXT NOT NULL,
       barcode TEXT,
       item_codes TEXT[] NOT NULL,
+      final_product_code TEXT,
       min_pack_qty REAL NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ DEFAULT NOW()
   );
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_pack_groups' AND column_name='barcode') THEN
     ALTER TABLE public.stock_pack_groups ADD COLUMN barcode TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stock_pack_groups' AND column_name='final_product_code') THEN
+    ALTER TABLE public.stock_pack_groups ADD COLUMN final_product_code TEXT;
   END IF;
 
   -- Estoque Pronto Adicionado
@@ -311,12 +424,25 @@ BEGIN
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW(),
       created_by TEXT,
-      barcode TEXT
+      barcode TEXT,
+      pallet TEXT,
+      galpao TEXT,
+      com_desempenadeira BOOLEAN DEFAULT FALSE
   );
       
   -- Garante coluna barcode em estoque_pronto
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='estoque_pronto' AND column_name='barcode') THEN
     ALTER TABLE public.estoque_pronto ADD COLUMN barcode TEXT;
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='estoque_pronto' AND column_name='pallet') THEN
+    ALTER TABLE public.estoque_pronto ADD COLUMN pallet TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='estoque_pronto' AND column_name='galpao') THEN
+    ALTER TABLE public.estoque_pronto ADD COLUMN galpao TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='estoque_pronto' AND column_name='com_desempenadeira') THEN
+    ALTER TABLE public.estoque_pronto ADD COLUMN com_desempenadeira BOOLEAN DEFAULT FALSE;
   END IF;
 
   CREATE INDEX IF NOT EXISTS idx_estoque_pronto_barcode ON public.estoque_pronto(barcode);
@@ -339,10 +465,18 @@ BEGIN
       erro_mensagem TEXT
   );
 
+  -- Setores
+  CREATE TABLE IF NOT EXISTS public.setores (
+      id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
+      name TEXT UNIQUE NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+  );
+
   CREATE INDEX IF NOT EXISTS idx_order_items_o_id ON public.order_items(order_id);
   CREATE INDEX IF NOT EXISTS idx_order_items_sku ON public.order_items(sku);
 
   -- 4. VIEWS (Dados Analíticos)
+  DROP VIEW IF EXISTS public.vw_dados_analiticos;
   CREATE OR REPLACE VIEW public.vw_dados_analiticos AS
   SELECT 
     o.id AS id_pedido,
@@ -356,6 +490,8 @@ BEGIN
     sl.user_name AS bipado_por,
     sl.user_id AS bipado_por_id,
     sl.scanned_at AS data_bipagem,
+    o.venda_origem AS canal_real,
+    o.id_pedido_loja AS num_loja_virtual,
     CASE 
         WHEN o.status = 'BIPADO' AND sl.scanned_at IS NOT NULL AND TO_DATE(o.data, 'YYYY-MM-DD') < DATE(sl.scanned_at) THEN 'Bipado com Atraso'
         WHEN o.status = 'BIPADO' THEN 'Bipado no Prazo'
@@ -369,7 +505,7 @@ BEGIN
   LEFT JOIN public.scan_logs sl ON (sl.display_key = o.order_id OR sl.display_key = o.tracking) AND sl.status = 'OK';
 
   -- 5. PERMISSÕES RLS
-  DO $$ 
+  DO $do$ 
   DECLARE 
     tbl text; 
   BEGIN 
@@ -380,9 +516,9 @@ BEGIN
       EXECUTE format('DROP POLICY IF EXISTS "allow_all" ON public.%I', tbl); 
       EXECUTE format('CREATE POLICY "allow_all" ON public.%I FOR ALL USING (true) WITH CHECK (true)', tbl); 
     END LOOP; 
-  END $$;
+  END $do$;
 
-  RETURN 'Banco de dados sincronizado e atualizado (v3.4) com sucesso!';
+  RETURN 'Banco de dados sincronizado e atualizado (v3.5 - Bling v3 Ready) com sucesso!';
 END;
 $$;
 
@@ -438,13 +574,13 @@ BEGIN
     PERFORM public.adjust_stock_quantity(item_code, quantity_to_produce, 'PRODUCAO_MANUAL', ref_text, user_name);
 
     -- 3. Get BOM
-    SELECT items INTO bom_data FROM public.product_boms WHERE product_sku = item_code;
+    SELECT COALESCE(bom_composition->'items', items) INTO bom_data FROM public.product_boms WHERE code = item_code;
     
     -- 4. Deduct Ingredients
     IF bom_data IS NOT NULL THEN
         FOR bom_item IN SELECT * FROM jsonb_array_elements(bom_data)
         LOOP
-            insumo_code := bom_item->>'stockItemCode';
+            insumo_code := COALESCE(bom_item->>'stockItemCode', bom_item->>'code');
             qty_needed := (bom_item->>'qty_per_pack')::real * quantity_to_produce;
             
             -- Find Insumo
@@ -589,23 +725,127 @@ BEGIN
 END;
 $$;
 
+-- Limpeza de Versões Conflitantes (Caso existam)
+-- Função Auxiliar: Dedução Recursiva de BOM
+CREATE OR REPLACE FUNCTION deduct_bom_recursive(
+    p_sku TEXT,
+    p_qty REAL,
+    p_origin TEXT,
+    p_ref TEXT,
+    p_user_name TEXT
+) RETURNS VOID LANGUAGE plpgsql AS $$
+DECLARE
+    v_bom_data JSONB;
+    v_bom_item JSONB;
+    v_comp_sku TEXT;
+    v_comp_qty REAL;
+BEGIN
+    SELECT COALESCE(bom_composition->'items', items) INTO v_bom_data FROM public.product_boms WHERE code = p_sku;
+    
+    IF v_bom_data IS NOT NULL AND jsonb_array_length(v_bom_data) > 0 THEN
+        FOR v_bom_item IN SELECT * FROM jsonb_array_elements(v_bom_data)
+        LOOP
+            v_comp_sku := COALESCE(v_bom_item->>'stockItemCode', v_bom_item->>'code');
+            v_comp_qty := (v_bom_item->>'qty_per_pack')::REAL * p_qty;
+            
+            IF v_comp_sku IS NOT NULL THEN
+                -- Chamada recursiva para componentes que podem ter sua própria BOM (ex: Neutro Base)
+                PERFORM public.deduct_bom_recursive(v_comp_sku, v_comp_qty, p_origin, p_ref, p_user_name);
+            END IF;
+        END LOOP;
+    ELSE
+        -- Se não tem BOM, deduz diretamente do estoque (é um insumo base)
+        PERFORM public.adjust_stock_quantity(p_sku, -p_qty, p_origin, p_ref, p_user_name);
+    END IF;
+END;
+$$;
+
 -- Função: Record Weighing
 CREATE OR REPLACE FUNCTION record_weighing_and_deduct_stock(
-    item_code text,
-    quantity_to_weigh real,
-    weighing_type_text text,
-    user_id text,
-    user_name text
-) RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
+    p_product_code       TEXT,
+    p_qty_produced       REAL,
+    p_user_id            TEXT,
+    p_batch_name         TEXT,
+    p_operador_maquina   TEXT,
+    p_operador_batedor   TEXT,
+    p_quantidade_batedor REAL,
+    p_com_cor            BOOLEAN,
+    p_tipo_operacao      TEXT,
+    p_equipe_mistura     TEXT,
+    p_destino            TEXT,
+    p_base_sku           TEXT,
+    p_produtos           JSONB DEFAULT '[]'::jsonb
+)
+RETURNS VOID
+LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
-    item_name text;
+    v_item_name TEXT;
+    v_user_name TEXT;
+    v_prod_item JSONB;
+    v_insumo_code TEXT;
+    v_qty_needed REAL;
 BEGIN
-    SELECT name INTO item_name FROM public.stock_items WHERE code = item_code;
-    
-    INSERT INTO public.weighing_batches (stock_item_code, stock_item_name, initial_qty, weighing_type, created_by_id, created_by_name)
-    VALUES (item_code, item_name, quantity_to_weigh, weighing_type_text, user_id, user_name);
-    
-    PERFORM public.adjust_stock_quantity(item_code, quantity_to_weigh, 'PESAGEM', 'Lote Pesado', user_name);
+    -- Obter nome do usuário
+    SELECT name INTO v_user_name FROM public.users WHERE id::text = p_user_id;
+
+    -- Registrar o lote
+    IF jsonb_array_length(p_produtos) = 0 THEN
+        SELECT name INTO v_item_name FROM public.stock_items WHERE code = p_product_code;
+        INSERT INTO public.weighing_batches (
+            stock_item_code, stock_item_name, initial_qty, weighing_type, created_by_id, created_by_name,
+            product_code, qty_produced, operador_maquina, operador_batedor, quantidade_batedor,
+            com_cor, tipo_operacao, equipe_mistura, destino, base_sku, batch_name, produtos
+        )
+        VALUES (
+            p_product_code, COALESCE(v_item_name, p_product_code), p_qty_produced, 'daily', p_user_id, v_user_name,
+            p_product_code, p_qty_produced, p_operador_maquina, p_operador_batedor, p_quantidade_batedor,
+            p_com_cor, p_tipo_operacao, p_equipe_mistura, p_destino, p_base_sku, p_batch_name, 
+            jsonb_build_array(jsonb_build_object('sku', p_product_code, 'nome', COALESCE(v_item_name, p_product_code), 'qty_batida', p_quantidade_batedor, 'qty_ensacada', p_qty_produced))
+        );
+    ELSE
+        INSERT INTO public.weighing_batches (
+            stock_item_code, stock_item_name, initial_qty, weighing_type, created_by_id, created_by_name,
+            product_code, qty_produced, operador_maquina, operador_batedor, quantidade_batedor,
+            com_cor, tipo_operacao, equipe_mistura, destino, base_sku, batch_name, produtos
+        )
+        VALUES (
+            p_product_code, 'Lote Múltiplo', p_qty_produced, 'daily', p_user_id, v_user_name,
+            p_product_code, p_qty_produced, p_operador_maquina, p_operador_batedor, p_quantidade_batedor,
+            p_com_cor, p_tipo_operacao, p_equipe_mistura, p_destino, p_base_sku, p_batch_name, p_produtos
+        );
+    END IF;
+
+    -- Lógica de Baixa Recursiva
+    IF jsonb_array_length(p_produtos) = 0 THEN
+        p_produtos := jsonb_build_array(jsonb_build_object('sku', p_product_code, 'qty_batida', p_quantidade_batedor, 'qty_ensacada', p_qty_produced));
+    END IF;
+
+    FOR v_prod_item IN SELECT * FROM jsonb_array_elements(p_produtos)
+    LOOP
+        v_insumo_code := v_prod_item->>'sku';
+        v_qty_needed  := (v_prod_item->>'qty_batida')::REAL;
+        
+        IF p_tipo_operacao = 'SO_BATEU' THEN
+            -- Modo SÓ BATEU: Consome insumos recursivamente e adiciona no SALDO DE MISTURA
+            PERFORM public.deduct_bom_recursive(v_insumo_code, v_qty_needed, 'ENSACAMENTO', 'Mistura (Só Bateu)', v_user_name);
+            UPDATE public.stock_items SET mixed_qty = COALESCE(mixed_qty, 0) + v_qty_needed WHERE code = v_insumo_code;
+
+        ELSIF p_tipo_operacao = 'SO_ENSACADEIRA' THEN
+            -- Modo SÓ ENSACADEIRA: Retira da mistura e adiciona no pronto
+            UPDATE public.stock_items SET mixed_qty = COALESCE(mixed_qty, 0) - (v_prod_item->>'qty_ensacada')::REAL WHERE code = v_insumo_code;
+            PERFORM public.adjust_stock_quantity(v_insumo_code, (v_prod_item->>'qty_ensacada')::REAL, 'ENSACAMENTO', 'Produção Ensacadeira', v_user_name);
+
+        ELSE
+            -- BATEDOR + ENSACADEIRA
+            PERFORM public.deduct_bom_recursive(v_insumo_code, v_qty_needed, 'ENSACAMENTO', 'Mistura (Bateu+Ensacou)', v_user_name);
+            PERFORM public.adjust_stock_quantity(v_insumo_code, (v_prod_item->>'qty_ensacada')::REAL, 'ENSACAMENTO', 'Produção Completa', v_user_name);
+
+            -- Saldo de mistura se houve sobra
+            IF (v_prod_item->>'qty_batida')::REAL > (v_prod_item->>'qty_ensacada')::REAL THEN
+                UPDATE public.stock_items SET mixed_qty = COALESCE(mixed_qty, 0) + ((v_prod_item->>'qty_batida')::REAL - (v_prod_item->>'qty_ensacada')::REAL) WHERE code = v_insumo_code;
+            END IF;
+        END IF;
+    END LOOP;
 END;
 $$;
 
@@ -656,7 +896,7 @@ DECLARE
     check_func text := 'SELECT jsonb_agg(jsonb_build_object(''name'', t, ''exists'', EXISTS (SELECT FROM pg_proc WHERE proname = t))) FROM unnest($1::text[]) t';
 
 BEGIN
-    EXECUTE check_table USING ARRAY['stock_items', 'orders', 'stock_movements', 'users', 'scan_logs', 'product_boms', 'sku_links', 'weighing_batches', 'production_plans', 'shopping_list_items', 'stock_pack_groups', 'estoque_pronto', 'order_items'] INTO tables_status;
+    EXECUTE check_table USING ARRAY['stock_items', 'orders', 'stock_movements', 'users', 'scan_logs', 'product_boms', 'sku_links', 'weighing_batches', 'production_plans', 'shopping_list_items', 'stock_pack_groups', 'estoque_pronto', 'order_items', 'setores'] INTO tables_status;
     EXECUTE check_type USING ARRAY['canal_type', 'order_status_value'] INTO types_status;
     EXECUTE check_func USING ARRAY['sync_database', 'adjust_stock_quantity', 'record_production_run', 'login'] INTO functions_status;
 
@@ -673,7 +913,7 @@ BEGIN
         'types_status', types_status,
         'functions_status', functions_status,
         'columns_status', columns_status,
-        'db_version', '2.11.0'
+        'db_version', '5.3'
     );
 END;
 $$;

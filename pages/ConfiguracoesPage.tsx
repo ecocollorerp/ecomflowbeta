@@ -12,6 +12,8 @@ import ConfirmActionModal from '../components/ConfirmActionModal';
 import EditAdminModal from '../components/EditAdminModal';
 import { syncDatabase } from '../lib/supabaseClient';
 import * as XLSX from 'xlsx';
+import { ALL_APP_PAGES } from '../lib/accessControl';
+import { CustomSector } from '../types';
 
 interface ConfiguracoesPageProps {
     users: User[];
@@ -27,12 +29,15 @@ interface ConfiguracoesPageProps {
     onClearScanHistory: (adminPassword: string) => Promise<{ success: boolean; message?: string }>;
     stockItems: StockItem[];
     addToast: (message: string, type: ToastMessage['type']) => void;
+    sectors: any[];
+    onAddSector: (name: string) => Promise<boolean>;
+    onDeleteSector: (id: string) => Promise<boolean>;
 }
 
-type ConfigTab = 'usuarios' | 'mapeamento' | 'bipagem' | 'expedicao' | 'etiquetas' | 'sistema';
+type ConfigTab = 'usuarios' | 'mapeamento' | 'bipagem' | 'expedicao' | 'etiquetas' | 'sistema' | 'setores';
 
 const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
-    const { users, onDeleteUser, onAddNewUser, currentUser, onUpdateUser, generalSettings, onSaveGeneralSettings, onBackupData, onResetDatabase, onClearScanHistory, stockItems } = props;
+    const { users, onDeleteUser, onAddNewUser, currentUser, onUpdateUser, generalSettings, onSaveGeneralSettings, onBackupData, onResetDatabase, onClearScanHistory, stockItems, sectors, onAddSector, onDeleteSector } = props;
     
     const [activeTab, setActiveTab] = useState<ConfigTab>('usuarios');
     const [settings, setSettings] = useState<GeneralSettings>(generalSettings);
@@ -49,6 +54,8 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
     const [userToDelete, setUserToDelete] = useState<User | null>(null);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [userToEdit, setUserToEdit] = useState<User | null>(null);
+    const [newSectorNameInput, setNewSectorNameInput] = useState('');
+    const [isAddingSectorBtn, setIsAddingSectorBtn] = useState(false);
 
     // Expedition states
     const [newRule, setNewRule] = useState<ExpeditionRule>({ id: '', from: 1, to: 1, stockItemCode: '', quantity: 1, category: 'ALL' });
@@ -188,6 +195,7 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
 
             <div className="flex border-b border-gray-200 overflow-x-auto bg-white rounded-t-3xl border-t border-l border-r">
                 <TabBtn id="usuarios" label="Funcionários" icon={<Users size={16}/>} />
+                <TabBtn id="setores" label="Setores" icon={<Building size={16}/>} />
                 <TabBtn id="mapeamento" label="Planilhas" icon={<FileSpreadsheet size={16}/>} />
                 <TabBtn id="bipagem" label="Bipagem" icon={<Layers size={16}/>} />
                 <TabBtn id="expedicao" label="Expedição" icon={<Truck size={16}/>} />
@@ -195,6 +203,76 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
                 <TabBtn id="sistema" label="Sistema" icon={<Settings size={16}/>} />
             </div>
 
+            {activeTab === 'setores' && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <div className="lg:col-span-1">
+                        <Section title="Novo Setor" icon={<Plus size={20} className="text-blue-600"/>}>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="text-[10px] font-black text-gray-400 uppercase">Nome do Setor</label>
+                                    <input 
+                                        type="text" 
+                                        value={newSectorNameInput}
+                                        onChange={e => setNewSectorNameInput(e.target.value)}
+                                        placeholder="Ex: Máquinas, Processamento"
+                                        className="w-full p-3 border rounded-xl bg-slate-50 font-bold text-sm border-slate-100"
+                                    />
+                                </div>
+                                <button 
+                                    onClick={async () => {
+                                        if (!newSectorNameInput.trim()) return;
+                                        setIsAddingSectorBtn(true);
+                                        const success = await onAddSector(newSectorNameInput.trim());
+                                        setIsAddingSectorBtn(false);
+                                        if (success) setNewSectorNameInput('');
+                                    }}
+                                    disabled={isAddingSectorBtn || !newSectorNameInput.trim()}
+                                    className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 disabled:opacity-50"
+                                >
+                                    {isAddingSectorBtn ? <Loader2 size={18} className="animate-spin mx-auto" /> : 'Criar Setor'}
+                                </button>
+                            </div>
+                        </Section>
+                    </div>
+                    
+                    <div className="lg:col-span-2">
+                        <Section title="Gestão de Setores" icon={<Settings2 size={20} className="text-slate-600"/>}>
+                            <div className="space-y-4">
+                                {sectors.map(sector => (
+                                    <div key={sector.id} className="p-4 border rounded-2xl bg-slate-50 border-slate-100 flex justify-between items-center group">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 bg-white rounded-xl border border-slate-100"><Layers size={18} className="text-blue-500"/></div>
+                                            <div>
+                                                <h3 className="font-black text-slate-800 uppercase tracking-tighter text-sm">{sector.name}</h3>
+                                                <p className="text-[9px] text-slate-400 font-bold uppercase">ID: {sector.id}</p>
+                                            </div>
+                                        </div>
+                                        <button 
+                                            onClick={() => {
+                                                if (confirm(`Excluir setor "${sector.name}"?`)) {
+                                                    onDeleteSector(sector.id);
+                                                }
+                                            }}
+                                            className="text-slate-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-xl transition-colors"
+                                        >
+                                            <Trash2 size={18}/>
+                                        </button>
+                                    </div>
+                                ))}
+                                
+                                {sectors.length === 0 && (
+                                    <div className="text-center py-10 border-2 border-dashed border-slate-200 rounded-3xl">
+                                        <p className="text-slate-400 font-bold uppercase text-[10px] tracking-widest leading-relaxed">
+                                            Nenhum setor cadastrado.<br/>
+                                            Use o formulário ao lado para começar.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        </Section>
+                    </div>
+                </div>
+            )}
             {activeTab === 'mapeamento' && (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                     <div className="lg:col-span-2">
@@ -270,9 +348,10 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
                                     <div>
                                         <label className="text-[10px] font-black text-gray-400 uppercase">Setores</label>
                                         <div className="max-h-32 overflow-y-auto border rounded-xl p-3 bg-slate-50 space-y-2 border-slate-100">
-                                            {generalSettings.setorList.map(s => (
-                                                <label key={s} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-600 cursor-pointer">
-                                                    <input type="checkbox" checked={newUserSetores.includes(s)} onChange={() => setNewUserSetores(p => p.includes(s) ? p.filter(x => x !== s) : [...p, s])} className="w-4 h-4 rounded-md border-slate-300"/> {s}
+                                            {sectors.map(s => (
+                                                <label key={s.id} className="flex items-center gap-2 text-[10px] font-black uppercase text-slate-600 cursor-pointer">
+                                                    <input type="checkbox" checked={newUserSetores.includes(s.name)} onChange={() => setNewUserSetores(p => p.includes(s.name) ? p.filter(x => x !== s.name) : [...p, s.name])} className="w-4 h-4 rounded-md border-slate-300"/> 
+                                                    {s.name}
                                                 </label>
                                             ))}
                                         </div>
@@ -299,7 +378,7 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
                                             <div className="p-3 bg-white rounded-2xl border border-slate-100 shadow-sm"><UserIcon size={24} className="text-blue-500"/></div>
                                             <div>
                                                 <p className="font-black text-slate-800 text-sm uppercase tracking-tighter leading-tight">{user.name}</p>
-                                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">{user.role} • {user.setor.join(', ')}</p>
+                                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">{user.role} • {Array.isArray(user.setor) ? user.setor.join(', ') : ''}</p>
                                             </div>
                                         </div>
                                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -512,7 +591,7 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
             </div>
 
             {isEditModalOpen && userToEdit && (
-                <EditAdminModal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} userToEdit={userToEdit} onConfirmUpdate={onUpdateUser} generalSettings={generalSettings} />
+                <EditAdminModal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} userToEdit={userToEdit} onConfirmUpdate={onUpdateUser} generalSettings={generalSettings} sectors={sectors} />
             )}
              {isDeleteModalOpen && userToDelete && (
                 <ConfirmDeleteUserModal isOpen={isDeleteModalOpen} onClose={() => setIsDeleteModalOpen(false)} userToDelete={userToDelete} currentUser={currentUser} onConfirmDelete={(pass) => onDeleteUser(userToDelete.id, pass)} />

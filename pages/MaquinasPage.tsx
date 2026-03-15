@@ -1,33 +1,39 @@
 import React, { useState, useMemo } from 'react';
-import { StockItem, WeighingBatch, WeighingType, User } from '../types';
+import { StockItem, WeighingBatch, WeighingType, User, GeneralSettings } from '../types';
 import {
     Weight, PlusCircle, User as UserIcon, Calendar,
-    TrendingUp, Scale, Award, Clock
+    TrendingUp, Award, Clock
 } from 'lucide-react';
 import AddWeighingModal from '../components/AddWeighingModal';
 import WeighingBatchList from '../components/WeighingBatchList';
+import { canAccessPage } from '../lib/accessControl';
 
-interface PesagemPageProps {
+interface MaquinasPageProps {
     stockItems: StockItem[];
     weighingBatches: WeighingBatch[];
-    onAddNewWeighing: (insumoCode: string, quantity: number, type: WeighingType, userId: string) => void;
+    onAddNewWeighing: (payload: any) => void;
     currentUser: User;
     onDeleteBatch: (batchId: string) => Promise<boolean>;
     users: User[];
+    skuLinks?: any[];
+    generalSettings: GeneralSettings;
 }
 
 const MEDALS = ['🥇', '🥈', '🥉'];
 const getTodayString = () => new Date().toISOString().split('T')[0];
 
-export const PesagemPage: React.FC<PesagemPageProps> = ({ stockItems, weighingBatches, onAddNewWeighing, currentUser, onDeleteBatch, users }) => {
+export const MaquinasPage: React.FC<MaquinasPageProps> = ({ stockItems, weighingBatches, onAddNewWeighing, currentUser, onDeleteBatch, users, skuLinks = [], generalSettings }) => {
     const [isAddWeighingModalOpen, setIsAddWeighingModalOpen] = useState(false);
     const [filterDate, setFilterDate] = useState(getTodayString());
 
     const weighableItems = useMemo(() => stockItems.filter(item => item.kind === 'PROCESSADO'), [stockItems]);
-    const pesagemUsers = useMemo(() => users.filter(user => Array.isArray(user.setor) && user.setor.includes('PESAGEM')), [users]);
+    const ensacamentoUsers = useMemo(() => {
+        return users.filter(user => canAccessPage(user, 'ensacamento', generalSettings));
+    }, [users, generalSettings]);
+    const sectorDisplayName = 'Máquinas';
 
-    const handleConfirmNewWeighing = (insumoCode: string, quantity: number, type: WeighingType, userId: string) => {
-        onAddNewWeighing(insumoCode, quantity, type, userId);
+    const handleConfirmNewWeighing = (payload: any) => {
+        onAddNewWeighing(payload);
         setIsAddWeighingModalOpen(false);
     };
     
@@ -62,8 +68,8 @@ export const PesagemPage: React.FC<PesagemPageProps> = ({ stockItems, weighingBa
             {/* ── Header ─────────────────────────────────────────── */}
             <div className="flex justify-between items-center flex-wrap gap-4 border-b border-slate-200 pb-6">
                 <h1 className="text-3xl font-black text-slate-800 flex items-center gap-3 uppercase tracking-tighter">
-                    <Scale size={40} className="text-violet-600 bg-violet-100 p-2 rounded-2xl shadow-sm" />
-                    Pesagem
+                    <Weight size={40} className="text-violet-600 bg-violet-100 p-2 rounded-2xl shadow-sm" />
+                    {sectorDisplayName}
                 </h1>
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-xl px-3 py-1.5">
@@ -73,7 +79,7 @@ export const PesagemPage: React.FC<PesagemPageProps> = ({ stockItems, weighingBa
                     </div>
                     <button onClick={() => setIsAddWeighingModalOpen(true)}
                         className="flex items-center gap-2 px-5 py-2.5 bg-violet-600 text-white font-black text-xs uppercase tracking-widest rounded-2xl hover:bg-violet-700 transition-all shadow-lg shadow-violet-100">
-                        <PlusCircle size={16} /> Nova Pesagem
+                        <PlusCircle size={16} /> Novo {sectorDisplayName}
                     </button>
                 </div>
             </div>
@@ -81,7 +87,7 @@ export const PesagemPage: React.FC<PesagemPageProps> = ({ stockItems, weighingBa
             {/* ── KPI Cards ──────────────────────────────────────── */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
-                    { label: 'Total Pesado', value: `${summary.total.toFixed(1)} kg`, icon: Weight, color: 'text-violet-700', iconColor: 'text-violet-500', bg: 'bg-violet-50' },
+                    { label: `Total ${sectorDisplayName}`, value: `${summary.total.toFixed(1)} kg`, icon: Weight, color: 'text-violet-700', iconColor: 'text-violet-500', bg: 'bg-violet-50' },
                     { label: 'Lotes', value: summary.lotes, icon: TrendingUp, color: 'text-blue-700', iconColor: 'text-blue-500', bg: 'bg-blue-50' },
                     { label: 'Operadores', value: summary.byUser.length, icon: UserIcon, color: 'text-emerald-700', iconColor: 'text-emerald-500', bg: 'bg-emerald-50' },
                     { label: 'Período', value: dateLabel, icon: Clock, color: 'text-slate-700', iconColor: 'text-slate-500', bg: 'bg-slate-50' },
@@ -115,9 +121,9 @@ export const PesagemPage: React.FC<PesagemPageProps> = ({ stockItems, weighingBa
                     </div>
                     {filteredBatches.length === 0 && (
                         <div className="px-6 py-14 text-center">
-                            <Scale size={40} className="mx-auto mb-3 text-slate-200" />
+                            <Weight size={40} className="mx-auto mb-3 text-slate-200" />
                             <p className="font-black text-sm text-slate-400">Nenhum lote registrado</p>
-                            <p className="text-[11px] text-slate-300 mt-1">Clique em <span className="font-black">Nova Pesagem</span> para começar.</p>
+                            <p className="text-[11px] text-slate-300 mt-1">Clique em <span className="font-black">Novo Lote</span> para começar.</p>
                         </div>
                     )}
                 </div>
@@ -126,7 +132,7 @@ export const PesagemPage: React.FC<PesagemPageProps> = ({ stockItems, weighingBa
                 <div className="space-y-4">
                     {/* Card destaque total */}
                     <div className="bg-gradient-to-br from-violet-600 to-purple-700 rounded-3xl shadow-xl p-6 text-center">
-                        <p className="text-[10px] font-black text-violet-200 uppercase tracking-widest mb-1">Total Pesado no Dia</p>
+                        <p className="text-[10px] font-black text-violet-200 uppercase tracking-widest mb-1">Total {sectorDisplayName} no Dia</p>
                         <p className="text-5xl font-black text-white">{summary.total.toFixed(1)}</p>
                         <p className="text-sm font-bold text-violet-200 mt-1">quilogramas</p>
                     </div>
@@ -135,7 +141,7 @@ export const PesagemPage: React.FC<PesagemPageProps> = ({ stockItems, weighingBa
                     <div className="bg-white rounded-3xl border border-slate-200 shadow-xl overflow-hidden">
                         <div className="px-5 py-3.5 border-b border-slate-100 flex items-center gap-2">
                             <Award size={16} className="text-amber-500" />
-                            <h3 className="text-xs font-black text-slate-700 uppercase tracking-widest">Ranking de Pesagem</h3>
+                            <h3 className="text-xs font-black text-slate-700 uppercase tracking-widest">Ranking de {sectorDisplayName}</h3>
                         </div>
                         <div className="divide-y divide-slate-100">
                             {summary.byUser.length > 0 ? summary.byUser.map((user, index) => {
@@ -161,7 +167,7 @@ export const PesagemPage: React.FC<PesagemPageProps> = ({ stockItems, weighingBa
                             }) : (
                                 <div className="px-5 py-10 text-center">
                                     <UserIcon size={30} className="mx-auto mb-2 text-slate-200" />
-                                    <p className="text-xs text-slate-400 font-bold">Nenhuma pesagem no período.</p>
+                                    <p className="text-xs text-slate-400 font-bold">Nenhum registro no período.</p>
                                 </div>
                             )}
                         </div>
@@ -175,11 +181,13 @@ export const PesagemPage: React.FC<PesagemPageProps> = ({ stockItems, weighingBa
                 insumos={weighableItems} 
                 stockItems={stockItems}
                 onConfirm={handleConfirmNewWeighing} 
-                users={pesagemUsers} 
+                users={ensacamentoUsers} 
                 currentUser={currentUser}
+                skuLinks={skuLinks}
+                generalSettings={generalSettings}
             />
         </div>
     );
 };
 
-export default PesagemPage;
+export default MaquinasPage;

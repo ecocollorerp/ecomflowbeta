@@ -327,13 +327,14 @@ export async function fetchBlingInvoices(
  * Chama GET /Api/v3/nfe/{id}/etiqueta via proxy do servidor.
  * Retorna o ZPL completo (DANFE simplificado + etiqueta de envio) ou null se falhar.
  */
-export async function fetchNfeEtiquetaZpl(apiKey: string, nfeId: number | string): Promise<string | null> {
+export async function fetchNfeEtiquetaZpl(apiKey: string, nfeId: number | string, canal?: string): Promise<string | null> {
     const authToken = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
     const safeId = String(nfeId || '').replace(/[^0-9]/g, '');
     if (!safeId) return null;
 
     try {
-        const resp = await fetchWithRetry(`/api/bling/nfe/${safeId}/etiqueta`, {
+        const url = `/api/bling/nfe/${safeId}/etiqueta${canal ? `?canal=${encodeURIComponent(canal)}` : ''}`;
+        const resp = await fetchWithRetry(url, {
             headers: { Authorization: authToken },
         });
         if (!resp.ok) {
@@ -457,6 +458,7 @@ export interface NfeSaida {
     taxas?: number;            // Taxas do marketplace/plataforma
     frete?: number;            // Valor do frete
     valorLiquido?: number;     // Valor líquido (Total - Taxas - Frete)
+    numeroPedidoLoja?: string;
 }
 
 // Mapeamento de situação ID → descrição legível (exportado para uso externo)
@@ -1636,4 +1638,66 @@ export async function cancelarNFeSoapReal(
     }
 
     return response.json();
+}
+
+/**
+ * Busca a nota fiscal associada a um pedido de venda.
+ */
+export async function searchNfeByOrder(apiKey: string, numeroPedido: string): Promise<NfeSaida | null> {
+    const authH = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+    try {
+        const params = {
+            numeroPedidoLoja: numeroPedido,
+            tipo: '1', // Saída
+            limite: '1'
+        };
+        const resp = await fetchWithRetry(`/api/bling/nfe/listar-saida?${new URLSearchParams(params).toString()}`, {
+            headers: { Authorization: authH, Accept: 'application/json' },
+        });
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        const nfe = data?.notas?.[0] || data?.data?.[0];
+        if (!nfe) return null;
+        
+        return {
+            id: nfe.id,
+            numero: String(nfe.numero),
+            serie: String(nfe.serie),
+            chaveAcesso: nfe.chaveAcesso,
+            situacao: nfe.situacao,
+            situacaoDescr: NFE_SIT_MAP[nfe.situacao] || `Situacao ${nfe.situacao}`,
+            dataEmissao: nfe.dataEmissao,
+            valorTotal: cleanMoney(nfe.valorNota),
+            contato: nfe.contato,
+            linkDanfe: nfe.linkDanfe,
+            numeroLoja: nfe.numeroPedidoLoja,
+            numeroPedidoLoja: nfe.numeroPedidoLoja
+        };
+    } catch (e) {
+        console.warn('[searchNfeByOrder] Erro:', e);
+        return null;
+    }
+}
+
+/**
+ * Busca objetos de postagem associados a um pedido.
+ */
+export async function fetchObjetosPostagem(apiKey: string, numeroPedido: string): Promise<any[]> {
+    const authH = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+    try {
+        const params = { numeroPedido };
+        const resp = await fetchWithRetry(`/api/bling/objetos-postagem?${new URLSearchParams(params).toString()}`, {
+            headers: { Authorization: authH, Accept: 'application/json' },
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            console.warn(`[fetchObjetosPostagem] Status ${resp.status}:`, err);
+            return [];
+        }
+        const data = await resp.json();
+        return data?.data || [];
+    } catch (e) {
+        console.warn('[fetchObjetosPostagem] Erro:', e);
+        return [];
+    }
 }

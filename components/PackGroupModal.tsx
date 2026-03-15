@@ -24,8 +24,13 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
     const [tipo, setTipo] = useState<'volatil' | 'tradicional'>('tradicional');
     const [quantidadeVolatil, setQuantidadeVolatil] = useState(0);
     const [selectedCodes, setSelectedCodes] = useState<string[]>([]);
+    const [finalProductCode, setFinalProductCode] = useState('');
     const [itemBarcodes, setItemBarcodes] = useState<Record<string, string>>({});
     const [searchTerm, setSearchTerm] = useState('');
+    const [localizacao, setLocalizacao] = useState('');
+    const [pallet, setPallet] = useState('');
+    const [galpao, setGalpao] = useState('');
+    const [comDesempenadeira, setComDesempenadeira] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
 
     const barcodeInputRef = useRef<HTMLInputElement>(null);
@@ -37,6 +42,11 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
             setMinQty(groupToEdit?.min_pack_qty || 0);
             setTipo(groupToEdit?.tipo || 'tradicional');
             setQuantidadeVolatil(groupToEdit?.quantidade_volatil || 0);
+            setFinalProductCode(groupToEdit?.final_product_code || '');
+            setLocalizacao(groupToEdit?.localizacao || '');
+            setPallet(groupToEdit?.pallet || '');
+            setGalpao(groupToEdit?.galpao || '');
+            setComDesempenadeira(groupToEdit?.com_desempenadeira || false);
 
             const initialCodes = groupToEdit?.item_codes || [];
             setSelectedCodes(initialCodes);
@@ -107,7 +117,12 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
                 min_pack_qty: minQty,
                 item_codes: selectedCodes,
                 tipo,
-                quantidade_volatil: tipo === 'volatil' ? quantidadeVolatil : 0
+                quantidade_volatil: tipo === 'volatil' ? quantidadeVolatil : 0,
+                final_product_code: finalProductCode.trim(),
+                localizacao: localizacao.trim(),
+                pallet: pallet.trim(),
+                galpao: galpao.trim(),
+                com_desempenadeira: comDesempenadeira
             }, groupToEdit?.id);
 
             onClose();
@@ -203,13 +218,67 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
                             </div>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Meta Mínima de Estoque (Pacotes)</label>
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Meta Mínima de Estoque (UN)</label>
                             <input
                                 type="number"
                                 value={minQty}
                                 onChange={e => setMinQty(Number(e.target.value))}
                                 className="w-full p-3 border-2 border-slate-200 rounded-xl font-bold focus:border-blue-500 outline-none"
                             />
+                        </div>
+                        <div className="md:col-span-2">
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">SKU do Produto Final (Opcional)</label>
+                            <input
+                                type="text"
+                                value={finalProductCode}
+                                onChange={e => setFinalProductCode(e.target.value.toUpperCase())}
+                                className="w-full p-3 border-2 border-slate-200 rounded-xl font-bold focus:border-blue-500 outline-none"
+                                placeholder="ex: KIT-BAG-01"
+                            />
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white p-4 rounded-2xl border border-slate-100 mt-4">
+                        <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Localização (Geral)</label>
+                                <input
+                                    type="text"
+                                    value={localizacao}
+                                    onChange={e => setLocalizacao(e.target.value.toUpperCase())}
+                                    className="w-full p-2.5 border-2 border-slate-200 rounded-xl font-bold focus:border-blue-500 outline-none text-sm"
+                                    placeholder="ex: PRATELEIRA A"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Pallet</label>
+                                <input
+                                    type="text"
+                                    value={pallet}
+                                    onChange={e => setPallet(e.target.value.toUpperCase())}
+                                    className="w-full p-2.5 border-2 border-slate-200 rounded-xl font-bold focus:border-blue-500 outline-none text-sm"
+                                    placeholder="ex: P-01"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Galpão</label>
+                                <input
+                                    type="text"
+                                    value={galpao}
+                                    onChange={e => setGalpao(e.target.value.toUpperCase())}
+                                    className="w-full p-2.5 border-2 border-slate-200 rounded-xl font-bold focus:border-blue-500 outline-none text-sm"
+                                    placeholder="ex: G-02"
+                                />
+                            </div>
+                        </div>
+                        <div className="md:col-span-2 flex items-center gap-3 bg-white p-3 rounded-2xl border border-slate-100">
+                             <input 
+                                type="checkbox" 
+                                id="comDesempenadeira"
+                                checked={comDesempenadeira}
+                                onChange={e => setComDesempenadeira(e.target.checked)}
+                                className="h-5 w-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                             />
+                             <label htmlFor="comDesempenadeira" className="text-sm font-bold text-slate-700 cursor-pointer uppercase">Com Desempenadeira?</label>
                         </div>
                     </div>
 

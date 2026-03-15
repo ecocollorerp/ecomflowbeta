@@ -18,20 +18,25 @@ interface ConfiguracoesGeraisPageProps {
     addToast: (message: string, type: ToastMessage['type']) => void;
     stockItems: StockItem[];
     users: User[];
+    sectors: any[];
+    onAddSector: (name: string) => Promise<boolean>;
+    onDeleteSector: (id: string) => Promise<boolean>;
 }
 
-type ConfigTab = 'mapeamento' | 'manutencao';
+type ConfigTab = 'sistema' | 'mapeamento' | 'manutencao';
 
 export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (props) => {
-    const { setCurrentPage, generalSettings, onSaveGeneralSettings, addToast, stockItems, users, onBackupData, onResetDatabase, onClearScanHistory } = props;
+    const { setCurrentPage, generalSettings, onSaveGeneralSettings, addToast, stockItems, users, onBackupData, onResetDatabase, onClearScanHistory, sectors, onAddSector, onDeleteSector } = props;
     
-    const [activeTab, setActiveTab] = useState<ConfigTab>('mapeamento');
+    const [activeTab, setActiveTab] = useState<ConfigTab>('sistema');
     const [settings, setSettings] = useState<GeneralSettings>(generalSettings);
     const [detectedHeaders, setDetectedHeaders] = useState<string[]>([]);
     const [sampleData, setSampleData] = useState<any[]>([]);
     
     const [isResetModalOpen, setIsResetModalOpen] = useState(false);
     const [isClearHistoryModalOpen, setIsClearHistoryModalOpen] = useState(false);
+    const [newSectorName, setNewSectorName] = useState('');
+    const [isAddingSector, setIsAddingSector] = useState(false);
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -129,14 +134,86 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                 <h1 className="text-3xl font-black text-slate-900 tracking-tighter uppercase">Painel de Administração Global</h1>
             </div>
             
-            <div className="bg-white border border-gray-200 rounded-t-2xl shadow-sm">
+            <div className="bg-white border border-gray-200 rounded-t-2xl">
                 <div className="flex border-b">
+                    <TabButton tabId="sistema" label="Geral e Setores" icon={<Settings2 size={16}/>} />
                     <TabButton tabId="mapeamento" label="Mapeamento de Planilhas" icon={<FileSpreadsheet size={16}/>} />
                     <TabButton tabId="manutencao" label="Manutenção do Sistema" icon={<Terminal size={16}/>} />
                 </div>
             </div>
 
             <div className="py-8">
+                {activeTab === 'sistema' && (
+                    <div className="space-y-6">
+                        <Section title="Informações da Empresa" icon={<Building className="text-blue-500" />}>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase">Nome da Empresa</label>
+                                    <input 
+                                        type="text" 
+                                        value={settings.companyName} 
+                                        onChange={e => setSettings(prev => ({...prev, companyName: e.target.value}))}
+                                        className="p-3 border rounded-xl text-sm bg-gray-50 focus:ring-2 focus:ring-blue-500 font-bold"
+                                    />
+                                </div>
+                            </div>
+                        </Section>
+
+                        <Section title="Gerenciamento de Setores" icon={<Users size={24} className="text-violet-500" />}>
+                            <p className="text-xs text-slate-500 mb-6 font-medium">Configure os setores da fábrica. Funcionários podem ser vinculados a múltiplos setores.</p>
+                            
+                            <div className="flex gap-2 mb-8">
+                                <input 
+                                    type="text" 
+                                    value={newSectorName}
+                                    onChange={(e) => setNewSectorName(e.target.value)}
+                                    placeholder="Novo setor (ex: Produção, Expedição...)"
+                                    className="flex-1 p-3 border rounded-xl text-sm font-bold bg-white focus:ring-2 focus:ring-violet-500"
+                                />
+                                <button 
+                                    onClick={async () => {
+                                        if (!newSectorName.trim()) return;
+                                        setIsAddingSector(true);
+                                        const success = await onAddSector(newSectorName.trim());
+                                        setIsAddingSector(false);
+                                        if (success) setNewSectorName('');
+                                    }}
+                                    disabled={isAddingSector || !newSectorName.trim()}
+                                    className="px-6 py-2 bg-violet-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-violet-700 disabled:opacity-50"
+                                >
+                                    {isAddingSector ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
+                                    ADICIONAR SETOR
+                                </button>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {sectors.length === 0 ? (
+                                    <div className="col-span-full py-12 text-center bg-slate-50 rounded-2xl border-2 border-dashed">
+                                        <p className="text-slate-400 font-bold">Nenhum setor cadastrado. Adicione um acima.</p>
+                                    </div>
+                                ) : sectors.map((sector) => (
+                                    <div key={sector.id} className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-200 shadow-sm group hover:border-violet-300 transition-all">
+                                        <div className="flex flex-col">
+                                            <span className="text-sm font-black text-slate-800 uppercase">{sector.name}</span>
+                                            <span className="text-[10px] text-slate-400 font-bold uppercase">ID: {sector.id.split('-')[0]}</span>
+                                        </div>
+                                        <button 
+                                            onClick={() => {
+                                                if (confirm(`Tem certeza que deseja excluir o setor "${sector.name}"? Isso pode afetar funcionários vinculados.`)) {
+                                                    onDeleteSector(sector.id);
+                                                }
+                                            }}
+                                            className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                        >
+                                            <Trash2 size={18} />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </Section>
+                    </div>
+                )}
+
                 {activeTab === 'mapeamento' && (
                      <Section title="Mapeamento de Planilhas" icon={<FileSpreadsheet className="text-emerald-500" />}>
                         <div className="p-6 bg-emerald-50 rounded-2xl border-2 border-dashed border-emerald-200 text-center mb-6 group hover:bg-emerald-100 transition-all">

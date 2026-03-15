@@ -90,7 +90,7 @@ const VolatilMovementModal: React.FC<VolatilMovementModalProps> = ({ isOpen, onC
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {stockItems
-                            .filter(s => group.item_codes?.includes(s.code))
+                            .filter(s => group.item_codes?.some(c => c.toUpperCase() === s.code.toUpperCase()))
                             .map(item => {
                                 const state = inputs[item.code] || { packCount: 0, packSize: 1 };
                                 const itemTotal = state.packCount * state.packSize;

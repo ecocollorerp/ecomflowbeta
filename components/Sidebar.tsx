@@ -111,7 +111,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, lowStock
   }
   
   const hasSettingsPermission = currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN';
-  const canShow = (page: string) => canAccessPage(currentUser, page);
+  const canShow = (page: string) => canAccessPage(currentUser, page, generalSettings);
 
   const sidebarContent = (
     <>
@@ -134,7 +134,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, lowStock
 
         <NavSection title="Estoque" isCollapsed={isCollapsed}>
           {canShow('estoque') && <NavItem icon={<Package size={20} />} text="Estoque" page="estoque" active={currentPage === 'estoque'} onClick={handlePageClick} alertCount={lowStockCount} isCollapsed={isCollapsed} />}
-          {canShow('pesagem') && <NavItem icon={<Weight size={20} />} text="Pesagem" page="pesagem" active={currentPage === 'pesagem'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
+          {canShow('pesagem') && <NavItem icon={<Weight size={20} />} text="Máquinas" page="pesagem" active={currentPage === 'pesagem'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
           {canShow('moagem') && <NavItem icon={<Recycle size={20} />} text="Moagem" page="moagem" active={currentPage === 'moagem'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
         </NavSection>
 

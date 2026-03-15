@@ -8,6 +8,8 @@ import type { SefazConfig } from "./lib/sefazIntegration.js";
 import { parseArquivoPFX, assinarXMLNFe, validarCertificado } from "./lib/certificateManager.js";
 import { criarNFe, obterNFe, obterNFePorChaveAcesso, listarNFes, atualizarNFe, deletarNFe, obterProximoNumeroNFe } from "./lib/nfeSupabase.js";
 import { criarCertificado, obterCertificado, listarCertificados, atualizarCertificado, deletarCertificado, obterCertificadoPorCNPJ } from "./lib/certificateSupabase.js";
+import { ZPLGenerator } from "./lib/zplGenerator.js";
+import { dbClient as supabase } from "./lib/supabaseClient.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -251,11 +253,13 @@ async function startServer() {
     return t.toLowerCase().startsWith('bearer ') ? t : `Bearer ${t}`;
   };
 
-  const parseCanal = (raw: any): 'ML' | 'SHOPEE' | 'SITE' => {
+  const parseCanal = (raw: any, pedidoNumero?: any): 'ML' | 'SHOPEE' | 'SITE' => {
     const text = String(raw || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    if (text.includes('MERCADO LIVRE') || text.includes('MERCADOLIVRE') || text.includes('MERCADO-LIVRE') || text.includes('MLB') || text.includes('ML ') || text === 'ML') return 'ML';
-    if (text.includes('SHOPEE')) return 'SHOPEE';
-    if (text.includes('MERCADO')) return 'ML'; // Mercado Pago, etc.
+    const num = String(pedidoNumero || '').toUpperCase();
+
+    if (text.includes('MERCADO LIVRE') || text.includes('MERCADOLIVRE') || text.includes('MERCADO-LIVRE') || text.includes('MLB') || text.includes('ML ') || text === 'ML' || num.startsWith('MLB')) return 'ML';
+    if (text.includes('SHOPEE') || num.includes('SHP')) return 'SHOPEE';
+    if (text.includes('MERCADO')) return 'ML'; 
     if (text.includes('AMAZON')) return 'SITE';
     return 'SITE';
   };
@@ -266,7 +270,7 @@ async function startServer() {
   const extrairMetadadosPedido = (pedido: any) => {
     let numeroLojaVirtual = pedido?.numeroLoja;
     const canalRaw = pedido?.loja?.nome || pedido?.loja?.descricao || pedido?.origem?.nome || pedido?.origem || '';
-    const canalDetectado = parseCanal(canalRaw);
+    const canalDetectado = parseCanal(canalRaw, numeroLojaVirtual);
 
     if (!numeroLojaVirtual) {
       const camposTexto = [
@@ -1891,81 +1895,100 @@ async function startServer() {
   // ────────────────────────────────────────────────────────────────────────────
   app.post('/api/bling/nfe/criar-emitir', async (req, res) => {
     try {
-      const { blingOrderId, emitir = false } = req.body as { blingOrderId: string | number; emitir?: boolean };
+      const { blingOrderId, nfeId: nfeIdParam, emitir = false } = req.body as { 
+        blingOrderId?: string | number; 
+        nfeId?: string | number;
+        emitir?: boolean 
+      };
       const rawAuth = req.headers.authorization || '';
       const token = rawAuth.startsWith('Bearer ') ? rawAuth : `Bearer ${rawAuth}`;
 
       if (!rawAuth) return res.status(401).json({ error: 'Token do Bling obrigatório' });
-      if (!blingOrderId) return res.status(400).json({ error: 'blingOrderId obrigatório' });
+      
+      // Se já temos a notaId, pulamos a criação e vamos direto pro emitir (se pedido)
+      if (nfeIdParam) {
+        console.log(`📤 [NFe] nfeId fornecido (${nfeIdParam}). Pulando criação...`);
+        if (!emitir) {
+           return res.json({ success: true, emitida: false, nfe: { id: nfeIdParam }, message: 'NF-e já existe' });
+        }
+        // Prossegue para a parte final de emissão
+      } else if (!blingOrderId) {
+        return res.status(400).json({ error: 'blingOrderId ou nfeId obrigatório' });
+      }
 
       const headers = { Authorization: token, 'Content-Type': 'application/json', Accept: 'application/json' };
       const readH = { Authorization: token, Accept: 'application/json' };
 
-      // ─── Passo 0: Buscar detalhes do pedido para extrair número da loja virtual ──
-      console.log(`📋 [NFe] Buscando detalhes do pedido ${blingOrderId}...`);
-      const pedidoResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(blingOrderId)}`, { headers: readH });
+      let primeiraId = nfeIdParam;
+      let nfesCriadas: any[] = nfeIdParam ? [{ id: nfeIdParam }] : [];
 
-      if (!pedidoResp.ok) {
-        return res.status(pedidoResp.status).json({ success: false, error: 'Erro ao buscar detalhes do pedido' });
-      }
+      if (!nfeIdParam && blingOrderId) {
+        // ─── Passo 0: Buscar detalhes do pedido para extrair número da loja virtual ──
+        console.log(`📋 [NFe] Buscando detalhes do pedido ${blingOrderId}...`);
+        const pedidoResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(blingOrderId)}`, { headers: readH });
 
-      const pedidoData = await pedidoResp.json();
-      const pedido = pedidoData?.data;
+        if (!pedidoResp.ok) {
+          const detail = await pedidoResp.json().catch(() => ({}));
+          return res.status(pedidoResp.status).json({ success: false, error: detail?.error?.description || 'Erro ao buscar detalhes do pedido' });
+        }
 
-      const metadados = extrairMetadadosPedido(pedido);
-      const { numeroLojaVirtual, canalDetectado } = metadados;
+        const pedidoData = await pedidoResp.json();
+        const pedido = pedidoData?.data;
 
-      // Atualizar observações do pedido com o número da loja virtual e plataforma
-      const infoAdicional = `Pedido: ${numeroLojaVirtual || 'N/A'} | Plataforma: ${canalDetectado}`;
-      const observacoesAtuais = pedido?.observacoes || '';
+        const metadados = extrairMetadadosPedido(pedido);
+        const { numeroLojaVirtual, canalDetectado } = metadados;
 
-      // Verifica se a info já está lá para evitar duplicação em caso de re-tentativa
-      if (!observacoesAtuais.includes(infoAdicional)) {
-        console.log(`📝 [NFe] Atualizando observações do pedido: ${infoAdicional}`);
+        // Atualizar observações do pedido com o número da loja virtual e plataforma
+        const infoAdicional = `Pedido: ${numeroLojaVirtual || 'N/A'} | Plataforma: ${canalDetectado}`;
+        const observacoesAtuais = pedido?.observacoes || '';
 
-        await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(blingOrderId)}`, {
-          method: 'PUT',
-          headers,
-          body: JSON.stringify({
-            observacoes: `${observacoesAtuais}\n${infoAdicional}`.trim()
-          })
-        });
-      }
+        // Verifica se a info já está lá para evitar duplicação em caso de re-tentativa
+        if (!observacoesAtuais.includes(infoAdicional)) {
+          console.log(`📝 [NFe] Atualizando observações do pedido: ${infoAdicional}`);
 
-      // ─── Passo 1: Gerar NF-e via rota nativa do Bling ─────────────────────
-      // POST /pedidos/vendas/{id}/gerar-nfe — Bling preenche tudo automaticamente
-      console.log(`📄 [NFe] Gerando NF-e via /pedidos/vendas/${blingOrderId}/gerar-nfe`);
-      const gerarResp = await fetch(
-        `https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(blingOrderId)}/gerar-nfe`,
-        { method: 'POST', headers },
-      );
+          await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(blingOrderId)}`, {
+            method: 'PUT',
+            headers,
+            body: JSON.stringify({
+              observacoes: `${observacoesAtuais}\n${infoAdicional}`.trim()
+            })
+          });
+        }
 
-      let gerarData: any;
-      try { gerarData = await gerarResp.json(); } catch { gerarData = {}; }
+        // ─── Passo 1: Gerar NF-e via rota nativa do Bling ─────────────────────
+        console.log(`📄 [NFe] Gerando NF-e via /pedidos/vendas/${blingOrderId}/gerar-nfe`);
+        const gerarResp = await fetch(
+          `https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(blingOrderId)}/gerar-nfe`,
+          { method: 'POST', headers },
+        );
 
-      if (!gerarResp.ok) {
-        console.error(`❌ [NFe] Erro ao gerar via rota nativa:`, JSON.stringify(gerarData, null, 2));
-        const blingErr = gerarData?.error || gerarData?.errors?.[0] || {};
-        const fields: string[] = Array.isArray(blingErr?.fields)
-          ? blingErr.fields.map((f: any) => `${f.element || f.field || ''}: ${f.msg || f.message || ''}`).filter(Boolean)
-          : [];
-        const errDesc = blingErr?.description || blingErr?.message || gerarData?.message || `Bling retornou ${gerarResp.status}`;
-        const fullMsg = fields.length > 0 ? `${errDesc} — ${fields.join('; ')}` : errDesc;
-        return res.status(gerarResp.status).json({ success: false, error: fullMsg, detail: gerarData });
-      }
+        let gerarData: any;
+        try { gerarData = await gerarResp.json(); } catch { gerarData = {}; }
 
-      // Resposta: { data: { id, numero, ... } } ou lista de NF-e geradas
-      const nfesCriadas = Array.isArray(gerarData?.data) ? gerarData.data : (gerarData?.data ? [gerarData.data] : []);
-      const primeiraId = nfesCriadas[0]?.id;
-      console.log(`✅ [NFe] Gerada(s): ${nfesCriadas.map((n: any) => n.id).join(', ')}`);
+        if (!gerarResp.ok) {
+          console.error(`❌ [NFe] Erro ao gerar via rota nativa:`, JSON.stringify(gerarData, null, 2));
+          const blingErr = gerarData?.error || gerarData?.errors?.[0] || {};
+          const fields: string[] = Array.isArray(blingErr?.fields)
+            ? blingErr.fields.map((f: any) => `${f.element || f.field || ''}: ${f.msg || f.message || ''}`).filter(Boolean)
+            : [];
+          const errDesc = blingErr?.description || blingErr?.message || gerarData?.message || `Bling retornou ${gerarResp.status}`;
+          const fullMsg = fields.length > 0 ? `${errDesc} — ${fields.join('; ')}` : errDesc;
+          return res.status(gerarResp.status).json({ success: false, error: fullMsg, detail: gerarData });
+        }
 
-      // ─── Passo 1.5: Patch metadata directly to NF-e as requested by user ───
-      if (primeiraId) {
-        await patchNfeComDadosPedido(token, primeiraId, pedido, metadados);
+        // Resposta: { data: { id, numero, ... } } ou lista de NF-e geradas
+        nfesCriadas = Array.isArray(gerarData?.data) ? gerarData.data : (gerarData?.data ? [gerarData.data] : []);
+        primeiraId = nfesCriadas[0]?.id;
+        console.log(`✅ [NFe] Gerada(s): ${nfesCriadas.map((n: any) => n.id).join(', ')}`);
+
+        // ─── Passo 1.5: Patch metadata directly to NF-e as requested by user ───
+        if (primeiraId) {
+          await patchNfeComDadosPedido(token, primeiraId, pedido, metadados);
+        }
       }
 
       if (!primeiraId || !emitir) {
-        return res.json({ success: true, emitida: false, nfe: nfesCriadas[0] || gerarData?.data, nfes: nfesCriadas });
+        return res.json({ success: true, emitida: false, nfe: nfesCriadas[0] || { id: primeiraId }, nfes: nfesCriadas });
       }
 
       // ─── Passo 2: Emitir NF-e (transmitir ao SEFAZ) ───────────────────────
@@ -2008,122 +2031,258 @@ async function startServer() {
         return res.json(cachedCanais);
       }
 
-      console.log('🌐 [BLING CANAIS] Buscando canais-venda direto da API do Bling');
-      const response = await fetch('https://www.bling.com.br/Api/v3/canais-venda', {
+      console.log('🌐 [BLING CANAIS] Buscando canais-venda direto da API do Bling via Fila');
+      const response = await blingFetchRetry('https://www.bling.com.br/Api/v3/canais-venda', {
         headers: { 'Authorization': token, 'Accept': 'application/json' }
       });
 
       if (!response.ok) {
-        if (response.status === 429) {
-          console.warn('⚠️ [BLING CANAIS] Rate limit (429) detectado ao buscar canais');
-          if (cachedCanais) {
-            console.log('🔄 [BLING CANAIS] Usando cache expirado devido a rate limit');
-            return res.json(cachedCanais);
-          }
+        if (response.status === 429 && cachedCanais) {
+          console.warn('⚠️ [BLING CANAIS] Rate limit (429) detectado. Retornando cache.');
+          return res.json(cachedCanais);
         }
         return res.status(response.status).json({ error: 'Erro ao buscar canais de venda' });
       }
 
       const data = await response.json();
-      cachedCanais = data;
+      
+      // Converte para um mapa id -> nome para facilitar o frontend
+      const dicionario: Record<string, string> = {};
+      if (Array.isArray(data.data)) {
+        data.data.forEach((c: any) => {
+          dicionario[String(c.id)] = c.descricao || c.nome || 'Canal sem nome';
+        });
+      }
+
+      const result = { ...data, dicionario };
+      cachedCanais = result;
       cachedCanaisTime = now;
-      res.json(data);
+      res.json(result);
     } catch (error: any) {
       console.error('❌ [Bling Canais Venda]:', error);
       res.status(500).json({ error: error.message });
     }
   });
 
+  // ────────────────────────────────────────────────────────────────────────────
+  // GERAR ETIQUETAS EM LOTE (ZPL NATIVO) — POST /api/bling/lotes/gerar-zpl
+  // Orquestra a busca de NF-e, Logística e Gera ZPL programático
+  // ────────────────────────────────────────────────────────────────────────────
+  app.post('/api/bling/lotes/gerar-zpl', async (req, res) => {
+    try {
+      const { ids, createdBy, forceNative = false } = req.body as { ids: string[], createdBy: string, forceNative?: boolean };
+      const rawAuth = req.headers.authorization || '';
+      const token = rawAuth.startsWith('Bearer ') ? rawAuth : `Bearer ${rawAuth}`;
+
+      if (!rawAuth) return res.status(401).json({ error: 'Token obrigatório' });
+      if (!ids || !Array.isArray(ids)) return res.status(400).json({ error: 'Lista de IDs obrigatória' });
+
+      console.log(`🚀 [LOTE ZPL] Iniciando geração para ${ids.length} itens (forceNative: ${forceNative})...`);
+
+      const zplParts: string[] = [];
+      const successIds: string[] = [];
+      const failures: any[] = [];
+
+      for (const id of ids) {
+        try {
+          let nfeData: any = null;
+          let objetoLogistico: any = null;
+          let zplBling: string | null = null;
+
+          // 1. Tentar descobrir se o ID é de NF-e ou Pedido
+          let currentStep = 'FETCH_NFE';
+          let nfeResp = await blingFetchRetry(`https://www.bling.com.br/Api/v3/nfe/${id}`, {
+            headers: { Authorization: token, Accept: 'application/json' }
+          });
+
+          if (!nfeResp.ok) {
+            currentStep = 'SEARCH_NFE_BY_ORDER';
+            console.log(`🔍 [LOTE ZPL] ID ${id} não é NF-e, buscando NF-e vinculada ao pedido...`);
+            const nfeSearchResp = await blingFetchRetry(`https://www.bling.com.br/Api/v3/nfe?numeroPedidoLoja=${id}&tipo=1`, {
+              headers: { Authorization: token, Accept: 'application/json' }
+            });
+            const searchData = await nfeSearchResp.json();
+            const foundNfeId = searchData?.data?.[0]?.id;
+            
+            if (foundNfeId) {
+              currentStep = 'FETCH_NFE_FOUND';
+              nfeResp = await blingFetchRetry(`https://www.bling.com.br/Api/v3/nfe/${foundNfeId}`, {
+                headers: { Authorization: token, Accept: 'application/json' }
+              });
+            }
+          }
+
+          if (nfeResp.ok) {
+            nfeData = (await nfeResp.json())?.data;
+          }
+
+          // 2. Tentar buscar ZPL oficial do Bling se não for forceNative
+          if (!forceNative && nfeData?.id) {
+             try {
+                currentStep = 'FETCH_LOGISTICS_OBJECT';
+                const objUrl = `https://www.bling.com.br/Api/v3/objetos-postagem?numeroPedidoLoja=${nfeData.idVenda || nfeData.pedidoVenda?.id || id}`;
+                const objResp = await blingFetchRetry(objUrl, {
+                  headers: { Authorization: token, Accept: 'application/json' }
+                });
+                if (objResp.ok) {
+                  const objs = await objResp.json();
+                  objetoLogistico = objs?.data?.[0];
+                  
+                  if (objetoLogistico?.id) {
+                    currentStep = 'FETCH_OFFICIAL_ZPL';
+                    const zplOfficialResp = await blingFetchRetry(`https://www.bling.com.br/Api/v3/logisticas/etiquetas/zpl?idsObjetos[]=${objetoLogistico.id}`, {
+                       headers: { Authorization: token, Accept: 'application/json' }
+                    });
+                    if (zplOfficialResp.ok) {
+                      const zplData = await zplOfficialResp.json();
+                      zplBling = zplData?.data?.[0]?.zpl || zplData?.zpl;
+                    }
+                  }
+                }
+             } catch (e) {
+                console.warn(`⚠️ [LOTE ZPL] Erro ao buscar ZPL oficial para ${id}:`, e);
+             }
+          }
+
+          // 3. Seleção do ZPL (Bling ou Nativo)
+          if (zplBling && !forceNative) {
+            zplParts.push(zplBling);
+            console.log(`✅ [LOTE ZPL] Item ${id} - Usando ZPL oficial Bling.`);
+          } else if (nfeData) {
+            currentStep = 'BUILD_NATIVE_ZPL';
+            console.log(`🎨 [LOTE ZPL] Item ${id} - Gerando ZPL Nativo EcomFlow...`);
+            
+            const danfeZpl = ZPLGenerator.generateDanfeSimplificada({
+              chaveAcesso: nfeData.chaveAcesso || '',
+              numeroNota: String(nfeData.numero || ''),
+              serie: String(nfeData.serie || ''),
+              valorTotal: nfeData.valorTotal || 0,
+              emitente: {
+                nome: nfeData.loja?.descricao || 'Emitente',
+                cnpj: 'Consulte o Bling'
+              },
+              destinatario: {
+                nome: nfeData.contato?.nome || 'Destinatário',
+                endereco: `${nfeData.contato?.endereco || ''}, ${nfeData.contato?.numero || ''} ${nfeData.contato?.complemento || ''}`,
+                bairro: nfeData.contato?.bairro || '',
+                cidade: nfeData.contato?.cidade || '',
+                uf: nfeData.contato?.uf || '',
+                cep: nfeData.contato?.cep || ''
+              }
+            });
+
+            const etiquetaZpl = ZPLGenerator.generateEtiquetaTransporte({
+              transportadora: objetoLogistico?.servico?.descricao || nfeData.transporte?.contato?.nome || 'Transportadora',
+              servico: objetoLogistico?.servico?.codigo || '',
+              rastreio: objetoLogistico?.codigoRastreio || nfeData.transporte?.rastreamento || nfeData.chaveAcesso || 'AGUARDANDO_RASTREIO',
+              pedidoLoja: String(id || nfeData.idVenda || ''),
+              cliente: nfeData.contato?.nome || '',
+              endereco: `${nfeData.contato?.endereco || ''}, ${nfeData.contato?.numero || ''} ${nfeData.contato?.complemento || ''}`,
+              cidadeUf: `${nfeData.contato?.cidade || ''}/${nfeData.contato?.uf || ''}`,
+              cep: nfeData.contato?.cep || ''
+            });
+
+            zplParts.push(ZPLGenerator.combine(danfeZpl, etiquetaZpl));
+          } else {
+            throw { message: `Dados insuficientes para gerar ZPL para o ID ${id}`, step: currentStep };
+          }
+          successIds.push(id);
+        } catch (err: any) {
+          console.error(`❌ [LOTE ZPL] Erro no item ${id}:`, err.message || err);
+          failures.push({ 
+            id, 
+            step: err.step || 'UNKNOWN', 
+            error: err.message || String(err), 
+            detail: err.detail || null 
+          });
+        }
+      }
+
+      const combinedZpl = zplParts.join('\n');
+      
+      // 4. Salva no histórico
+      try {
+        const { error: dbError } = await (supabase as any)
+          .from('etiquetas_historico')
+          .insert({
+            created_by_name: createdBy || 'Usuário',
+            page_count: zplParts.length,
+            zpl_content: combinedZpl,
+            settings_snapshot: JSON.stringify({ ids, failures, successIds, forceNative })
+          });
+        if (dbError) console.error(`❌ [LOTE ZPL] Erro DB:`, dbError);
+      } catch (dbEx) { console.error(`❌ [LOTE ZPL] Exceção DB:`, dbEx); }
+
+      res.json({
+        success: true,
+        count: zplParts.length,
+        zpl: combinedZpl,
+        failures
+      });
+    } catch (error: any) {
+      console.error('❌ [LOTE ZPL ERROR]:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.post('/api/bling/nfe/batch-criar-emitir', async (req, res) => {
     try {
-      const { blingOrderIds, emitir = false } = req.body as { blingOrderIds: (string | number)[]; emitir?: boolean };
+      const { orders, emitir = false } = req.body as { 
+        orders: Array<{ blingOrderId?: string | number, nfeId?: string | number }>, 
+        emitir?: boolean 
+      };
       const rawAuth = req.headers.authorization || '';
 
       if (!rawAuth) return res.status(401).json({ error: 'Token do Bling obrigatório' });
-      if (!blingOrderIds || !Array.isArray(blingOrderIds)) return res.status(400).json({ error: 'blingOrderIds deve ser um array' });
+      if (!orders || !Array.isArray(orders)) return res.status(400).json({ error: 'Lista de pedidos/notas obrigatória' });
 
-      console.log(`🚀 [NFe BATCH] Iniciando para ${blingOrderIds.length} pedidos...`);
+      console.log(`🚀 [NFe BATCH] Iniciando para ${orders.length} itens...`);
 
       const results: any[] = [];
-      const CONCURRENCY = 1; // Processar um por um para ser seguro com rate limits
-      const DELAY = 1000;   // 1s entre cada pedido no lote
+      const DELAY = 1000;
+      const host = req.get('host');
+      const protocol = req.protocol;
 
-      for (const id of blingOrderIds) {
+      for (let i = 0; i < orders.length; i++) {
+        const item = orders[i];
+        const idLabel = item.nfeId ? `NFe ${item.nfeId}` : `Pedido ${item.blingOrderId}`;
+        
         try {
-          // Reutilizamos a lógica interna chamando o endpoint local ou simulando o request
-          // Para simplificar e garantir consistência, vamos extrair a lógica principal se necessário,
-          // mas como estamos no mesmo arquivo, podemos simplesmente realizar o fetch interno ou refatorar.
-          // Aqui, vamos fazer um fetch local para /api/bling/nfe/criar-emitir (através do app ou fetch direto)
-          // Mas como o server pode estar em portas variadas, o ideal é refatorar a lógica acima into a function.
-          // No entanto, por brevidade nesta edição direta, vamos replicar a lógica básica ou usar fetch no localhost se soubermos a porta.
-          // Melhor: Refatorar agora para uma função reutilizável.
+          console.log(`📦 [NFe BATCH] (${i+1}/${orders.length}) Processando ${idLabel}...`);
 
-          // Nota: Como não quero bagunçar muito o server.ts com uma refatoração massiva agora, 
-          // vou simular o comportamento chamando a lógica via fetch interno ou replicando.
-          // Replicar é mais seguro dado o contexto de "scripts isolados".
+          // Chamada interna para o endpoint unitário
+          const localUrl = `${protocol}://${host}/api/bling/nfe/criar-emitir`;
+          const localResp = await fetch(localUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: rawAuth },
+            body: JSON.stringify({ 
+              blingOrderId: item.blingOrderId, 
+              nfeId: item.nfeId, 
+              emitir 
+            })
+          });
 
-          console.log(`📦 [NFe BATCH] Processando pedido ${id}...`);
-
-          // (Lógica replicada ou simplificada para o batch)
-          // Na prática, vamos usar o fetch do próprio node contra o localhost se possível, 
-          // ou simplesmente replicar os passos: Buscar Pedido -> Atualizar Obs -> Gerar NFe -> Emitir.
-
-          // Para manter o código limpo e evitar duplicação massiva, vamos assumir que o sistema
-          // pode chamar a si mesmo se soubermos o HOST. Se não, vamos extrair a lógica.
-
-          // EXTRAÇÃO DE LÓGICA (Simplificada):
-          const headers = { Authorization: rawAuth, 'Content-Type': 'application/json', Accept: 'application/json' };
-
-          // 1. Detalhes
-          const pedidoResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(id)}`, { headers });
-          if (!pedidoResp.ok) throw new Error(`Erro ao buscar pedido ${id}`);
-          const pedidoData = await pedidoResp.json();
-          const pedido = pedidoData?.data;
-
-          // 2. Metadados e Obs
-          const metadados = extrairMetadadosPedido(pedido);
-          const { numeroLojaVirtual, canalDetectado } = metadados;
-          const infoAdicional = `Pedido: ${numeroLojaVirtual || 'N/A'} | Plataforma: ${canalDetectado}`;
-          
-          if (!(pedido?.observacoes || '').includes(infoAdicional)) {
-            await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(id)}`, {
-              method: 'PUT',
-              headers,
-              body: JSON.stringify({ observacoes: `${pedido?.observacoes || ''}\n${infoAdicional}`.trim() })
-            });
-          }
-
-          // 3. Gerar
-          const gerarResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(id)}/gerar-nfe`, { method: 'POST', headers });
-          const gerarData = await gerarResp.json();
-          if (!gerarResp.ok) throw new Error(gerarData?.error?.description || gerarData?.message || `Erro ao gerar NFe do pedido ${id}`);
-
-          const nfId = Array.isArray(gerarData?.data) ? gerarData.data[0]?.id : (gerarData?.data?.id || gerarData?.id);
-
-          // 3.5. PATCH na NF-e para persistir dados
-          if (nfId) {
-            await patchNfeComDadosPedido(rawAuth, nfId, pedido, metadados);
-          }
-
-          // 4. Emitir
-          if (emitir && nfId) {
-            const emitResp = await fetch(`https://www.bling.com.br/Api/v3/nfe/${nfId}/enviar`, { method: 'POST', headers });
-            const emitData = await emitResp.json();
-            if (!emitResp.ok) throw new Error(emitData?.error?.description || emitData?.message || `Erro ao emitir NFe ${nfId}`);
-          }
-
-          results.push({ blingOrderId: id, success: true });
+          const data = await localResp.json();
+          results.push({
+            id: item.nfeId || item.blingOrderId,
+            success: localResp.ok,
+            ...data
+          });
         } catch (err: any) {
-          console.error(`❌ [NFe BATCH] Erro no pedido ${id}:`, err.message);
-          results.push({ blingOrderId: id, success: false, error: err.message });
+          console.error(`❌ [NFe BATCH] Erro ao processar ${idLabel}:`, err);
+          results.push({
+            id: item.nfeId || item.blingOrderId,
+            success: false,
+            error: err.message
+          });
         }
 
-        await new Promise(r => setTimeout(r, DELAY));
+        if (i < orders.length - 1) await new Promise(r => setTimeout(r, DELAY));
       }
 
       res.json({ success: true, results });
     } catch (error: any) {
-      console.error('❌ [NFe batch-criar-emitir]:', error);
+      console.error('❌ [Bling Batch Criar-Emitir]:', error);
       res.status(500).json({ success: false, error: error.message });
     }
   });
@@ -2170,26 +2329,6 @@ async function startServer() {
   // ────────────────────────────────────────────────────────────────────────────
 
   // ────────────────────────────────────────────────────────────────────────────
-  app.get('/api/bling/canais-venda', async (req, res) => {
-    try {
-      const rawAuth = req.headers.authorization || '';
-      const token = rawAuth.startsWith('Bearer ') ? rawAuth : `Bearer ${rawAuth}`;
-      if (!rawAuth) return res.status(401).json({ error: 'Token obrigatório' });
-
-      const resp = await fetch('https://www.bling.com.br/Api/v3/canais-venda', {
-        headers: { Authorization: token, Accept: 'application/json' },
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) return res.status(resp.status).json({ error: data?.error?.description || `Erro ${resp.status}`, detail: data });
-
-      const canais = Array.isArray(data?.data) ? data.data : [];
-      console.log(`📺 [Canais] ${canais.length} canal(is) encontrado(s)`);
-      res.json({ success: true, canais });
-    } catch (error: any) {
-      console.error('❌ [Canais]:', error);
-      res.status(500).json({ success: false, error: error.message });
-    }
-  });
 
   // ────────────────────────────────────────────────────────────────────────────
   // DETALHES / ALTERAR PEDIDO DE VENDA — GET ou PUT /api/bling/pedido-venda/:id
@@ -2267,44 +2406,90 @@ async function startServer() {
       const token = rawAuth.startsWith('Bearer ') ? rawAuth : `Bearer ${rawAuth}`;
       if (!rawAuth) return res.status(401).json({ error: 'Token obrigatório' });
 
-      const { dataInicial, dataFinal, situacao, pagina } = req.query as any;
-      const params = new URLSearchParams();
-      params.set('tipo', '1'); // 1 = saída
-      params.set('pagina', pagina || '1');
-      params.set('limite', '100');
-      if (dataInicial) params.set('dataEmissaoInicial', dataInicial);
-      if (dataFinal) params.set('dataEmissaoFinal', dataFinal);
-      if (situacao) params.set('situacao', situacao); // 1=Pendente, 2=Cancelada, 3=Aguardando recibo, 4=Rejeitada, 5=Autorizada, 6=Emitida, 7=Denegada, 8=Encerrada
+      const { dataInicial, dataFinal, situacao, pagina, id, idLoja } = req.query as any;
 
-      const url = `https://www.bling.com.br/Api/v3/nfe?${params.toString()}`;
-      const cacheKey = `${url}-${token.substring(0, 20)}`;
-      
-      const now = Date.now();
-      const cached = nfeListCache.get(cacheKey);
-      if (cached && (now - cached.timestamp < NFE_LIST_CACHE_TTL)) {
-        console.log(`✅ [NFe Saída] Servindo do cache: ${url}`);
-        return res.json({ success: true, notas: cached.data });
+      // Se passou ID, busca nota específica (estatística / detalhe rápido)
+      if (id) {
+          const resp = await blingFetchRetry(`https://www.bling.com.br/Api/v3/nfe/${id}`, { headers: { Authorization: token, Accept: 'application/json' } });
+          const data = await resp.json().catch(() => ({}));
+          return res.json({ success: true, notas: data?.data ? [data.data] : [] });
       }
 
-      console.log(`📋 [NFe Saída] GET ${url}`);
-      const resp = await blingFetchRetry(url, { headers: { Authorization: token, Accept: 'application/json' } });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) return res.status(resp.status).json({ error: data?.error?.description || `Erro ${resp.status}`, detail: data });
-
-      const notas = Array.isArray(data?.data) ? data.data : [];
-      console.log(`📋 [NFe Saída] ${notas.length} nota(s) encontrada(s)`);
+      const paginaUI = parseInt(pagina || '1');
+      // Triple-Fetch: UI Pág 1 -> Bling 1, 2, 3 | UI Pág 2 -> Bling 4, 5, 6
+      const blingP1 = (paginaUI * 3) - 2;
+      const blingP2 = (paginaUI * 3) - 1;
+      const blingP3 = (paginaUI * 3);
+      const limitPerReq = 100;
       
-      // Salva no cache
-      nfeListCache.set(cacheKey, { data: notas, timestamp: now });
-      
-      // Auto-cleanup do cache se crescer muito
-      if (nfeListCache.size > 100) {
-        const firstKey = nfeListCache.keys().next().value;
-        if (firstKey) nfeListCache.delete(firstKey);
-      }
+      const fetchPage = async (p: number) => {
+          const params = new URLSearchParams();
+          params.set('tipo', '1'); 
+          params.set('pagina', String(p));
+          params.set('limite', String(limitPerReq));
+          if (dataInicial) params.set('dataEmissaoInicial', dataInicial);
+          if (dataFinal) params.set('dataEmissaoFinal', dataFinal);
+          if (situacao) params.set('situacao', situacao);
+          if (idLoja) params.set('idLoja', idLoja);
 
-      res.json({ success: true, notas });
+          const url = `https://www.bling.com.br/Api/v3/nfe?${params.toString()}`;
+          const resp = await blingFetchRetry(url, { headers: { Authorization: token, Accept: 'application/json' } });
+          const data = await resp.json().catch(() => ({}));
+          return Array.isArray(data?.data) ? data.data : [];
+      };
+
+      console.log(`📋 [NFe Saída] UI Pág ${paginaUI} -> Triple-Fetch Bling p${blingP1}, p${blingP2} & p${blingP3}`);
+      
+      const [p1, p2, p3] = await Promise.all([
+          fetchPage(blingP1),
+          fetchPage(blingP2),
+          fetchPage(blingP3)
+      ]);
+
+      const notas = [...p1, ...p2, ...p3];
+      res.json({ success: true, notas, count: notas.length, hasMore: p3.length === limitPerReq });
     } catch (error: any) {
+      console.error('❌ [NFe Listar Saída Error]:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // Salvar NF-e em lote no ERP local
+  app.post('/api/bling/nfe/save-batch', async (req, res) => {
+    try {
+      const { notas } = req.body;
+      if (!Array.isArray(notas)) return res.status(400).json({ error: 'Lista de notas obrigatória' });
+
+      console.log(`💾 [NFe BATCH SAVE] Salvando ${notas.length} notas no ERP local...`);
+
+      const rows = notas.map((n: any) => ({
+        id: String(n.id),
+        bling_id: String(n.id),
+        numero: String(n.numero || ''),
+        serie: String(n.serie || ''),
+        situacao: Number(n.situacao || 1),
+        situacao_descricao: n.situacao_descricao || n.situacaoValor || '',
+        data_emissao: n.dataEmissao || n.data || null,
+        valor_total: Number(n.valor_total || n.total || 0),
+        chave_acesso: n.chave_acesso || n.chaveAcesso || '',
+        link_danfe: n.link_danfe || n.linkDanfe || '',
+        cliente_nome: n.contato?.nome || n.cliente_nome || '',
+        cliente_doc: n.contato?.numeroDocumento || n.cliente_doc || '',
+        id_venda: String(n.idVenda || n.venda?.id || ''),
+        id_loja_virtual: String(n.idLojaVirtual || n.id_loja_virtual || ''),
+        canal_nome: n.loja || n.canal || '',
+        last_sync: new Date().toISOString()
+      }));
+
+      const { error } = await (supabase as any)
+        .from('bling_nfe')
+        .upsert(rows, { onConflict: 'id' });
+
+      if (error) throw error;
+
+      res.json({ success: true, message: `${notas.length} notas salvas com sucesso` });
+    } catch (error: any) {
+      console.error('❌ [NFe Batch Save Error]:', error);
       res.status(500).json({ success: false, error: error.message });
     }
   });
@@ -2337,7 +2522,7 @@ async function startServer() {
     private queue: Array<() => Promise<any>> = [];
     private processing = false;
     private lastRequest = 0;
-    private minDelay = 500; // 500ms = ~2 req/s (seguro para Bling)
+    private minDelay = 334; // 334ms = ~3 req/s (Limite oficial do Bling v3)
 
     async enqueue<T>(fn: () => Promise<T>): Promise<T> {
       return new Promise((resolve, reject) => {
@@ -2383,28 +2568,36 @@ async function startServer() {
 
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const resp = await fetch(url, init);
+        // Usa a fila global para respeitar rigorosamente o rate limit de 3 req/s
+        const resp = await blingLimiter.enqueue(() => fetch(url, init));
 
-        // ✅ Sucesso - retornar resposta
-        if (resp.ok || resp.status < 500) {
+        // ✅ Sucesso ou erro do cliente (não retryable)
+        if (resp.ok || (resp.status >= 400 && resp.status < 500 && resp.status !== 429)) {
           return resp;
         }
 
-        // 429 = Rate limit - aguardar e retry
+        // 429 = Rate limit detectado mesmo com a fila (pode acontecer por concorrência externa)
         if (resp.status === 429 && attempt < retries) {
-          const delayMs = baseDelay * Math.pow(2, attempt); // Exponencial: 2s, 4s, 8s
-          console.warn(`⏳ [Bling 429] tentativa ${attempt + 1}/${retries + 1} - aguardando ${delayMs}ms`);
+          const delayMs = baseDelay * Math.pow(2, attempt); 
+          console.warn(`⏳ [Bling API Queue] 429 detectado — tentativa ${attempt + 1}/${retries + 1} — aguardando ${delayMs}ms`);
           await new Promise(r => setTimeout(r, delayMs));
           continue;
         }
 
-        // Outro erro
+        // 500+ = Erro de servidor - vale a pena tentar de novo
+        if (resp.status >= 500 && attempt < retries) {
+            const delayMs = baseDelay * (attempt + 1);
+            console.warn(`⚠️ [Bling API Queue] Erro ${resp.status} — tentativa ${attempt + 1}/${retries + 1} — aguardando ${delayMs}ms`);
+            await new Promise(r => setTimeout(r, delayMs));
+            continue;
+        }
+
         return resp;
       } catch (e: any) {
         lastError = e;
         if (attempt < retries) {
           const delayMs = baseDelay * Math.pow(2, attempt);
-          console.warn(`⏳ [Bling erro] tentativa ${attempt + 1}/${retries + 1} - aguardando ${delayMs}ms`);
+          console.warn(`❌ [Bling API Queue] Erro de rede — tentativa ${attempt + 1}/${retries + 1} — aguardando ${delayMs}ms:`, e.message);
           await new Promise(r => setTimeout(r, delayMs));
         }
       }
@@ -2421,39 +2614,80 @@ async function startServer() {
       if (!token) return res.status(401).json({ error: 'Token não fornecido' });
 
       const nfeId = req.params.id;
-      console.log(`📄 [NFe PDF] Solicitando metadados do PDF para NF-e ${nfeId}`);
+      const { type, numeroPedidoLoja, canal } = req.query as any;
 
-      // 1. Busca os metadados do PDF (Bling v3 retorna um JSON com a URL temporária)
-      const metaResponse = await fetch(`https://www.bling.com.br/Api/v3/nfe/${nfeId}/pdf`, {
-        headers: { Authorization: token, Accept: 'application/json' }
-      });
+      let pdfUrl = '';
+      
+      console.log(`📥 [NFe PDF] Iniciando download para ID ${nfeId} (Tipo: ${type}, Loja: ${numeroPedidoLoja}, Canal: ${canal})`);
 
-      if (!metaResponse.ok) {
-        const errText = await metaResponse.text();
-        console.error(`❌ [NFe PDF] Erro ao buscar metadados Bling (${metaResponse.status}):`, errText);
-        return res.status(metaResponse.status).json({ error: `Bling retornou ${metaResponse.status}`, detail: errText });
+      if (type === 'simplified' || type === 'combined') {
+        console.log(`📄 [NFe PDF] Buscando DANFE Simplificado/Combinado via logística para pedido ${numeroPedidoLoja}...`);
+        
+        // 1. Busca objeto de postagem
+        const objUrl = `https://www.bling.com.br/Api/v3/objetos-postagem?numeroPedidoLoja=${numeroPedidoLoja}`;
+        const objResp = await fetch(objUrl, { headers: { Authorization: token, Accept: 'application/json' } });
+        
+        if (objResp.ok) {
+          const objData = await objResp.json();
+          const objeto = objData?.data?.[0];
+          console.log(`📄 [NFe PDF] Objeto Postagem encontrado: ${!!objeto}`);
+          
+          if (type === 'combined') {
+             pdfUrl = objeto?.urlEtiquetaDanfe || objeto?.urlDanfeSimplificado;
+          } else {
+             pdfUrl = objeto?.urlDanfeSimplificado || objeto?.urlEtiquetaDanfe;
+          }
+        }
+
+        if (!pdfUrl) {
+          console.log(`📄 [NFe PDF] URL via logística não encontrada. Usando fallback de link direto para NF-e ${nfeId}`);
+          pdfUrl = `https://www.bling.com.br/relatorios/danfe.simplificado.php?idNota1=${nfeId}`;
+        }
       }
-
-      const metaData = await metaResponse.json();
-      const pdfUrl = metaData?.data?.url || metaData?.url;
 
       if (!pdfUrl) {
-        console.error(`❌ [NFe PDF] URL do PDF não encontrada no JSON:`, metaData);
-        return res.status(404).json({ error: 'URL do PDF não retornada pelo Bling', details: metaData });
+        console.log(`📄 [NFe PDF] Solicitando detalhes da NF-e ${nfeId} para extrair links...`);
+        const nfeResponse = await fetch(`https://www.bling.com.br/Api/v3/nfe/${nfeId}`, {
+          headers: { Authorization: token, Accept: 'application/json' }
+        });
+
+        if (!nfeResponse.ok) {
+          const errText = await nfeResponse.text();
+          console.error(`❌ [NFe PDF] Erro ${nfeResponse.status} ao buscar NF-e ${nfeId}:`, errText);
+          return res.status(nfeResponse.status).json({ error: `Bling retornou ${nfeResponse.status}`, detail: errText });
+        }
+
+        const nfeData = await nfeResponse.json();
+        const d = nfeData?.data || nfeData;
+        pdfUrl = d?.linkDanfe || d?.linkPDF || d?.linkXml?.replace('.xml', '.pdf'); // Tentativa desesperada de trocar extensão se link danfe faltar
+        console.log(`📄 [NFe PDF] Links encontrados no detalhe: Danfe=${!!d?.linkDanfe}, PDF=${!!d?.linkPDF}`);
       }
 
-      console.log(`📄 [NFe PDF] Baixando PDF real de: ${pdfUrl.substring(0, 50)}...`);
+      if (!pdfUrl) {
+        console.error(`❌ [NFe PDF] Nenhuma URL encontrada para download.`);
+        return res.status(404).json({ error: 'URL do PDF não disponível para esta nota' });
+      }
 
-      // 2. Busca o arquivo PDF real da URL temporária
+      console.log(`📄 [NFe PDF] Baixando de: ${pdfUrl}`);
+
+      // 2. Busca o arquivo PDF real
       const pdfResp = await fetch(pdfUrl);
+      
       if (!pdfResp.ok) {
-        console.error(`❌ [NFe PDF] Erro ao baixar arquivo da URL temporária (${pdfResp.status})`);
-        return res.status(502).json({ error: 'Falha ao baixar PDF da URL temporária do Bling' });
+        console.warn(`⚠️ [NFe PDF] Erro ${pdfResp.status} ao baixar arquivo da URL ${pdfUrl}. Retornando link para frontend. `);
+        // Se falhar o download direto pelo server (ex: falta de cookies na URL de relatório), 
+        // avisamos o frontend para abrir o link diretamente
+        return res.status(200).json({ 
+          redirect: true, 
+          url: pdfUrl,
+          message: 'Não foi possível baixar o PDF pelo servidor. Abrindo link direto...'
+        });
       }
 
       // Configura headers para o navegador reconhecer como PDF e disparar download
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', `attachment; filename="DANFE_${nfeId}.pdf"`);
+      const filename = `${type === 'simplified' ? 'SIMPLIFICADA' : type === 'combined' ? 'COMBINADA' : 'DANFE'}_${nfeId}.pdf`;
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       
       // Envia o conteúdo do PDF como buffer
       const arrayBuffer = await pdfResp.arrayBuffer();
@@ -2486,7 +2720,8 @@ async function startServer() {
       if (!rawAuth) return res.status(401).json({ error: 'Token obrigatório' });
 
       const nfeId = req.params.id;
-      console.log(`🏷️  [NFe Etiqueta] Iniciando busca para NF-e ${nfeId}`);
+      const { canal } = req.query as any;
+      console.log(`🏷️  [NFe Etiqueta] Iniciando busca para NF-e ${nfeId} (Canal: ${canal || 'não informado'})`);
 
       // 1. Tentativa Direta (V3 NFe Etiqueta)
       let respDirect = await blingFetchRetry(
@@ -2496,6 +2731,24 @@ async function startServer() {
 
       let dataDirect = await respDirect.json().catch(() => ({}));
       let zplResult = dataDirect?.data?.zpl || dataDirect?.zpl || null;
+
+      // 1.1 Fallback para Shopee via Link de Impressão Direto (Caso ZPL não retorne nada)
+      if (!zplResult && canal === 'SHOPEE') {
+        console.log(`🔍 [NFe Etiqueta] Tentando fallback Shopee via relatório para NF-e ${nfeId}`);
+        const shopeeReportUrl = `https://www.bling.com.br/impressao/etiquetasEnvio.php?idNota1=${nfeId}&tipoIntegracao=LogisticaShopee&descricao=Shopee%20Express`;
+        
+        try {
+          const shopeeResp = await fetch(shopeeReportUrl);
+          if (shopeeResp.ok) {
+            const text = await shopeeResp.text();
+            // Se o conteúdo começar com ^XA (ZPL), usamos ele
+            if (text.includes('^XA')) {
+               console.log(`✅ [NFe Etiqueta] ZPL recuperado via fallback Shopee!`);
+               zplResult = text;
+            }
+          }
+        } catch (e) { console.warn(`⚠️ [NFe Etiqueta] Falha no fallback Shopee:`, e); }
+      }
 
       // 2. Fallback: Busca via Objeto Logístico (mais robusto para integrações marketplace)
       if (!zplResult) {
@@ -2634,6 +2887,28 @@ async function startServer() {
     }
   });
 
+  // Proxy para Objetos de Postagem (Bling v3)
+  app.get('/api/bling/objetos-postagem', async (req, res) => {
+    try {
+      const token = normalizeBearerToken(req.headers['authorization'] as string || '');
+      if (!token) return res.status(401).json({ error: 'Token obrigatório' });
+
+      const query = new URLSearchParams(req.query as any).toString();
+      const url = `https://www.bling.com.br/Api/v3/objetos-postagem${query ? `?${query}` : ''}`;
+      
+      console.log(`📦 [LOGISTICA] GET ${url}`);
+      const response = await blingFetchRetry(url, {
+        headers: { Authorization: token, Accept: 'application/json' }
+      });
+      
+      const data = await response.json().catch(() => ({}));
+      res.status(response.status).json(data);
+    } catch (error: any) {
+      console.error('❌ [LOGISTICA ERROR]:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.all(/^\/api\/bling\//, async (req, res, next) => {
     // Skip rotas já tratadas por handlers específicos — passa para o próximo handler
     if (
@@ -2691,41 +2966,34 @@ async function startServer() {
 
       const dataInicio = String(req.query.dataInicio || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
       const dataFim = String(req.query.dataFim || new Date().toISOString().split('T')[0]);
+      const idLoja = req.query.idLoja ? String(req.query.idLoja) : '';
       const situacoesRaw = String(req.query.situacoes || '6');
       const situacaoIds = situacoesRaw.split(',').map((s: string) => s.trim()).filter(Boolean);
 
-      console.log(`🛒 [VENDAS BUSCAR] ${dataInicio} → ${dataFim} | situações: ${situacaoIds.join(',')}`);
+      const paginaUI = parseInt(String(req.query.pagina || '1'));
 
-      // ── 1. Busca a listagem paginada ──────────────────────────────────────────
-      const allRawOrders: any[] = [];
-      let pagina = 1;
-      let continuar = true;
+      console.log(`🛒 [VENDAS BUSCAR] ${dataInicio} → ${dataFim} | situações: ${situacaoIds.join(',')} | Pág UI: ${paginaUI}`);
 
-      while (continuar) {
-        const situacoesQs = situacaoIds.map((id: string, i: number) => `idsSituacoes[${i}]=${id}`).join('&');
-        const url = `https://www.bling.com.br/Api/v3/pedidos/vendas?dataInicial=${dataInicio}&dataFinal=${dataFim}&${situacoesQs}&limite=100&pagina=${pagina}`;
-        const pageResp = await fetch(url, { headers: { Authorization: token, Accept: 'application/json' } });
+      // ── 1. Double-Fetch (UI Pág n -> Bling 2n-1 & 2n) ──────────────────
+      const blingP1 = (paginaUI * 2) - 1;
+      const blingP2 = (paginaUI * 2);
+      const limitPerReq = 100;
 
-        if (!pageResp.ok) {
-          if (pagina === 1) {
-            const errBody = await pageResp.text().catch(() => '');
-            return res.status(pageResp.status).json({ error: `Bling retornou ${pageResp.status}`, detail: errBody });
-          }
-          break;
-        }
+      const fetchPage = async (p: number) => {
+          const situacoesQs = situacaoIds.map((id: string, i: number) => `idsSituacoes[${i}]=${id}`).join('&');
+          const idLojaQs = idLoja ? `&idLoja=${idLoja}` : '';
+          const url = `https://www.bling.com.br/Api/v3/pedidos/vendas?dataInicial=${dataInicio}&dataFinal=${dataFim}&${situacoesQs}&limite=${limitPerReq}&pagina=${p}${idLojaQs}`;
+          const pageResp = await fetch(url, { headers: { Authorization: token, Accept: 'application/json' } });
+          if (!pageResp.ok) return [];
+          const pageData = await pageResp.json();
+          return Array.isArray(pageData?.data) ? pageData.data : [];
+      };
 
-        const pageData = await pageResp.json();
-        const pageOrders: any[] = pageData?.data || [];
-        allRawOrders.push(...pageOrders);
+      console.log(`🛒 [VENDAS BUSCAR] Double-Fetch Bling p${blingP1} & p${blingP2}`);
+      const [p1, p2] = await Promise.all([fetchPage(blingP1), fetchPage(blingP2)]);
+      const allRawOrders = [...p1, ...p2];
 
-        if (pageOrders.length < 100) continuar = false;
-        else pagina++;
-
-        // Segurança: máximo 50 páginas (5000 pedidos) para cobrir grandes volumes de "Em Aberto"
-        if (pagina > 50) continuar = false;
-      }
-
-      console.log(`🛒 [VENDAS BUSCAR] ${allRawOrders.length} pedido(s) em ${pagina} página(s) — buscando detalhes...`);
+      console.log(`🛒 [VENDAS BUSCAR] ${allRawOrders.length} pedido(s) carregados (Double-Fetch) — buscando detalhes...`);
 
       // ── 2. Enriquece com detalhes completos (itens, endereço, pagamentos) ────
       // Bling v3 lista retorna dados resumidos; GET /pedidos/vendas/{id} retorna completo
@@ -2771,8 +3039,9 @@ async function startServer() {
 
       // ── 3. Mapeia campos completos ─────────────────────────────────────────
       const orders = enrichedRaw.filter(Boolean).map((order: any) => {
+        const numeroLoja = String(order?.numeroLoja || '');
         const canalRaw = order?.loja?.nome || order?.loja?.descricao || order?.origem?.nome || order?.origem || order?.tipo || '';
-        const detectedCanal = parseCanal(canalRaw);
+        const detectedCanal = parseCanal(canalRaw, numeroLoja);
         const items = Array.isArray(order?.itens) ? order.itens : [];
         const parcelas = Array.isArray(order?.parcelas) ? order.parcelas : (Array.isArray(order?.pagamentos) ? order.pagamentos : []);
         const endEntrega = order?.enderecoEntrega || order?.transporte?.enderecoEntrega || null;
@@ -2832,7 +3101,7 @@ async function startServer() {
         };
       });
 
-      res.json({ success: true, total: orders.length, orders });
+      res.json({ success: true, total: orders.length, orders, hasMore: p2.length === limitPerReq });
     } catch (error: any) {
       console.error('❌ [VENDAS BUSCAR]:', error);
       res.status(500).json({ error: error.message });
@@ -3192,14 +3461,70 @@ async function startServer() {
   });
 
   // Webhooks do Bling — Devem retornar 200 OK para evitar erro de "Webhook inativo" no painel do Bling
-  app.post("/api/bling/webhook/vendas", (req, res) => {
-    console.log("🔔 [BLING WEBHOOK VENDAS] Recebido:", JSON.stringify(req.body).substring(0, 200) + '...');
-    res.status(200).json({ success: true, message: "Webhook recebido com sucesso" });
+  app.post("/api/bling/webhook/vendas", async (req, res) => {
+    try {
+      const payload = req.body;
+      console.log("🔔 [BLING WEBHOOK VENDAS] Payload:", JSON.stringify(payload).substring(0, 500));
+
+      const venda = payload?.data || payload;
+      if (venda?.id) {
+          const blingId = String(venda.id);
+          const situacaoId = venda.situacao?.id;
+          const situacaoValor = venda.situacao?.valor;
+
+          // Atualiza pedido local se existir
+          const { error } = await (supabase as any)
+            .from('orders')
+            .update({ 
+                id_bling: blingId,
+                situacao_id: situacaoId,
+                situacao_valor: situacaoValor,
+                // Mapeamento opcional de status interno se necessário
+            })
+            .eq('id_bling', blingId);
+            
+          if (error) console.error("❌ [WEBHOOK VENDAS] Erro DB:", error);
+      }
+
+      res.status(200).json({ success: true, message: "Webhook recebido e processado" });
+    } catch (err: any) {
+      console.error("❌ [WEBHOOK VENDAS] Erro:", err.message);
+      res.status(200).json({ success: false, error: err.message }); // Bling exige 200 até no erro p/ não desativar
+    }
   });
 
-  app.post("/api/bling/webhook/nfe", (req, res) => {
-    console.log("🔔 [BLING WEBHOOK NFE] Recebido:", JSON.stringify(req.body).substring(0, 200) + '...');
-    res.status(200).json({ success: true, message: "Webhook recebido com sucesso" });
+  app.post("/api/bling/webhook/nfe", async (req, res) => {
+    try {
+      const payload = req.body;
+      console.log("🔔 [BLING WEBHOOK NFE] Payload:", JSON.stringify(payload).substring(0, 500));
+
+      const nfe = payload?.data || payload;
+      if (nfe?.id) {
+          // Persiste/Atualiza na tabela bling_nfe
+          const { error } = await (supabase as any)
+            .from('bling_nfe')
+            .upsert({
+                id: String(nfe.id),
+                bling_id: String(nfe.id),
+                numero: String(nfe.numero || ''),
+                serie: String(nfe.serie || ''),
+                situacao: nfe.situacao || 1,
+                situacao_descricao: nfe.situacao_descricao || '',
+                valor_total: nfe.valor_total || 0,
+                chave_acesso: nfe.chave_acesso || '',
+                link_danfe: nfe.link_danfe || '',
+                id_venda: String(nfe.venda?.id || ''),
+                last_sync: new Date().toISOString()
+            }, { onConflict: 'id' });
+
+          if (error) console.error("❌ [WEBHOOK NFE] Erro DB:", error);
+      }
+
+      res.status(200).json({ success: true, message: "Webhook recebido e processado" });
+    } catch (err: any) {
+      console.error("❌ [WEBHOOK NFE] Erro:", err.message);
+      res.status(200).json({ success: false, error: err.message });
+    }
   });
 
   // Cria o servidor HTTPS antes do Vite para passar como referência ao HMR

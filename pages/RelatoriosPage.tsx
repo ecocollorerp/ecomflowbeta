@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { StockItem, StockMovement, OrderItem, ReportFilters, ReportPeriod, BipStatus, Canal, WeighingBatch, ScanLogItem, User, ProdutoCombinado, StockItemKind, AttendanceRecord, ReturnItem, OrderStatusValue, GeneralSettings, GrindingBatch } from '../types';
 import { BarChart3, Package, FileDown, Search, Calendar, ChevronDown, ShoppingCart, TrendingUp, AlertTriangle, Factory, Box, Weight, QrCode, Bug, Laptop2, Users, FileWarning, Undo, ChevronRight, Recycle } from 'lucide-react';
 import jsPDF from 'jspdf';
@@ -18,7 +18,7 @@ const getReportTitle = (reportId: string) => {
         'pedidos/devolucoes': 'Devoluções Registradas',
         'producao/por-cor': 'Produção por Cor',
         'producao/por-sku': 'Produção por SKU',
-        'pesagem/totais': 'Totais de Pesagem por Operador',
+        'ensacamento/totais': 'Totais de Máquinas por Operador',
         'moagem/lotes': 'Lotes de Moagem',
         'moagem/producao-operador': 'Produção de Moagem por Operador',
         'bipagem/por-operador': 'Bipagem por Operador',
@@ -28,7 +28,7 @@ const getReportTitle = (reportId: string) => {
         'erros/bip-sem-pedido': 'Erros: Bipagem sem Pedido na Lista',
         'funcionarios/ponto-diario': 'Relatório de Ponto Diário',
         'funcionarios/faltas': 'Relatório de Faltas e Atestados',
-        'funcionarios/pesagem': 'Relatório de Pesagem por Funcionário',
+        'funcionarios/pesagem': 'Relatório de Máquinas por Funcionário',
     };
     return titles[reportId] || 'Relatório';
 };
@@ -274,8 +274,8 @@ const BipagemTimelineReport: React.FC<{ scans: ScanLogItem[] }> = ({ scans }) =>
     </ReportTable>
 );
 
-const TotaisPesagemReport: React.FC<{ data: { userId: string, userName: string, itemCode: string, itemName: string, total: number, count: number }[] }> = ({ data }) => (
-    <ReportTable headers={['Operador', 'Insumo Processado', 'Total Pesado (kg)', 'Nº de Lotes']}>
+const TotaisEnsacamentoReport: React.FC<{ data: { userId: string, userName: string, itemCode: string, itemName: string, total: number, count: number }[] }> = ({ data }) => (
+    <ReportTable headers={['Operador', 'Insumo Processado', 'Total Produzido (kg)', 'Nº de Lotes']}>
         {data.length > 0 ? data.map(item => (
             <tr key={`${item.userId}-${item.itemCode}`}>
                 <td className="py-2 px-3 font-medium text-gray-900 dark:text-gray-50">{item.userName}</td>
@@ -370,8 +370,8 @@ const PontoDiarioReport: React.FC<{ data: { user: User, record: AttendanceRecord
     );
 };
 
-const PesagemPorFuncionarioReport: React.FC<{ data: { userId: string, userName: string, totalPesado: number }[] }> = ({ data }) => (
-    <ReportTable headers={['Funcionário', 'Total Pesado (kg)']}>
+const EnsacamentoPorFuncionarioReport: React.FC<{ data: { userId: string, userName: string, totalPesado: number }[] }> = ({ data }) => (
+    <ReportTable headers={['Funcionário', 'Total Produzido (kg)']}>
         {data.length > 0 ? data.map(item => (
             <tr key={item.userId}>
                 <td className="py-2 px-3 font-medium text-gray-900 dark:text-gray-50">{item.userName}</td>
@@ -444,8 +444,8 @@ const reportCategories = [
         ]
     },
     {
-        id: 'pesagem', name: 'Pesagem', icon: <Weight size={18} />, reports: [
-            { id: 'pesagem/totais', name: 'Totais de Pesagem' },
+        id: 'ensacamento', name: 'Máquinas', icon: <Weight size={18} />, reports: [
+            { id: 'ensacamento/totais', name: 'Totais de Máquinas' },
         ]
     },
     {
@@ -465,7 +465,7 @@ const reportCategories = [
         id: 'funcionarios', name: 'Funcionários', icon: <Users size={18} />, reports: [
             { id: 'funcionarios/ponto-diario', name: 'Ponto Diário' },
             { id: 'funcionarios/faltas', name: 'Faltas e Atestados' },
-            { id: 'funcionarios/pesagem', name: 'Pesagem por Funcionário' },
+            { id: 'funcionarios/pesagem', name: 'Máquinas por Funcionário' },
         ]
     },
     {
@@ -480,7 +480,7 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
     const { stockItems, stockMovements, orders, weighingBatches, scanHistory, produtosCombinados, users, returns, generalSettings, grindingBatches } = props;
     const [activeReport, setActiveReport] = useState('estoque/posicao');
     const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({
-        estoque: true, pedidos: true, producao: true, pesagem: true, bipagem: true, erros: true, funcionarios: true, moagem: true,
+        estoque: true, pedidos: true, producao: true, ensacamento: true, bipagem: true, erros: true, funcionarios: true, moagem: true,
     });
     const [filters, setFilters] = useState<ReportFilters>({
         period: 'last7days', search: '', canal: 'ALL', status: 'ALL', insumoCode: '', operatorId: 'ALL',
@@ -505,7 +505,7 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
     const relevantOperators = useMemo(() => {
         const reportCategory = activeReport.split('/')[0];
         let sector: string | null = null;
-        if (reportCategory === 'pesagem' || activeReport === 'funcionarios/pesagem') sector = 'PESAGEM';
+        if (reportCategory === 'ensacamento' || activeReport === 'funcionarios/pesagem') sector = 'ENSACAMENTO';
         if (reportCategory === 'bipagem') sector = 'EMBALAGEM';
         if (reportCategory === 'moagem') sector = 'MOAGEM';
 
@@ -603,12 +603,12 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
         });
         data['bipagem/por-operador'] = Array.from(operatorStats.values());
 
-        // --- PESAGEM ---
+        // --- ENSACAMENTO ---
         const weighingBatchesNoPeriodo = weighingBatches.filter(b => dateFilter(b.createdAt) && operatorFilter(b));
-        const totaisPesagemMap = new Map<string, { userId: string, userName: string, itemCode: string, itemName: string, total: number, count: number }>();
+        const totaisEnsacamentoMap = new Map<string, { userId: string, userName: string, itemCode: string, itemName: string, total: number, count: number }>();
         weighingBatchesNoPeriodo.forEach(batch => {
             const key = `${batch.userId}-${batch.stockItemCode}`;
-            const stats = totaisPesagemMap.get(key) || {
+            const stats = totaisEnsacamentoMap.get(key) || {
                 userId: batch.userId,
                 userName: batch.createdBy,
                 itemCode: batch.stockItemCode,
@@ -618,9 +618,9 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
             };
             stats.total += batch.initialQty;
             stats.count++;
-            totaisPesagemMap.set(key, stats);
+            totaisEnsacamentoMap.set(key, stats);
         });
-        data['pesagem/totais'] = Array.from(totaisPesagemMap.values());
+        data['ensacamento/totais'] = Array.from(totaisEnsacamentoMap.values());
 
         // --- MOAGEM ---
         const grindingBatchesNoPeriodo = grindingBatches.filter(b => dateFilter(b.createdAt) && operatorFilter(b));
@@ -658,13 +658,13 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
         data['funcionarios/ponto-diario'] = attendanceInPeriod;
         data['funcionarios/faltas'] = attendanceInPeriod.filter(item => item.record.status === 'ABSENT');
 
-        const pesagemPorFuncionario = new Map<string, { userId: string, userName: string, totalPesado: number }>();
+        const ensacamentoPorFuncionario = new Map<string, { userId: string, userName: string, totalPesado: number }>();
         weighingBatchesNoPeriodo.forEach(batch => {
-            const userStats = pesagemPorFuncionario.get(batch.userId) || { userId: batch.userId, userName: batch.createdBy, totalPesado: 0 };
+            const userStats = ensacamentoPorFuncionario.get(batch.userId) || { userId: batch.userId, userName: batch.createdBy, totalPesado: 0 };
             userStats.totalPesado += batch.initialQty;
-            pesagemPorFuncionario.set(batch.userId, userStats);
+            ensacamentoPorFuncionario.set(batch.userId, userStats);
         });
-        data['funcionarios/pesagem'] = Array.from(pesagemPorFuncionario.values());
+        data['funcionarios/pesagem'] = Array.from(ensacamentoPorFuncionario.values());
 
         // --- ERROS ---
         data['erros/bom-faltante'] = stockItems.filter(i => i.kind === 'PRODUTO' && !produtosCombinados.some(b => b.productSku === i.code));
@@ -710,8 +710,8 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
                 headers = ['Código Insumo/Material', 'Nome', 'Quantidade Total Gasta'];
                 body = (data as { itemCode: string, itemName: string, qtyUsada: number }[]).map(d => [d.itemCode, d.itemName, d.qtyUsada.toFixed(2)]);
                 break;
-            case 'pesagem/totais':
-                headers = ['Operador', 'Insumo', 'Total Pesado (kg)', 'Nº de Lotes'];
+            case 'ensacamento/totais':
+                headers = ['Operador', 'Insumo', 'Total Ensacado (kg)', 'Nº de Lotes'];
                 body = (data as { userName: string, itemName: string, total: number, count: number }[]).map(d => [d.userName, d.itemName, d.total.toFixed(3), d.count]);
                 break;
             // Add other cases here as needed...
@@ -743,13 +743,13 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
             case 'pedidos/devolucoes': return <DevolucoesReport returns={data} />;
             case 'bipagem/por-operador': return <BipagemAgregadaReport data={data} title="Operador" />;
             case 'bipagem/timeline': return <BipagemTimelineReport scans={data} />;
-            case 'pesagem/totais': return <TotaisPesagemReport data={data} />;
+            case 'ensacamento/totais': return <TotaisEnsacamentoReport data={data} />;
             case 'producao/material-gasto': return <MaterialGastoReport data={data} />;
             case 'moagem/lotes': return <LotesDeMoagemReport batches={data} />;
             case 'moagem/producao-operador': return <ProducaoMoagemOperadorReport data={data} />;
             case 'funcionarios/ponto-diario': return <PontoDiarioReport data={data} />;
             case 'funcionarios/faltas': return <FaltasAtestadosReport data={data} />;
-            case 'funcionarios/pesagem': return <PesagemPorFuncionarioReport data={data} />;
+            case 'funcionarios/pesagem': return <EnsacamentoPorFuncionarioReport data={data} />;
             case 'erros/bom-faltante': return <ErrosProdutoCombinadoFaltanteReport items={data} />;
             case 'erros/bip-sem-pedido': return <ErrosBipSemPedidoReport scans={data} />;
             default: return <div className="p-4 bg-gray-50 text-center text-gray-500">Relatório não implementado.</div>;

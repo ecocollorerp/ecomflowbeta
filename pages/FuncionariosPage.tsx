@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { User, AttendanceRecord, UserSetor, UserRole, GeneralSettings } from '../types';
 import { Users, Check, X, Calendar, PlusCircle, Paperclip, Clock, Timer, ChevronDown, ChevronRight, Edit3, Trash2, Loader2, ChevronUp } from 'lucide-react';
 import MarkAbsenceModal from '../components/MarkAbsenceModal';
@@ -18,11 +18,12 @@ interface FuncionariosPageProps {
     generalSettings: GeneralSettings;
     currentUser: User;
     onDeleteUser: (userId: string, adminPassword?: string) => Promise<boolean>;
+    sectors: any[];
 }
 
 const getTodayString = () => new Date().toISOString().split('T')[0];
 
-const FuncionariosPage: React.FC<FuncionariosPageProps> = ({ users, onSetAttendance, onAddNewUser, onUpdateAttendanceDetails, onUpdateUser, generalSettings, currentUser, onDeleteUser }) => {
+const FuncionariosPage: React.FC<FuncionariosPageProps> = ({ users, onSetAttendance, onAddNewUser, onUpdateAttendanceDetails, onUpdateUser, generalSettings, currentUser, onDeleteUser, sectors }) => {
     const [absenceModalState, setAbsenceModalState] = useState<{ isOpen: boolean, user: User | null }>({ isOpen: false, user: null });
     const [isAddFuncionarioModalOpen, setIsAddFuncionarioModalOpen] = useState(false);
     const [timeModalState, setTimeModalState] = useState<{ isOpen: boolean, user: User | null, type: 'leftEarly' | 'overtime' | null }>({ isOpen: false, user: null, type: null });
@@ -356,6 +357,7 @@ const FuncionariosPage: React.FC<FuncionariosPageProps> = ({ users, onSetAttenda
                 onClose={() => setIsAddFuncionarioModalOpen(false)}
                 onAddUser={onAddNewUser}
                 generalSettings={generalSettings}
+                sectors={sectors}
             />
              {timeModalState.user && timeModalState.type && (
                 <RecordTimeModal

@@ -11,7 +11,7 @@ import EtiquetasPage from './pages/EtiquetasPage';
 import FinancePage from './pages/FinancePage';
 import ConfiguracoesPage from './pages/ConfiguracoesPage';
 import { ConfiguracoesGeraisPage } from './pages/ConfiguracoesGeraisPage';
-import { PesagemPage } from './pages/PesagemPage';
+import { MaquinasPage } from './pages/MaquinasPage';
 import MoagemPage from './pages/MoagemPage';
 import FuncionariosPage from './pages/FuncionariosPage';
 import PedidosPage from './pages/PedidosPage';
@@ -58,7 +58,8 @@ import {
     StockPackGroup,
     StockDeductionMode,
     EtiquetasState,
-    ZplIncludeMode
+    ZplIncludeMode,
+    Setor
 } from './types';
 import { dbClient, loginUser, syncDatabase, resetDatabase, verifyDatabaseSetup, fetchAll, supabaseUrl } from './lib/supabaseClient';
 import { exportStateToSql } from './lib/export';
@@ -134,6 +135,7 @@ const App: React.FC = () => {
     const [weighingBatches, setWeighingBatches] = useState<WeighingBatch[]>([]);
     const [grindingBatches, setGrindingBatches] = useState<GrindingBatch[]>([]);
     const [packGroups, setPackGroups] = useState<StockPackGroup[]>([]);
+    const [sectors, setSectors] = useState<Setor[]>([]);
 
     // 🔗 States para Seleção Múltipla de SKUs na Importação
     const [isBulkLinkSKUsModalOpen, setIsBulkLinkSKUsModalOpen] = useState(false);
@@ -236,8 +238,8 @@ const App: React.FC = () => {
     };
 
     const setCurrentPage = (page: string) => {
-        if (currentUser && !canAccessPage(currentUser, page)) {
-            const fallbackPage = getFirstAccessiblePage(currentUser, 'dashboard');
+        if (currentUser && !canAccessPage(currentUser, page, generalSettings)) {
+            const fallbackPage = getFirstAccessiblePage(currentUser, 'dashboard', generalSettings);
             localStorage.setItem('erp_current_page', fallbackPage);
             _setCurrentPage(fallbackPage);
             addToast('Você não tem permissão para acessar essa funcionalidade no seu setor.', 'error');
@@ -250,12 +252,12 @@ const App: React.FC = () => {
 
     useEffect(() => {
         if (!currentUser) return;
-        if (canAccessPage(currentUser, currentPage)) return;
+        if (canAccessPage(currentUser, currentPage, generalSettings)) return;
 
-        const fallbackPage = getFirstAccessiblePage(currentUser, 'dashboard');
+        const fallbackPage = getFirstAccessiblePage(currentUser, 'dashboard', generalSettings);
         localStorage.setItem('erp_current_page', fallbackPage);
         _setCurrentPage(fallbackPage);
-    }, [currentUser, currentPage]);
+    }, [currentUser, currentPage, generalSettings]);
 
     // 🛡️ PROTEÇÃO: Fazer backup automático de estoque
     useEffect(() => {
@@ -264,6 +266,7 @@ const App: React.FC = () => {
             localStorage.setItem('erp_stockItems_backup_timestamp', new Date().toISOString());
         }
     }, [stockItems]);
+
 
     const lowStockItems = useMemo(() => stockItems.filter(i => {
         const current = Number(i.current_qty);
@@ -556,6 +559,28 @@ const App: React.FC = () => {
         addToast('Grupo de Pacotes salvo!', 'success');
     };
 
+    const handleAddSector = async (name: string) => {
+        const { data, error } = await dbClient.from('setores').insert({ name }).select().single();
+        if (error) {
+            addToast(`Erro ao adicionar setor: ${error.message}`, 'error');
+            return false;
+        }
+        setSectors(prev => [...prev, data]);
+        addToast('Setor adicionado!', 'success');
+        return true;
+    };
+
+    const handleDeleteSector = async (id: string) => {
+        const { error } = await dbClient.from('setores').delete().eq('id', id);
+        if (error) {
+            addToast(`Erro ao excluir setor: ${error.message}`, 'error');
+            return false;
+        }
+        setSectors(prev => prev.filter(s => s.id !== id));
+        addToast('Setor excluído!', 'success');
+        return true;
+    };
+
     const loadData = useCallback(async () => {
         if (!currentUser) {
             console.warn('⚠️ Sem currentUser em loadData, abortando');
@@ -574,10 +599,8 @@ const App: React.FC = () => {
             console.log(`✅ [fetchAll] Scan logs carregados: ${scanLogsData?.length || 0} registros`);
 
             const queries = [
-                // dbClient.from('orders').select('*').order('created_at', { ascending: false }).limit(100000), // Replaced by fetchAll
                 dbClient.from('returns').select('*').limit(5000),
                 dbClient.from('sku_links').select('*'),
-                // dbClient.from('scan_logs').select('*').order('created_at', { ascending: false }).limit(50000), // Replaced by fetchAll
                 dbClient.from('users').select('*'),
                 dbClient.from('product_boms').select('*').order('name', { ascending: true }),
                 dbClient.from('stock_movements').select('*').order('created_at', { ascending: false }).limit(20000),
@@ -593,9 +616,10 @@ const App: React.FC = () => {
                 dbClient.from('etiquetas_historico').select('id, created_at, created_by_name, page_count').order('created_at', { ascending: false }).limit(200),
                 dbClient.from('vw_dados_analiticos').select('*'),
                 dbClient.from('stock_pack_groups').select('*'),
+                dbClient.from('setores').select('*').order('name', { ascending: true }),
             ];
 
-            const tableNames = ['returns', 'skuLinks', 'users', 'stockItems', 'stockMovements', 'rawMaterials', 'weighingBatches', 'grindingBatches', 'productionPlans', 'shoppingList', 'settings', 'notwenes', 'importHistory', 'productionPlanItems', 'etiquetasHistory', 'biData', 'packGroups'];
+            const tableNames = ['returns', 'skuLinks', 'users', 'productBoms', 'stockMovements', 'stockItems', 'weighingBatches', 'grindingBatches', 'productionPlans', 'shoppingList', 'settings', 'notices', 'importHistory', 'productionPlanItems', 'etiquetasHistory', 'biData', 'packGroups', 'sectors'];
 
             const results = await Promise.allSettled(queries);
 
@@ -654,79 +678,95 @@ const App: React.FC = () => {
             if (dataMap.skuLinks) setSkuLinks(dataMap.skuLinks.map((l: any) => ({ importedSku: l.imported_sku, masterProductSku: l.master_product_sku })));
             if (dataMap.users) setUsers(dataMap.users as User[]);
 
-            // 🛡️ PROTEÇÃO: Carregar product_boms + stock_items mesmo quando uma das tabelas vier vazia
-            if (
-                (dataMap.stockItems && Array.isArray(dataMap.stockItems)) ||
-                (dataMap.rawMaterials && Array.isArray(dataMap.rawMaterials))
-            ) {
-                const mappedStockItems = (dataMap.stockItems || []).map((i: any) => {
-                    try {
-                        return {
-                            id: i.id,
-                            code: i.code,
-                            name: i.name,
-                            kind: i.kind || 'PRODUTO',
-                            unit: i.unit || 'un',
-                            current_qty: Number(i.current_qty) || 0,
-                            reserved_qty: Number(i.reserved_qty) || 0,
-                            ready_qty: Number(i.ready_qty) || 0,
-                            category: i.category || '',
-                            min_qty: Number(i.min_qty) || 0,
-                            expedition_items: [],
-                            is_volatile_infinite: Boolean(i.is_volatile_infinite) || false,
-                            // preserve BOM data so searches can consider parent/child relationships
-                            bom_composition: i.bom_composition || { items: [] },
-                        };
-                    } catch (err) {
-                        console.error('❌ Erro ao mapear product_bom:', i, err);
-                        return null;
-                    }
-                }).filter((item: any) => item !== null);
+            // 🛡️ PROTEÇÃO: Mesclar dados de stock_items e product_boms por código
+            const itemsMap = new Map<string, StockItem>();
 
-                // 🔧 Combinar com stock_items (insumos) se houver
-                let allStockItems = mappedStockItems;
-                if (dataMap.rawMaterials && Array.isArray(dataMap.rawMaterials)) {
-                    const mappedRawMaterials = dataMap.rawMaterials.map((i: any) => {
-                        try {
-                            return {
-                                id: i.id,
-                                code: i.code,
-                                name: i.name,
-                                kind: i.kind || 'INSUMO',
-                                unit: i.unit || 'un',
-                                current_qty: Number(i.current_qty) || 0,
-                                reserved_qty: Number(i.reserved_qty) || 0,
-                                ready_qty: Number(i.ready_qty) || 0,
-                                category: i.category || '',
-                                min_qty: Number(i.min_qty) || 0,
-                                expedition_items: i.expedition_items || [],
-                                is_volatile_infinite: false,
-                                bom_composition: undefined,
-                            };
-                        } catch (err) {
-                            console.error('❌ Erro ao mapear insumo:', i, err);
-                            return null;
-                        }
-                    }).filter((item: any) => item !== null);
+            // 1. Processar stock_items (dados reais de estoque)
+            if (dataMap.stockItems && Array.isArray(dataMap.stockItems)) {
+                dataMap.stockItems.forEach((i: any) => {
+                    const item: StockItem = {
+                        id: i.id,
+                        code: i.code,
+                        name: i.name,
+                        kind: i.kind || 'INSUMO',
+                        unit: i.unit || 'un',
+                        current_qty: Number(i.current_qty) || 0,
+                        reserved_qty: Number(i.reserved_qty) || 0,
+                        ready_qty: Number(i.ready_qty) || 0,
+                        category: i.category || '',
+                        min_qty: Number(i.min_qty) || 0,
+                        mixed_qty: Number(i.mixed_qty) || 0,
+                        expedition_items: i.expedition_items || [],
+                        is_volatile_infinite: Boolean(i.is_volatile_infinite) || false,
+                        product_type: i.product_type,
+                        color: i.color,
+                        substitute_product_code: i.substitute_product_code,
+                        barcode: i.barcode
+                    };
+                    itemsMap.set(item.code, item);
+                });
+            }
 
-                    allStockItems = [...mappedStockItems, ...mappedRawMaterials].sort((a, b) => a.name.localeCompare(b.name));
-                    console.log(`💾 [loadData] Combinados: ${mappedStockItems.length} product_boms + ${mappedRawMaterials.length} insumos = ${allStockItems.length} total`);
-                }
+            // 2. Processar product_boms (dados de receita) e mesclar
+            if (dataMap.productBoms && Array.isArray(dataMap.productBoms)) {
+                dataMap.productBoms.forEach((i: any) => {
+                    const existing = itemsMap.get(i.code);
+                    const item: StockItem = {
+                        id: i.id || existing?.id,
+                        code: i.code,
+                        name: i.name || existing?.name,
+                        kind: i.kind || existing?.kind || 'PRODUTO',
+                        unit: i.unit || existing?.unit || 'un',
+                        current_qty: Number(i.current_qty) || existing?.current_qty || 0,
+                        reserved_qty: Number(i.reserved_qty) || existing?.reserved_qty || 0,
+                        ready_qty: Number(i.ready_qty) || existing?.ready_qty || 0,
+                        category: i.category || existing?.category || '',
+                        min_qty: Number(i.min_qty) || existing?.min_qty || 0,
+                        mixed_qty: Number(i.mixed_qty) || existing?.mixed_qty || 0,
+                        expedition_items: i.expedition_items || existing?.expedition_items || [],
+                        is_volatile_infinite: Boolean(i.is_volatile_infinite) || existing?.is_volatile_infinite || false,
+                        product_type: i.product_type || existing?.product_type,
+                        color: i.color || existing?.color,
+                        bom_composition: i.bom_composition || { items: [] },
+                    };
+                    itemsMap.set(item.code, item);
+                });
+            }
 
-                if (allStockItems.length > 0) {
-                    console.log(`💾 [loadData] Salvando ${allStockItems.length} itens no estoque (produtos + insumos)`);
-                    setStockItems(allStockItems);
-                } else {
-                    console.warn('⚠️ [loadData] Nenhum item válido após mapeamento. Mantendo dados anteriores.');
-                }
+            const allStockItems = Array.from(itemsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+            if (allStockItems.length > 0) {
+                setStockItems(allStockItems);
+                console.log(`💾 [loadData] Sucesso: ${allStockItems.length} itens únicos carregados.`);
             } else {
-                console.warn(`⚠️ [loadData] product_boms e stock_items sem dados válidos da query.`);
+                console.warn('⚠️ [loadData] Nenhum item de estoque encontrado.');
             }
 
             if (dataMap.packGroups) setPackGroups(dataMap.packGroups);
+            if (dataMap.sectors) setSectors(dataMap.sectors);
 
             if (dataMap.stockMovements) setStockMovements(dataMap.stockMovements.map((m: any) => ({ id: m.id, stockItemCode: m.stock_item_code, stockItemName: m.stock_item_name, origin: m.origin, qty_delta: parseFloat(m.qty_delta) || 0, ref: m.ref, createdAt: safeNewDate(m.created_at), createdBy: m.created_by_name, fromWeighing: m.from_weighing, productSku: m.product_sku })));
-            if (dataMap.weighingBatches) setWeighingBatches(dataMap.weighingBatches.map((wb: any) => ({ id: wb.id, stock_item_code: wb.stock_item_code, stock_item_name: wb.stock_item_name, initialQty: parseFloat(wb.initial_qty) || 0, used_qty: parseFloat(wb.used_qty) || 0, createdAt: safeNewDate(wb.created_at), userId: wb.created_by_id, createdBy: wb.created_by_name, weighingType: wb.weighing_type })));
+            if (dataMap.weighingBatches) setWeighingBatches(dataMap.weighingBatches.map((wb: any) => ({ 
+                id: wb.id, 
+                stock_item_code: wb.stock_item_code, 
+                stock_item_name: wb.stock_item_name, 
+                stockItemName: wb.stock_item_name,
+                initialQty: parseFloat(wb.initial_qty) || 0, 
+                initial_qty: parseFloat(wb.initial_qty) || 0,
+                usedQty: parseFloat(wb.used_qty) || 0,
+                used_qty: parseFloat(wb.used_qty) || 0, 
+                createdAt: safeNewDate(wb.created_at), 
+                userId: wb.created_by_id, 
+                createdBy: wb.created_by_name, 
+                weighingType: wb.weighing_type,
+                operador_maquina: wb.operador_maquina,
+                operador_batedor: wb.operador_batedor,
+                quantidade_batedor: wb.quantidade_batedor,
+                com_cor: wb.com_cor,
+                tipo_operacao: wb.tipo_operacao,
+                equipe_mistura: wb.equipe_mistura,
+                destino: wb.destino,
+                base_sku: wb.base_sku
+            })));
 
             if (dataMap.grindingBatches) setGrindingBatches(dataMap.grindingBatches.map((gb: any) => ({
                 id: gb.id,
@@ -1078,12 +1118,27 @@ const App: React.FC = () => {
         }
     }, [addToast, stockItems]);
 
-    const handleAddNewWeighing = useCallback(async (insumoCode: string, quantity: number, type: WeighingType, userId: string) => {
-        const user = users.find(u => u.id === userId);
-        if (!user) return;
-        const { error } = await dbClient.rpc('record_weighing_and_deduct_stock', { item_code: insumoCode, quantity_to_weigh: quantity, weighing_type_text: type, user_id: user.id, user_name: user.name });
-        if (!error) { loadData(); addToast('Pesagem registrada!', 'success'); }
-    }, [users, addToast, loadData]);
+    const handleAddNewWeighing = useCallback(async (payload: any) => {
+        const { insumoCode, quantity, userId, operador_maquina, operador_batedor, quantidade_batedor, com_cor, tipo_operacao, equipe_mistura, destino, base_sku, produtos } = payload;
+        
+        const { error } = await dbClient.rpc('record_weighing_and_deduct_stock', { 
+            p_product_code: insumoCode, 
+            p_qty_produced: quantity, 
+            p_user_id: userId || null, 
+            p_batch_name: null,
+            p_operador_maquina: operador_maquina,
+            p_operador_batedor: operador_batedor,
+            p_quantidade_batedor: quantidade_batedor,
+            p_com_cor: com_cor,
+            p_tipo_operacao: tipo_operacao,
+            p_equipe_mistura: equipe_mistura,
+            p_destino: destino,
+            p_base_sku: base_sku,
+            p_produtos: produtos || []
+        });
+        if (!error) { loadData(); addToast('Processo registrado!', 'success'); }
+        else { addToast(`Erro ao registrar: ${error.message}`, 'error'); }
+    }, [addToast, loadData]);
 
     const handleAddNewGrinding = useCallback(async (data: { sourceCode: string, sourceQty: number, outputCode: string, outputName: string, outputQty: number, mode: 'manual' | 'automatico', userId?: string, userName: string }) => {
         const { error } = await dbClient.rpc('record_grinding_run', { source_code: data.sourceCode, source_qty: data.sourceQty, output_code: data.outputCode, output_name: data.outputName, output_qty: data.outputQty, op_mode: data.mode, op_user_id: data.userId, op_user_name: data.userName });
@@ -2024,10 +2079,10 @@ const App: React.FC = () => {
             case 'pedidos': return <PedidosPage allOrders={allOrders} scanHistory={scanHistory} returns={returns} onLogError={handleLogError} onLogReturn={handleLogReturn} currentUser={currentUser!} onDeleteOrders={handleDeleteOrders} onBulkCancelBipagem={handleBulkCancelBipagem} onUpdateStatus={handleUpdateStatus} onRemoveReturn={handleRemoveReturn} onSolveOrders={handleSolveOrders} generalSettings={generalSettings} users={users} skuLinks={skuLinks} stockItems={stockItems} />
             case 'planejamento': return <PlanejamentoPage stockItems={stockItems} allOrders={allOrders} skuLinks={skuLinks} produtosCombinados={produtosCombinados} productionPlans={productionPlans} onSaveProductionPlan={handleSaveProductionPlan} onDeleteProductionPlan={handleDeleteProductionPlan} onGenerateShoppingList={handleGenerateShoppingList} currentUser={currentUser!} planningSettings={generalSettings.estoque} onSavePlanningSettings={(s) => handleSaveGeneralSettings(p => ({ ...p, estoque: s }))} addToast={addToast} />
             case 'compras': return <ComprasPage shoppingList={shoppingList} onClearList={handleClearShoppingList} onUpdateItem={handleUpdateShoppingItem} stockItems={stockItems} />
-            case 'pesagem': return <PesagemPage stockItems={stockItems} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} currentUser={currentUser!} onDeleteBatch={handleDeleteWeighingBatch} users={users} />
+            case 'pesagem': return <MaquinasPage stockItems={stockItems} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} currentUser={currentUser!} onDeleteBatch={handleDeleteWeighingBatch} users={users} skuLinks={skuLinks} generalSettings={generalSettings} />
             case 'moagem': return <MoagemPage stockItems={stockItems} grindingBatches={grindingBatches} onAddNewGrinding={handleAddNewGrinding} currentUser={currentUser!} onDeleteBatch={handleDeleteGrindingBatch} users={users} generalSettings={generalSettings} />
             case 'estoque': return <EstoquePage stockItems={stockItems} stockMovements={stockMovements} onStockAdjustment={handleStockAdjustment} produtosCombinados={produtosCombinados} onSaveProdutoCombinado={handleSaveProdutoCombinado} onAddNewItem={handleAddNewItem} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} onProductionRun={handleProductionRun} onRegisterReadyStock={handleRegisterReadyStock} currentUser={currentUser!} onEditItem={handleEditItem} onDeleteItem={handleDeleteItem} onBulkDeleteItems={handleBulkDeleteItems} onDeleteMovement={async () => false} onDeleteWeighingBatch={handleDeleteWeighingBatch} generalSettings={generalSettings} setGeneralSettings={setGeneralSettings as any} onConfirmImportFromXml={handleConfirmImportFromXml} onSaveExpeditionItems={handleSaveExpeditionItems} users={users} onUpdateInsumoCategory={async () => { }} onBulkInventoryUpdate={handleBulkSetInitialStock} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} />
-            case 'funcionarios': return <FuncionariosPage users={users} onSetAttendance={handleSetAttendance} onAddNewUser={handleAddNewUser} onUpdateAttendanceDetails={handleUpdateAttendanceDetails} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} currentUser={currentUser!} onDeleteUser={handleDeleteUser} />
+            case 'funcionarios': return <FuncionariosPage users={users} onSetAttendance={handleSetAttendance} onAddNewUser={handleAddNewUser} onUpdateAttendanceDetails={handleUpdateAttendanceDetails} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} currentUser={currentUser!} onDeleteUser={handleDeleteUser} sectors={sectors} />
             case 'relatorios': return <RelatoriosPage stockItems={stockItems} stockMovements={stockMovements} orders={allOrders} weighingBatches={weighingBatches} scanHistory={scanHistory} produtosCombinados={produtosCombinados} users={users} returns={returns} generalSettings={generalSettings} grindingBatches={grindingBatches} />
             case 'financeiro': return <FinancePage allOrders={allOrders} stockItems={stockItems} skuLinks={skuLinks} produtosCombinados={produtosCombinados} generalSettings={generalSettings} onDeleteOrders={handleDeleteOrders} onLaunchOrders={handleLaunchSuccess} onSaveSettings={handleSaveGeneralSettings} onNavigateToSettings={() => { _setCurrentPage('configuracoes-gerais'); localStorage.setItem('erp_current_page', 'configuracoes-gerais'); }} />
             case 'etiquetas': return <EtiquetasPage settings={etiquetasSettings} onSettingsSave={handleSaveEtiquetasSettings} generalSettings={generalSettings} uiSettings={uiSettings} onSetUiSettings={setUiSettings as any} stockItems={stockItems} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} onAddNewItem={handleAddNewItem} etiquetasState={etiquetasState} setEtiquetasState={setEtiquetasState} currentUser={currentUser!} allOrders={allOrders} etiquetasHistory={etiquetasHistory} onSaveHistory={handleSaveEtiquetaHistory} onGetHistoryDetails={handleGetEtiquetaHistoryDetails} onProcessZpl={handleProcessZpl} isProcessing={isProcessingLabels} progressMessage={labelProgressMessage} />
@@ -2037,8 +2092,8 @@ const App: React.FC = () => {
             case 'ajuda': return <AjudaPage />
             case 'powerbi': return <BiDashboardPage biData={biData} users={users} />
             case 'powerbi-templates': return <PowerBiTemplatesPage setCurrentPage={setCurrentPage} />
-            case 'configuracoes': return <ConfiguracoesPage users={users} setCurrentPage={setCurrentPage} onDeleteUser={handleDeleteUser} onAddNewUser={handleAddNewUser} currentUser={currentUser!} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} stockItems={stockItems} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} onClearScanHistory={handleClearScanHistory} onSaveGeneralSettings={handleSaveGeneralSettings} addToast={addToast} />
-            case 'configuracoes-gerais': return <ConfiguracoesGeraisPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} onSaveGeneralSettings={handleSaveGeneralSettings} currentUser={currentUser} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} addToast={addToast} stockItems={stockItems} onClearScanHistory={handleClearScanHistory} users={users} />
+            case 'configuracoes': return <ConfiguracoesPage users={users} setCurrentPage={setCurrentPage} onDeleteUser={handleDeleteUser} onAddNewUser={handleAddNewUser} currentUser={currentUser!} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} stockItems={stockItems} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} onClearScanHistory={handleClearScanHistory} onSaveGeneralSettings={handleSaveGeneralSettings} addToast={addToast} sectors={sectors} />
+            case 'configuracoes-gerais': return <ConfiguracoesGeraisPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} onSaveGeneralSettings={handleSaveGeneralSettings} currentUser={currentUser} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} addToast={addToast} stockItems={stockItems} onClearScanHistory={handleClearScanHistory} users={users} sectors={sectors} onAddSector={handleAddSector} onDeleteSector={handleDeleteSector} />
             default: return <DashboardPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} allOrders={allOrders} scanHistory={scanHistory} stockItems={stockItems} produtosCombinados={produtosCombinados} users={users} lowStockCount={lowStockCount} uiSettings={uiSettings} onSaveUiSettings={handleSaveUiSettings} adminNotices={adminNotices} onSaveNotice={handleSaveNotice} onDeleteNotice={handleDeleteNotice} currentUser={currentUser!} skuLinks={skuLinks} onSaveDashboardConfig={handleSaveDashboardConfig} packGroups={packGroups} onSavePackGroup={async (g, id) => { await dbClient.from('stock_pack_groups').upsert(id ? { ...g, id } : g); loadData(); }} onRefreshData={loadData} />
         }
     };

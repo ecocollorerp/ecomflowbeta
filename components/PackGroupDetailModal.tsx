@@ -60,7 +60,7 @@ const PackGroupDetailModal: React.FC<PackGroupDetailModalProps> = ({ isOpen, onC
     const items = useMemo(() => {
         if (!group?.item_codes) return [];
         return group.item_codes.map(code => {
-            const item = stockItems.find(i => i.code === code);
+            const item = stockItems.find(i => i.code.toUpperCase() === code.toUpperCase());
             const currentStock = item?.current_qty || 0;
             // A disponibilidade é baseada na meta do pacote ou no mínimo individual
             const target = group.min_pack_qty || item?.min_qty || 1;

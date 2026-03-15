@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { StockItem, StockMovement, ProdutoCombinado, WeighingBatch, WeighingType, StockMovementOrigin, StockItemKind, User, GeneralSettings, ParsedNfeItem, SkuLink, StockPackGroup } from '../types';
 import { skuMatchesTerm, buildParentMap, skuCodeMatches } from '../utils/skuHelpers';
 import { Package, Factory, History, Search, PlusCircle, Weight, Cog, SlidersHorizontal, Edit3, Trash2, ChevronDown, ChevronRight, FileUp, ArrowLeft, Settings, Box, Plus, Save, X, Link, ArrowRight, Loader2, ChevronUp, AlertTriangle, ArrowDownCircle, ArrowUpCircle, Layers, TrendingUp, TrendingDown, BarChart2, Filter, Calendar, RefreshCw, FileText } from 'lucide-react';
-import { PesagemPage } from './PesagemPage';
+import { MaquinasPage } from './MaquinasPage';
 import { dbClient } from '../lib/supabaseClient';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -239,7 +239,7 @@ interface EstoquePageProps {
     onSaveProdutoCombinado: (productSku: string, newBomItems: ProdutoCombinado['items']) => void;
     onAddNewItem: (item: Omit<StockItem, 'id'>) => Promise<StockItem | null>;
     weighingBatches: WeighingBatch[];
-    onAddNewWeighing: (insumoCode: string, quantity: number, type: WeighingType, userId: string) => void;
+    onAddNewWeighing: (payload: any) => void;
     onProductionRun: (itemCode: string, quantity: number, ref: string) => void;
     onRegisterReadyStock: (itemCode: string, quantity: number, ref: string) => void;
     currentUser: User;
@@ -260,7 +260,7 @@ interface EstoquePageProps {
     onUnlinkSku: (importedSku: string) => Promise<boolean>;
 }
 
-type Tab = 'insumos' | 'processados' | 'produtos' | 'pacotes' | 'pesagem' | 'movimentacoes';
+type Tab = 'insumos' | 'processados' | 'produtos' | 'pacotes' | 'ensacamento' | 'movimentacoes';
 type ModalState = {
     addItem: boolean;
     editItem: StockItem | null;
@@ -724,14 +724,33 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
 
         const setores = Array.from(setorMap.entries()).map(([name, stats]) => ({ name, ...stats }));
 
-        const entradas = packMovements.filter(m => m.qty_delta > 0);
-        const saidas = packMovements.filter(m => m.qty_delta < 0);
+        const entriesToConsider = packMovements.length > 0 ? packMovements : stockMovements.filter(m => m.qty_delta > 0 && produtos.some(p => p.code === m.stockItemCode));
+        const entriesOnly = entriesToConsider.filter(m => m.qty_delta > 0);
+        const outputsOnly = entriesToConsider.filter(m => m.qty_delta < 0);
 
-        const ultimaEntrada = entradas.length > 0 ? new Date(Math.max(...entradas.map(m => new Date(m.createdAt).getTime()))) : null;
-        const ultimaSaida = saidas.length > 0 ? new Date(Math.max(...saidas.map(m => new Date(m.createdAt).getTime()))) : null;
+        const ultimaEntrada = entriesOnly.length > 0 ? new Date(Math.max(...entriesOnly.map(m => new Date(m.createdAt).getTime()))) : null;
+        const ultimaSaida = outputsOnly.length > 0 ? new Date(Math.max(...outputsOnly.map(m => new Date(m.createdAt).getTime()))) : null;
 
-        return { totalGeral, individuais, packageSizes, setores, ultimaEntrada, ultimaSaida, packMovements, entradas, saidas };
-    }, [packGroups, stockItems, stockMovements, users]);
+        // Material usage calculation for selected packs
+        const selectedGroupItems = packGroups.filter(g => selectedPacks.includes(g.id));
+        const materialUsage = new Map<string, { name: string, qty: number, unit: string }>();
+
+        selectedGroupItems.forEach(group => {
+            group.item_codes.forEach(sku => {
+                const bom = produtosCombinados.find(b => b.productSku === sku);
+                if (bom) {
+                    bom.items.forEach(bomItem => {
+                        const stockItem = stockItems.find(si => si.code === bomItem.stockItemCode);
+                        const current = materialUsage.get(bomItem.stockItemCode) || { name: stockItem?.name || bomItem.stockItemCode, qty: 0, unit: stockItem?.unit || 'un' };
+                        current.qty += bomItem.qty_per_pack;
+                        materialUsage.set(bomItem.stockItemCode, current);
+                    });
+                }
+            });
+        });
+
+        return { totalGeral, individuais, packageSizes, setores, ultimaEntrada, ultimaSaida, packMovements, materialUsage };
+    }, [packGroups, stockItems, stockMovements, users, produtos, selectedPacks, produtosCombinados]);
 
     const generateProdutosProntosPDF = () => {
         const doc = new jsPDF();
@@ -751,10 +770,15 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
 
         // --- Totais do Dia ---
         const hoje = hojeObj.toISOString().split('T')[0];
-        const entradasDoDia = relatorioProdutosProntos.entradas.filter(m => m.createdAt.startsWith(hoje));
-        const saidasDoDia = relatorioProdutosProntos.saidas.filter(m => m.createdAt.startsWith(hoje));
-        const sumEntradas = entradasDoDia.reduce((acc, m) => acc + m.qty_delta, 0);
-        const sumSaidas = saidasDoDia.reduce((acc, m) => acc + Math.abs(m.qty_delta), 0);
+        const entradasDoDia = relatorioProdutosProntos.materialUsage; // Actually we should filter entries, but for simplicity...
+        // Let's fix this properly to use entries from the calculated report
+        const entriesPack = relatorioProdutosProntos.packMovements.filter(m => m.qty_delta > 0);
+        const entriesDoDiaPack = entriesPack.filter(m => m.createdAt.startsWith(hoje));
+        const sumEntradas = entriesDoDiaPack.reduce((acc, m) => acc + m.qty_delta, 0);
+
+        const exitsPack = relatorioProdutosProntos.packMovements.filter(m => m.qty_delta < 0);
+        const exitsDoDiaPack = exitsPack.filter(m => m.createdAt.startsWith(hoje));
+        const sumSaidas = exitsDoDiaPack.reduce((acc, m) => acc + Math.abs(m.qty_delta), 0);
 
         autoTable(doc, {
             startY: yPos,
@@ -907,8 +931,8 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
             ...commonTableProps
         };
         switch (activeTab) {
-            case 'insumos': return <ResponsiveStockList items={insumos} {...commonCardProps} showColorColumn={false} />;
-            case 'processados': return <ResponsiveStockList items={processados} {...commonCardProps} showColorColumn={true} onConfigureBom={(item) => setModalState(prev => ({ ...prev, bomConfig: item }))} onProduce={(item) => setModalState(prev => ({ ...prev, manualMovement: item }))} />;
+            case 'insumos': return <ResponsiveStockList items={insumos} {...commonCardProps} showColorColumn={false} showLocalizacao />;
+            case 'processados': return <ResponsiveStockList items={processados} {...commonCardProps} showColorColumn={true} onConfigureBom={(item) => setModalState(prev => ({ ...prev, bomConfig: item }))} onProduce={(item) => setModalState(prev => ({ ...prev, manualMovement: item }))} showLocalizacao />;
             case 'produtos':
                 return (
                     <>
@@ -923,7 +947,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                 Mostrar apenas produtos sem receita (BOM) configurada
                             </label>
                         </div>
-                        <ResponsiveStockList items={produtos} {...commonCardProps} showColorColumn={true} onConfigureBom={(item) => setModalState(prev => ({ ...prev, bomConfig: item }))} onConfigureExpeditionItems={(item) => setModalState(prev => ({ ...prev, expeditionItemsConfig: item }))} onProduce={(item) => setModalState(prev => ({ ...prev, manualMovement: item }))} selectedIds={selectedIds} onSelect={handleSelect} onSelectAll={(e) => handleSelectAll(e, produtos)} isProdutos onToggleExpand={toggleExpansion} expandedRows={expandedProducts} skuLinks={skuLinks} onTransferSku={(sku, currentMaster) => setTransferState({ sku, currentMaster })} />
+                        <ResponsiveStockList items={produtos} {...commonCardProps} showColorColumn={true} onConfigureBom={(item) => setModalState(prev => ({ ...prev, bomConfig: item }))} onConfigureExpeditionItems={(item) => setModalState(prev => ({ ...prev, expeditionItemsConfig: item }))} onProduce={(item) => setModalState(prev => ({ ...prev, manualMovement: item }))} selectedIds={selectedIds} onSelect={handleSelect} onSelectAll={(e) => handleSelectAll(e, produtos)} isProdutos onToggleExpand={toggleExpansion} expandedRows={expandedProducts} skuLinks={skuLinks} onTransferSku={(sku, currentMaster) => setTransferState({ sku, currentMaster })} showLocalizacao />
                     </>
                 );
             case 'pacotes':
@@ -933,7 +957,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                         <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col md:flex-row gap-6">
                             <div className="flex-1">
                                 <h3 className="text-lg font-black text-slate-800 uppercase tracking-tighter mb-4 flex items-center gap-2">
-                                    <Box className="text-blue-500" size={20} /> Relatório de Produtos Prontos
+                                    <Box className="text-blue-500" size={20} /> Relatório de Máquinas / Pronta Entrega
                                 </h3>
                                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                                     <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
@@ -944,9 +968,9 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                         <p className="text-[10px] font-black text-emerald-500 uppercase">Última Entrada</p>
                                         <p className="text-sm font-bold text-emerald-700 mt-1">{relatorioProdutosProntos.ultimaEntrada ? relatorioProdutosProntos.ultimaEntrada.toLocaleString() : 'N/A'}</p>
                                     </div>
-                                    <div className="bg-red-50 p-4 rounded-xl border border-red-100">
-                                        <p className="text-[10px] font-black text-red-500 uppercase">Última Saída</p>
-                                        <p className="text-sm font-bold text-red-700 mt-1">{relatorioProdutosProntos.ultimaSaida ? relatorioProdutosProntos.ultimaSaida.toLocaleString() : 'N/A'}</p>
+                                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col justify-center">
+                                        <p className="text-[10px] font-black text-slate-500 uppercase">Total Operações</p>
+                                        <p className="text-xl font-black text-slate-700">{relatorioProdutosProntos.packMovements.length}</p>
                                     </div>
                                 </div>
                             </div>
@@ -960,6 +984,16 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                     <div className="flex justify-between items-center text-xs pb-1 border-b">
                                         <span className="font-bold text-slate-700">Selecionados</span>
                                         <span className="font-black text-blue-600">{selectedPacks.length}</span>
+                                    </div>
+                                    <div className="mt-2 pt-2 border-t border-dashed">
+                                        <p className="text-[9px] font-black text-slate-400 uppercase mb-1">Material Estimado</p>
+                                        {Array.from(relatorioProdutosProntos.materialUsage.values()).map((m: { name: string, qty: number, unit: string }) => (
+                                            <div key={m.name} className="flex justify-between text-[10px]">
+                                                <span className="font-medium text-slate-600 truncate mr-2">{m.name}</span>
+                                                <span className="font-bold text-slate-800 shrink-0">{m.qty.toFixed(1)} {m.unit}</span>
+                                            </div>
+                                        ))}
+                                        {relatorioProdutosProntos.materialUsage.size === 0 && <p className="text-[9px] text-slate-400 italic">Nenhum material calculado</p>}
                                     </div>
                                 </div>
                             </div>
@@ -1192,10 +1226,19 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                         )}
                     </div>
                 );
-            case 'pesagem': return (
+            case 'ensacamento': return (
                 <div>
                     <button onClick={() => setActiveTab('insumos')} className="flex items-center text-sm font-semibold text-blue-600 hover:underline mb-4"><ArrowLeft size={16} className="mr-2" />Voltar para Estoque</button>
-                    <PesagemPage stockItems={stockItems} weighingBatches={weighingBatches} onAddNewWeighing={onAddNewWeighing} currentUser={currentUser!} onDeleteBatch={onDeleteWeighingBatch} users={users} />
+                    <MaquinasPage 
+                        stockItems={stockItems} 
+                        weighingBatches={weighingBatches} 
+                        onAddNewWeighing={onAddNewWeighing} 
+                        currentUser={currentUser!} 
+                        onDeleteBatch={onDeleteWeighingBatch} 
+                        users={users} 
+                        generalSettings={generalSettings}
+                        skuLinks={skuLinks}
+                    />
                 </div>
             );
             case 'movimentacoes': return (
@@ -1213,7 +1256,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                 <option value="BIP">Bipagem</option>
                                 <option value="PRODUCAO_MANUAL">Produção Manual</option>
                                 <option value="AJUSTE_MANUAL">Ajuste Manual</option>
-                                <option value="PESAGEM">Pesagem</option>
+                                <option value="MAQUINAS">Máquinas</option>
                                 <option value="MOAGEM">Moagem</option>
                                 <option value="IMPORT_XML">Importação XML</option>
                                 <option value="PRODUCAO_INTERNA">Produção Interna</option>
@@ -1259,7 +1302,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                     return (<React.Fragment key={ref}><tr className={isManualProd ? "bg-blue-50 hover:bg-blue-100" : "bg-cyan-50 hover:bg-cyan-100"}><td className="py-2 px-3 text-center"><button onClick={() => toggleMovementExpansion(ref)} className="text-blue-600">{isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</button></td><td className="py-2 px-3 text-gray-600 font-semibold">{new Date(main.createdAt).toLocaleString('pt-BR')}</td><td className="py-2 px-3 font-bold text-gray-800">{main.stockItemName}</td><td className="py-2 px-3">{isManualProd ? <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-orange-100 text-orange-800">{main.origin}</span> : <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-800">BIP</span>}</td><td className="py-2 px-3 font-mono text-gray-500 text-xs">{main.ref}</td><td className={`py-2 px-3 font-bold text-center ${isManualProd ? 'text-green-600' : 'text-gray-700'}`}>{isManualProd ? `+${main.qty_delta.toFixed(2)}` : `(${children.length} insumos)`}</td><td className="py-2 px-3 text-gray-700">{main.createdBy}</td><td className="py-2 px-3 text-center">{currentUser.role === 'SUPER_ADMIN' && isManualProd && (<button onClick={() => setItemToDelete({ item: main, type: 'movement' })} className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-full" title="Excluir Movimentação Principal"><Trash2 size={14} /></button>)}</td></tr>{isExpanded && children.map((child: StockMovement) => (<tr key={child.id} className="bg-gray-50"><td className="py-1 px-3"></td><td className="py-1 px-3 pl-8 text-gray-500">{new Date(child.createdAt).toLocaleString('pt-BR')}</td><td className="py-1 px-3 pl-8 text-gray-700">{child.stockItemName}</td><td className="py-1 px-3"></td><td className="py-1 px-3"></td><td className={`py-1 px-3 font-semibold text-center text-red-600`}>{child.qty_delta.toFixed(2)}</td><td className="py-1 px-3 text-gray-600">{child.createdBy}</td><td className="py-2 px-3 text-center">{currentUser.role === 'SUPER_ADMIN' && (<button onClick={() => setItemToDelete({ item: child, type: 'movement' })} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full" title="Excluir Insumo Consumido"><Trash2 size={12} /></button>)}</td></tr>))}</React.Fragment>);
                                 } else {
                                     const mov = item as StockMovement;
-                                    return (<tr key={mov.id}><td></td><td className="py-2 px-3 text-gray-600">{new Date(mov.createdAt).toLocaleString('pt-BR')}</td><td className="py-2 px-3 font-medium text-gray-800">{mov.stockItemName}</td><td><span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${mov.origin === 'PESAGEM' ? 'bg-purple-100 text-purple-800' : mov.origin === 'IMPORT_XML' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>{mov.origin}</span></td><td className="py-2 px-3 font-mono text-gray-500 text-xs">{mov.ref}</td><td className={`py-2 px-3 font-bold text-center ${mov.qty_delta > 0 ? 'text-green-600' : 'text-red-600'}`}>{mov.qty_delta > 0 ? '+' : ''}{mov.qty_delta.toFixed(2)}</td><td className="py-2 px-3 text-gray-700">{mov.createdBy}</td><td className="py-2 px-3 text-center">{currentUser.role === 'SUPER_ADMIN' && (<button onClick={() => setItemToDelete({ item: mov, type: 'movement' })} className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-full" title="Excluir Movimentação"><Trash2 size={14} /></button>)}</td></tr>);
+                                    return (<tr key={mov.id}><td></td><td className="py-2 px-3 text-gray-600">{new Date(mov.createdAt).toLocaleString('pt-BR')}</td><td className="py-2 px-3 font-medium text-gray-800">{mov.stockItemName}</td><td><span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${mov.origin === 'ENSACAMENTO' ? 'bg-purple-100 text-purple-800' : mov.origin === 'IMPORT_XML' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>{mov.origin}</span></td><td className="py-2 px-3 font-mono text-gray-500 text-xs">{mov.ref}</td><td className={`py-2 px-3 font-bold text-center ${mov.qty_delta > 0 ? 'text-green-600' : 'text-red-600'}`}>{mov.qty_delta > 0 ? '+' : ''}{mov.qty_delta.toFixed(2)}</td><td className="py-2 px-3 text-gray-700">{mov.createdBy}</td><td className="py-2 px-3 text-center">{currentUser.role === 'SUPER_ADMIN' && (<button onClick={() => setItemToDelete({ item: mov, type: 'movement' })} className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-full" title="Excluir Movimentação"><Trash2 size={14} /></button>)}</td></tr>);
                                 }
                             })}</tbody>
                         </table>
@@ -1271,13 +1314,13 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
     };
 
     return (
-        <div>
-            {activeTab !== 'pesagem' && (
+        <div className="min-h-screen bg-slate-50/50 p-4 md:p-8">
+            {activeTab !== 'ensacamento' && (
                 <>
                     <div className="flex justify-between items-start mb-6 flex-wrap gap-4"><div><h1 className="text-3xl font-black text-slate-800 uppercase tracking-tighter">Gestão de Estoque e Almoxarifado</h1><p className="text-gray-500 font-bold uppercase text-[10px] tracking-widest mt-1">Insumos, Produtos Acabados e Pronta Entrega</p></div></div>
                     <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-xl w-full">
                         <div className="flex justify-between items-center mb-6 flex-wrap gap-4">
-                            <div className="relative flex-grow max-w-sm"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" /><input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Buscar item por nome ou código..." className="w-full pl-9 pr-3 py-2 text-sm border-gray-200 rounded-xl focus:ring-blue-500 focus:border-blue-500 bg-slate-50 font-bold" /></div>
+                            <div className="relative flex-grow max-w-sm"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" /><input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Buscar por nome, SKU ou localização..." className="w-full pl-9 pr-3 py-2 text-sm border-gray-200 rounded-xl focus:ring-blue-500 focus:border-blue-500 bg-slate-50 font-bold" /></div>
                             <div className="flex items-center gap-2">
                                 {activeTab === 'pacotes' && (
                                     <button onClick={() => setModalState(prev => ({ ...prev, isPackModalOpen: true, packGroup: null }))} className="flex items-center text-xs font-black bg-blue-600 text-white px-4 py-2.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 uppercase tracking-widest"><PlusCircle size={16} className="mr-2" />Novo Grupo de Pacotes</button>
@@ -1297,7 +1340,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                         <button onClick={() => setIsDeleteModalOpen(true)} className="flex items-center text-[10px] font-black bg-red-600 text-white px-4 py-2.5 rounded-xl hover:bg-red-700 transition-all shadow-lg shadow-red-100 uppercase tracking-widest"><Trash2 size={16} className="mr-2" />Excluir Selecionados</button>
                                     </div>
                                 )}
-                                {selectedIds.size === 0 && activeTab !== 'pacotes' && activeTab !== 'pesagem' && activeTab !== 'movimentacoes' && (
+                                {selectedIds.size === 0 && activeTab !== 'pacotes' && activeTab !== 'ensacamento' && activeTab !== 'movimentacoes' && (
                                     <button onClick={() => setModalState(prev => ({ ...prev, addItem: true }))} className="flex items-center text-[10px] font-black bg-blue-600 text-white px-4 py-2.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 uppercase tracking-widest"><PlusCircle size={16} className="mr-2" />Adicionar Item</button>
                                 )}
                             </div>
@@ -1307,14 +1350,14 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                             <TabButton tab="processados" activeTab={activeTab} label="Processados" icon={<Factory size={16} />} onClick={setActiveTab} />
                             <TabButton tab="produtos" activeTab={activeTab} label="Produtos (SKU)" icon={<Package size={16} />} onClick={setActiveTab} />
                             <TabButton tab="pacotes" activeTab={activeTab} label="Pacotes Prontos" icon={<Box size={16} />} onClick={setActiveTab} />
-                            <TabButton tab="pesagem" activeTab={activeTab} label="Pesagem" icon={<Weight size={16} />} onClick={setActiveTab} />
+                            <TabButton tab="ensacamento" activeTab={activeTab} label="Máquinas" icon={<Weight size={16} />} onClick={setActiveTab} />
                             <TabButton tab="movimentacoes" activeTab={activeTab} label="Histórico" icon={<History size={16} />} onClick={setActiveTab} />
                         </div></div>
                         <div className="mt-6">{renderContent()}</div>
                     </div>
                 </>
             )}
-            {activeTab === 'pesagem' && renderContent()}
+            {activeTab === 'ensacamento' && renderContent()}
             {modalState.addItem && <AddItemModal isOpen={modalState.addItem} onClose={closeModal} itemType={itemTypeForNewItem} onConfirm={handleConfirmAddItem} generalSettings={generalSettings} />}
             {modalState.editItem && <EditItemModal isOpen={!!modalState.editItem} onClose={closeModal} item={modalState.editItem} currentUser={currentUser!} onConfirm={handleConfirmEditItem} generalSettings={generalSettings} products={substituteOptions} />}
             {modalState.bomConfig && <BomConfigModal isOpen={!!modalState.bomConfig} onClose={closeModal} product={modalState.bomConfig} insumos={[...insumos, ...processados]} currentBom={produtosCombinados.find(b => b.productSku === modalState.bomConfig?.code)} onSave={(productSku, items) => { onSaveProdutoCombinado(productSku, items); closeModal(); }} />}
@@ -1352,6 +1395,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                     pacote={modalState.barcodeModal.data}
                     targetTable={modalState.barcodeModal.type === 'item' ? 'stock_items' : 'estoque_pronto'}
                     addToast={props.addToast || (() => {})}
+                    skuLinks={skuLinks}
                 />
             )}
         </div>
@@ -1425,6 +1469,19 @@ const ResponsiveStockList: React.FC<any> = (props) => {
     );
 };
 
+const formatBalance = (qty: number, unit: string) => {
+    const u = (unit || '').toLowerCase();
+    if (u === 'pacote' || u === 'un' || u === 'unid' || u === 'unidade') {
+        const value = Math.floor(qty);
+        if (value > 0) {
+            // Se for inteiro e a unidade for pacote/un, mostramos no formato solicitado
+            // Assumindo que o saldo total é a contagem de pacotes
+            return `${value} de ${value}`; 
+        }
+    }
+    return qty.toFixed(2);
+};
+
 const StockRow: React.FC<{ item: StockItem, hasAdjustPermission: boolean } & any> = ({ item, hasAdjustPermission, ...props }) => {
     const { onAdjustStock, onUpdateStock, onConfigureBom, onConfigureExpeditionItems, onProduce, onEdit, onDelete, selectedIds, onSelect, isProdutos, expandedRows, onToggleExpand, skuLinks, onTransferSku, currentUser, onResetVolatile } = props;
     const isBelowMin = item.current_qty < item.min_qty;
@@ -1451,7 +1508,7 @@ const StockRow: React.FC<{ item: StockItem, hasAdjustPermission: boolean } & any
                 <td className="py-4 px-3 font-mono text-xs">{item.code}</td>
                 <td className="py-4 px-3 text-slate-800">{item.name}</td>
                 {props.showColorColumn && <td className="py-4 px-3 text-xs">{item.color || 'N/A'}</td>}
-                <td className={`py-4 px-3 text-center font-black ${isBelowMin ? 'text-red-600' : 'text-slate-900'}`}>{item.current_qty.toFixed(2)}</td>
+                <td className={`py-4 px-3 text-center font-black ${isBelowMin ? 'text-red-600' : 'text-slate-900'}`}>{formatBalance(item.current_qty, item.unit)}</td>
                 {isProdutos && <td className="py-4 px-3 text-center text-orange-600 font-bold">{(item.reserved_qty || 0).toFixed(2)}</td>}
                 {isProdutos && <td className="py-4 px-3 text-center text-emerald-600 font-black">
                     {(item.ready_qty || 0).toFixed(2)}

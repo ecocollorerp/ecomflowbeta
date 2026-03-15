@@ -76,11 +76,18 @@ const BomConfigModal: React.FC<BomConfigModalProps> = ({ isOpen, onClose, produc
 
     const availableInsumosForAdding = useMemo(() => {
         const lowerSearch = addSearch.toLowerCase();
-        return insumos.filter(insumo =>
+        let filtered = insumos;
+        
+        // If configuring a PROCESSADO, show only INSUMO
+        if (product.kind === 'PROCESSADO') {
+            filtered = filtered.filter(i => i.kind === 'INSUMO');
+        }
+
+        return filtered.filter(insumo =>
             !editedItems.some(item => item.stockItemCode === insumo.code) &&
             (insumo.name.toLowerCase().includes(lowerSearch) || insumo.code.toLowerCase().includes(lowerSearch))
         );
-    }, [insumos, editedItems, addSearch]);
+    }, [insumos, editedItems, addSearch, product.kind]);
 
     const handleToggleItemToAdd = (code: string) => {
         setItemsToAdd(prev => {
