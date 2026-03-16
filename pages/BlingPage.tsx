@@ -5,7 +5,7 @@ import type { NfeSaida } from '../lib/blingApi';
 import { addPendingZplItem } from '../utils/pendingZpl';
 import { BlingSync } from '../components/BlingSync';
 // NFeManager integrado diretamente no BlingPage
-import { Cloud, Zap, Link as LinkIcon, Settings, Loader2, CheckCircle, Info, FileText, ShoppingCart, Download, Printer, Lock, Package, Search, Save, Eye, EyeOff, X, AlertTriangle, RefreshCw, ToggleLeft, ToggleRight, FileOutput, ExternalLink, Filter, HelpCircle, ChevronDown, ChevronRight, ChevronLeft, Copy, TrendingDown, ShoppingBag, CheckSquare, Square, Tag, Send, History, Clock, User, MapPin, CreditCard, XCircle, Sparkles, Files } from 'lucide-react';
+import { Cloud, Zap, Link as LinkIcon, Settings, Loader2, CheckCircle, Info, FileText, ShoppingCart, Download, Printer, Lock, Package, Search, Save, Eye, EyeOff, X, AlertTriangle, RefreshCw, ToggleLeft, ToggleRight, FileOutput, ExternalLink, Filter, HelpCircle, ChevronDown, ChevronRight, ChevronLeft, Copy, TrendingDown, ShoppingBag, CheckSquare, Square, Tag, Send, History, Clock, User, MapPin, CreditCard, XCircle, Sparkles, Files, FileCode, ShieldCheck, FileCheck } from 'lucide-react';
 
 // Transforma pedido do endpoint de sync para o formato OrderItem do ERP
 const transformSyncedOrder = (o: any): OrderItem => {
@@ -1175,16 +1175,11 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         // Loja/Store filter
         if (vendasLojaFilter !== 'TODOS') {
             list = list.filter(o => {
-                const orderStoreId = String(o.idLojaVirtual || o.id_loja_virtual || o.loja?.id || o.loja || '').toLowerCase();
-                const lojaRaw = String(o.canal || o.venda_origem || o.loja?.descricao || '').toLowerCase();
+                const orderStoreId = String(o.idLojaVirtual || o.idLoja || (typeof o.loja === 'object' ? String(o.loja.id || '') : '') || '').toLowerCase();
                 const filter = vendasLojaFilter.toLowerCase();
                 
-                if (filter === 'ml') return lojaRaw.includes('mercado') || orderStoreId.includes('mercado');
-                if (filter === 'shopee') return lojaRaw.includes('shopee') || orderStoreId.includes('shopee');
-                if (filter === 'site') return lojaRaw.includes('site') || (!o.canal && (!orderStoreId || orderStoreId === '0'));
-                
-                // Filtro dinâmico por ID ou Nome
-                return orderStoreId === filter || lojaRaw.includes(filter) || String(o.idLojaVirtual) === filter;
+                // Filtro estrito por ID de Loja (consistente com NF-e)
+                return orderStoreId === filter || String(o.idLojaVirtual) === filter;
             });
         }
 
@@ -1255,9 +1250,9 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         // Filtro por loja específica (retrocompatibilidade)
         if (nfeLojaFilter !== 'TODOS') {
             list = list.filter(n => {
-                const loja = (n.loja || '').toLowerCase();
+                const orderStoreId = String(n.idLojaVirtual || (typeof n.loja === 'object' ? String((n.loja as any).id || '') : '') || '').toLowerCase();
                 const filter = nfeLojaFilter.toLowerCase();
-                return loja.includes(filter);
+                return orderStoreId === filter || String(n.idLojaVirtual) === filter;
             });
         }
 
@@ -1505,7 +1500,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                     id: Number(c.id || 0),
                     descricao: String(c.descricao || c.nome || ''),
                     tipo: String(c.tipo || c.sigla || '').toLowerCase(),
-                }));
+                    situacao: Number(c.situacao || 0)
+                })).filter((c: any) => c.situacao === 1 && c.id !== 0);
                 setBlingCanais(normalized);
 
                 // Carrega o dicionário id -> nome (vindo do backend ou montado aqui como fallback)
@@ -2251,11 +2247,11 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 URL.revokeObjectURL(url);
                 addToast('✅ DANFE baixado com sucesso! Verifique a barra de downloads do seu navegador.', 'success');
                 // Opcional: tentar abrir em nova aba também para garantir visibilidade
-                window.open(url, '_blank');
+                window.open(`${url}&token=${token}`, '_blank');
             } else {
                 // Fallback para link direto se houver
                 if (nfe.linkDanfe) {
-                    window.open(nfe.linkDanfe, '_blank');
+                    window.open(`${nfe.linkDanfe}&token=${token}`, '_blank');
                     addToast('Download iniciado via link direto (fallback).', 'info');
                 } else {
                     addToast('Não foi possível gerar o PDF do DANFE.', 'error');
@@ -2287,7 +2283,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             
             // 2. Tenta via NF-e se falhou ou não for marketplace
             if (!zpl) {
-                zpl = await fetchNfeEtiquetaZpl(token, nfe.id, nfe.canal);
+                zpl = await fetchNfeEtiquetaZpl(token, nfe.id, nfe.canal, nfe.numeroLoja);
             }
 
             if (zpl) {
@@ -2419,7 +2415,6 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
 
     // ── NF-e — filtros consolidados no topo ─────────────────────────────────────────────────
 
-    // Contadores por situação
     const nfeCounts = useMemo(() => ({
         todas: nfeSaida.length,
         pendentes: nfeSaida.filter(n => n.situacao === 1).length,
@@ -2428,7 +2423,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         rejeitadas: nfeSaida.filter(n => n.situacao === 4).length,
         autorizadas: nfeSaida.filter(n => n.situacao === 5 || n.situacao === 6 || n.situacao === 9).length,
         autorizadas_sem_danfe: nfeSaida.filter(n => (n.situacao === 5 || n.situacao === 6 || n.situacao === 9) && !n.rastreamento).length,
-        emitida_danfe: nfeSaida.filter(n => (n.situacao === 5 || n.situacao === 6 || n.situacao === 9) && !!n.rastreamento).length,
+        emitida_danfe: nfeSaida.filter(n => (n.situacao === 5 || n.situacao === 6 || n.situacao === 9 || n.situacao === 11) && !!n.rastreamento).length,
         emitidas: nfeSaida.filter(n => n.situacao === 11).length,
         denegadas: nfeSaida.filter(n => n.situacao === 7).length,
         encerradas: nfeSaida.filter(n => n.situacao === 8).length,
@@ -2616,7 +2611,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                             if (contentType.includes('application/json')) {
                                 const json = await resp.json();
                                 if (json.link) {
-                                    window.open(json.link, '_blank');
+                                    window.open(`${json.link}&token=${token}`, '_blank');
                                     baixados++;
                                 } else {
                                     throw new Error("Link de download não retornado.");
@@ -2636,12 +2631,12 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                             }
                         } else {
                             // Fallback para o link original se o proxy falhar
-                            if (nfe.linkDanfe) window.open(nfe.linkDanfe, '_blank');
+                            if (nfe.linkDanfe) window.open(`${nfe.linkDanfe}&token=${token}`, '_blank');
                             baixados++;
                         }
                     } catch (err) {
                         console.error("Erro no download via proxy:", err);
-                        if (type === 'normal' && nfe.linkDanfe) window.open(nfe.linkDanfe, '_blank');
+                        if (type === 'normal' && nfe.linkDanfe) window.open(`${nfe.linkDanfe}&token=${token}`, '_blank');
                         baixados++;
                     }
                 }
@@ -3252,7 +3247,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 const ord = filteredVendasOrders.find(o => (o.blingId || o.orderId) === ordKey);
                 if (!ord) continue;
                 try {
-                    const zpl = await fetchEtiquetaZplForPedido(token, ord.blingId || ord.orderId);
+                    const idBusca = ord.blingId || ord.orderId;
+                    const zpl = await fetchEtiquetaZplForPedido(token, idBusca);
                     if (zpl) zplParts.push(zpl);
                 } catch {
                     erros++;
@@ -3535,6 +3531,73 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         );
     };
 
+    const renderLojaIcon = (tipo?: string) => {
+        const t = String(tipo || '').toLowerCase();
+        if (t.includes('mercado')) return '🛒 ';
+        if (t.includes('shopee')) return '🛍️ ';
+        return '🏪 ';
+    };
+
+    const renderBatchActionsNfe = (isTop: boolean) => (
+        <div className={`flex flex-wrap items-center justify-between gap-3 px-4 py-3 ${isTop ? 'mb-4' : 'mt-4'} rounded-2xl bg-emerald-50 border border-emerald-200`}>
+            <div className="flex items-center gap-3">
+                <span className="text-[10px] font-black text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full">
+                    {selectedNfeSaidaIds.size} selecionada(s)
+                </span>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={() => setSelectedNfeSaidaIds(new Set())} className="text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-white text-slate-500 hover:bg-slate-50 transition-all border border-slate-200">
+                    LIMPAR
+                </button>
+                <button onClick={() => handleBaixarDanfeSelecionados('normal')} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-slate-50 text-orange-600 hover:bg-orange-100 transition-all border border-orange-100">
+                    <Download size={12} /> DANFE
+                </button>
+                <button onClick={() => handleBaixarDanfeSelecionados('simplified')} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-slate-50 text-orange-600 hover:bg-orange-100 transition-all border border-orange-100">
+                    <FileText size={12} /> DANFE SIMP.
+                </button>
+                <button onClick={handleBatchPdfEtiquetas} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-slate-50 text-orange-600 hover:bg-orange-100 transition-all border border-orange-100">
+                    <Tag size={12} /> ETIQUETA TRANSP. (ZPL)
+                </button>
+                <button onClick={handleBatchEtiquetaDanfe} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-orange-600 text-white hover:bg-orange-700 transition-all shadow shadow-orange-200">
+                    <Printer size={12} /> DANFE + ETIQUETA (ZPL)
+                </button>
+                <button onClick={handleBatchEtiquetaDanfe} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-yellow-50 text-yellow-700 hover:bg-yellow-100 transition-all border border-yellow-200">
+                    <Printer size={12} /> ZPL
+                </button>
+                <button onClick={handleBaixarXmlSelecionados} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-100 transition-all border border-blue-200">
+                    <FileCode size={12} /> XML
+                </button>
+                <button onClick={() => handleBaixarXmlSelecionados()} disabled={isDownloadingXml} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-all shadow shadow-blue-200">
+                    {isDownloadingXml ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} DOWNLOAD XML
+                </button>
+                <button onClick={() => handleBaixarDanfeSelecionados('normal')} disabled={isDownloadingDanfe} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 transition-all shadow shadow-green-200">
+                    <FileText size={12} /> DANFE NORMAL (LOTES)
+                </button>
+                <button onClick={() => handleBaixarDanfeSelecionados('simplified')} disabled={isDownloadingDanfe} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-all shadow shadow-emerald-200">
+                    <Zap size={12} /> DANFE SIMPLIF. (LOTES)
+                </button>
+            </div>
+        </div>
+    );
+
+    const renderBatchActionsVendas = (isTop: boolean) => (
+        <div className={`flex flex-wrap items-center justify-between gap-3 px-4 py-3 ${isTop ? 'mb-4' : 'mt-4'} rounded-2xl bg-yellow-50 border border-yellow-200`}>
+            <div className="flex items-center gap-3">
+                <span className="text-[10px] font-black text-yellow-700 bg-yellow-100 px-2.5 py-1 rounded-full">
+                    {selectedVendasIds.size} selecionada(s)
+                </span>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={() => setSelectedVendasIds(new Set())} className="text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-white text-slate-500 hover:bg-slate-50 transition-all border border-slate-200">
+                    LIMPAR
+                </button>
+                <button onClick={handleBatchEmitirNfe} disabled={isBatchEmitindo} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 transition-all shadow shadow-emerald-200">
+                    {isBatchEmitindo ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />} EMITIR NF-E (LOTES)
+                </button>
+            </div>
+        </div>
+    );
+
     if (isHandlingCallback) {
         return (
             <div className="flex flex-col items-center justify-center h-full space-y-4">
@@ -3748,6 +3811,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 )}
                             </div>
                         </div>
+                        {selectedVendasIds.size > 0 && renderBatchActionsVendas(true)}
 
                         {/* Filtros locais */}
                         <div className="flex flex-col md:flex-row gap-3 mb-2">
@@ -3756,19 +3820,34 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 <input type="text" value={vendasSearch} onChange={e => setVendasSearch(e.target.value)} placeholder="Nº pedido, cliente, loja, SKU..." className="w-full pl-9 p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-yellow-400" />
                             </div>
                             <div className="flex gap-2">
-                                <select value={vendasLojaFilter} onChange={e => {
-                                    const val = e.target.value;
-                                    setVendasLojaFilter(val);
-                                    localStorage.setItem('vendasLojaFilter', val);
-                                }} className="p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-yellow-400 min-w-[200px]">
-                                    <option value="TODOS">Todas as lojas</option>
-                                    <option value="ML">🛒 Mercado Livre</option>
-                                    <option value="SHOPEE">🛍️ Shopee</option>
-                                    <option value="SITE">🏪 Loja / Site</option>
-                                    {blingCanais.filter(c => !['ml', 'shopee', 'site'].includes(c.tipo) && !['MERCADO LIVRE', 'SHOPEE'].includes(c.descricao.toUpperCase())).map(c => (
-                                        <option key={c.id} value={String(c.id)}>{c.descricao}</option>
-                                    ))}
-                                </select>
+                            <div className="flex flex-wrap gap-2 mb-2 w-full">
+                                <button
+                                    onClick={() => {
+                                        setVendasLojaFilter('TODOS');
+                                        localStorage.setItem('vendasLojaFilter', 'TODOS');
+                                    }}
+                                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${vendasLojaFilter === 'TODOS' ? 'bg-slate-800 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                                >
+                                    Todas as Lojas
+                                </button>
+                                {blingCanais.map(c => (
+                                    <button
+                                        key={c.id}
+                                        onClick={() => {
+                                            const val = String(c.id);
+                                            setVendasLojaFilter(val);
+                                            localStorage.setItem('vendasLojaFilter', val);
+                                        }}
+                                        className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${vendasLojaFilter === String(c.id)
+                                            ? 'bg-blue-600 text-white shadow-lg'
+                                            : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                            }`}
+                                    >
+                                        {renderLojaIcon(c.tipo)}
+                                        {c.descricao}
+                                    </button>
+                                ))}
+                            </div>
                                 <div className="flex items-center gap-1 bg-slate-50 border-2 border-slate-100 rounded-xl p-1">
                                     <button 
                                         onClick={() => { setShowOnlyWithLink(!showOnlyWithLink); if(!showOnlyWithLink) setShowOnlyWithoutLink(false); }}
@@ -3871,27 +3950,52 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                             <span className="bg-slate-100 text-slate-600 text-[9px] font-black px-2 py-1 rounded-full">{order.itens?.length || order.itensCount || 0}</span>
                                                         </td>
                                                         <td className="p-3 text-xs">
-                                                            {order.rastreamento
-                                                                ? <span className="font-mono text-blue-700 bg-blue-50 px-2 py-1 rounded text-[9px]">{order.rastreamento}</span>
-                                                                : <span className="text-slate-300 text-[9px">—</span>}
+                                                            <div className="flex flex-col gap-1">
+                                                                {order.rastreamento ? (
+                                                                    <span className="font-black text-blue-700 bg-blue-50 px-2 py-1 rounded-lg text-[9px] border border-blue-100 flex items-center gap-1">
+                                                                        📦 {order.rastreamento}
+                                                                    </span>
+                                                                ) : vendasInv?.rastreamento ? (
+                                                                    <span className="font-black text-indigo-700 bg-indigo-50 px-2 py-1 rounded-lg text-[9px] border border-indigo-100 flex items-center gap-1">
+                                                                        🚚 {vendasInv.rastreamento}
+                                                                    </span>
+                                                                ) : (
+                                                                    <span className="text-slate-300 text-[9px">—</span>
+                                                                )}
+                                                            </div>
                                                         </td>
                                                         <td className="p-3 font-black text-emerald-600 whitespace-nowrap">{Number(order.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
                                                         <td className="p-3"><span className="text-[9px] font-black px-2 py-1 rounded-full bg-slate-100 text-slate-600 uppercase">{order.status || '-'}</span></td>
                                                         {/* ERP column */}
                                                         <td className="p-3">
                                                             {erpImportedBlingIds.has(String(order.blingId || '')) || erpImportedBlingIds.has(String(order.orderId || '')) ? (
-                                                                <span className="text-[9px] font-black px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 whitespace-nowrap">✅ Importado</span>
+                                                                <span className="text-[9px] font-black px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 whitespace-nowrap flex items-center gap-1">
+                                                                    <CheckCircle size={10} /> Importado
+                                                                </span>
                                                             ) : (
                                                                 <span className="text-[9px] font-black px-2 py-1 rounded-full bg-slate-100 text-slate-400 whitespace-nowrap">Não importado</span>
                                                             )}
                                                         </td>
-                                                        {/* NFe column */}
+                                                        {/* NF-e column */}
                                                         <td className="p-3">
                                                             {vendasInv ? (
-                                                                <span className={`text-[9px] font-black px-2 py-1 rounded-full whitespace-nowrap ${nfeEmitida ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
-                                                                    }`}>
-                                                                    {nfeEmitida ? '✅ Emitida' : vendasInv.situacao || 'Gerada'}
-                                                                </span>
+                                                                <div className="flex flex-col gap-1">
+                                                                    {vendasInv.situacao?.toLowerCase().includes('autoriz') && !vendasInv.rastreamento && (
+                                                                        <span className="text-[9px] font-black px-2 py-1 rounded-full bg-blue-100 text-blue-700 whitespace-nowrap flex items-center gap-1">
+                                                                            <ShieldCheck size={10} /> Autorizada
+                                                                        </span>
+                                                                    )}
+                                                                    {vendasInv.situacao?.toLowerCase().includes('autoriz') && vendasInv.rastreamento && (
+                                                                        <span className="text-[9px] font-black px-2 py-1 rounded-full bg-emerald-100 text-emerald-700 whitespace-nowrap flex items-center gap-1">
+                                                                            <FileCheck size={10} /> Emitida DANFE
+                                                                        </span>
+                                                                    )}
+                                                                    {!vendasInv.situacao?.toLowerCase().includes('autoriz') && (
+                                                                        <span className="text-[9px] font-black px-2 py-1 rounded-full bg-orange-100 text-orange-700 whitespace-nowrap">
+                                                                            {vendasInv.situacao || 'Gerada'}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
                                                             ) : (
                                                                 <button
                                                                     onClick={e => { e.stopPropagation(); setNfeModalOrder(order); setShowGerarNFeModal(true); }}
@@ -4240,7 +4344,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 { key: 'todas', label: 'Todas', count: nfeCounts.todas, color: 'slate' },
                                 { key: 'pendentes', label: 'Pendentes', count: nfeCounts.pendentes, color: 'yellow' },
                                 { key: 'autorizadas', label: 'Autorizadas', count: nfeCounts.autorizadas, color: 'blue' },
-                                { key: 'emitidas', label: 'Emitidas', count: nfeCounts.emitidas, color: 'green' },
+                                { key: 'autorizadas_sem_danfe', label: 'A/S DANFE', count: nfeCounts.autorizadas_sem_danfe, color: 'orange' },
+                                { key: 'emitida_danfe', label: 'Emitidas', count: nfeCounts.emitida_danfe, color: 'indigo' },
                                 { key: 'rejeitadas', label: 'Rejeitadas', count: nfeCounts.rejeitadas, color: 'red' },
                                 { key: 'canceladas', label: 'Canceladas', count: nfeCounts.canceladas, color: 'slate' },
                                 { key: 'aguardando_recibo', label: 'Recibo', count: nfeCounts.aguardando_recibo, color: 'yellow' },
@@ -4251,6 +4356,9 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                     yellow: isActive ? 'bg-yellow-500 text-white' : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100',
                                     blue: isActive ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100',
                                     green: isActive ? 'bg-green-600 text-white' : 'bg-green-50 text-green-700 hover:bg-green-100',
+                                    orange: isActive ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-700 hover:bg-orange-100',
+                                    indigo: isActive ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100',
+                                    red: isActive ? 'bg-red-600 text-white' : 'bg-red-50 text-red-700 hover:bg-red-100',
                                 };
                                 return (
                                     <button
@@ -4265,77 +4373,35 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                             })}
                         </div>
 
-                        {/* Filtro por Loja (ML / Shopee / Site) */}
+                        {/* Filtro por Loja (Dinâmico das Lojas Ativas) */}
                         <div className="flex flex-wrap gap-2 mb-4">
-                            {([
-                                { key: 'TODOS', label: 'Todas as Lojas' },
-                                { key: 'ML', label: '🛒 Mercado Livre' },
-                                { key: 'SHOPEE', label: '🛍️ Shopee' },
-                                { key: 'SITE', label: '🏪 Loja / Site' },
-                            ] as const).map(c => (
+                            <button
+                                onClick={() => {
+                                    setNfeSaidaLojaFilter('TODOS');
+                                    localStorage.setItem('nfeSaidaLojaFilter', 'TODOS');
+                                }}
+                                className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${nfeSaidaLojaFilter === 'TODOS' ? 'bg-slate-800 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                            >
+                                Todas as Lojas
+                            </button>
+                            {blingCanais.map(c => (
                                 <button
-                                    key={c.key}
+                                    key={c.id}
                                     onClick={() => {
-                                        setNfeSaidaLojaFilter(c.key);
-                                        localStorage.setItem('nfeSaidaLojaFilter', c.key);
+                                        const val = String(c.id);
+                                        setNfeSaidaLojaFilter(val);
+                                        localStorage.setItem('nfeSaidaLojaFilter', val);
                                     }}
-                                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${nfeSaidaLojaFilter === c.key ? 'bg-slate-800 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${nfeSaidaLojaFilter === String(c.id) ? 'bg-slate-800 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
                                 >
-                                    {c.label}
+                                    {c.descricao.toUpperCase()}
                                 </button>
                             ))}
                         </div>
+                        {selectedNfeSaidaIds.size > 0 && renderBatchActionsNfe(true)}
 
-                        {/* Barra de ações em lote */}
-                        {selectedNfeSaidaIds.size > 0 && (
-                            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 mb-4 rounded-2xl bg-emerald-50 border border-emerald-200">
-                                <div className="flex items-center gap-3">
-                                    <span className="text-[10px] font-black text-emerald-700 bg-emerald-100 px-2.5 py-1 rounded-full">
-                                        {selectedNfeSaidaIds.size} selecionada(s)
-                                    </span>
-                                </div>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <button onClick={() => setSelectedNfeSaidaIds(new Set())} className="text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-slate-100 transition-all">
-                                        Limpar
-                                    </button>
-                                    {/* Emitir pendentes selecionadas */}
-                                    {nfeSaida.some(n => selectedNfeSaidaIds.has(n.id) && n.situacao === 1) && (
-                                        <button onClick={handleBatchEmitirNfe} disabled={isBatchEmitindo} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-yellow-500 text-white hover:bg-yellow-600 disabled:opacity-50 transition-all shadow shadow-yellow-200">
-                                            {isBatchEmitindo ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-                                            {isBatchEmitindo ? 'Emitindo...' : 'Emitir Selecionadas'}
-                                        </button>
-                                    )}
-                                    {nfeSaida.some(n => selectedNfeSaidaIds.has(n.id) && (n.situacao === 5 || n.situacao === 6)) && canGerarEtiquetas && (
-                                        <div className="flex gap-2">
-                                            <button onClick={handleBatchEtiquetaDanfe} disabled={isBatchEmitindo} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-all shadow shadow-indigo-200">
-                                                {isBatchEmitindo ? <Loader2 size={12} className="animate-spin" /> : <Printer size={12} />}
-                                                Consultar Etiquetas (ZPL)
-                                            </button>
-                                            <button onClick={handleBatchPdfEtiquetas} disabled={isBatchEmitindo} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-50 transition-all shadow shadow-orange-200">
-                                                {isBatchEmitindo ? <Loader2 size={12} className="animate-spin" /> : <Tag size={12} />}
-                                                Etiquetas de Envio (PDF)
-                                            </button>
-                                        </div>
-                                    )}
-                                    <div className="flex bg-blue-600 rounded-xl overflow-hidden shadow shadow-blue-200">
-                                        <button onClick={() => handleBaixarXmlSelecionados()} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50 transition-all border-r border-blue-500">
-                                            {isDownloadingXml ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
-                                            {isDownloadingXml ? `XML... ${xmlDownloadProgress?.current || 0}/${xmlDownloadProgress?.total || 0}` : 'Download XML'}
-                                        </button>
-                                    </div>
-                                    <div className="flex bg-green-600 rounded-xl overflow-hidden shadow shadow-green-200">
-                                        <button onClick={() => handleBaixarDanfeSelecionados('normal')} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 text-white hover:bg-green-700 disabled:opacity-50 transition-all border-r border-green-500">
-                                            {isDownloadingDanfe ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
-                                            DANFE Normal (Lotes)
-                                        </button>
-                                        <button onClick={() => handleBaixarDanfeSelecionados('simplified')} disabled={isDownloadingXml || isDownloadingDanfe} className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 text-white hover:bg-green-700 disabled:opacity-50 transition-all">
-                                            {isDownloadingDanfe ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
-                                            DANFE Simplif. (Lotes)
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
+                        {/* Barra de ações em lote INFERIOR - NF-e */}
+                        {selectedNfeSaidaIds.size > 0 && renderBatchActionsNfe(false)}
 
                         {/* Progresso batch emissão / download */}
                         {isBatchEmitindo && (

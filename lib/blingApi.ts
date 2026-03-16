@@ -329,13 +329,17 @@ export async function fetchBlingInvoices(
  * Chama GET /Api/v3/nfe/{id}/etiqueta via proxy do servidor.
  * Retorna o ZPL completo (DANFE simplificado + etiqueta de envio) ou null se falhar.
  */
-export async function fetchNfeEtiquetaZpl(apiKey: string, nfeId: number | string, canal?: string): Promise<string | null> {
-    const authToken = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
+export async function fetchNfeEtiquetaZpl(token: string, nfeId: number | string, canal?: string, numeroPedidoLoja?: string): Promise<string | null> {
+    const authToken = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
     const safeId = String(nfeId || '').replace(/[^0-9]/g, '');
     if (!safeId) return null;
 
     try {
-        const url = `/api/bling/nfe/${safeId}/etiqueta${canal ? `?canal=${encodeURIComponent(canal)}` : ''}`;
+        const params = new URLSearchParams();
+        if (canal) params.set('loja', canal);
+        if (numeroPedidoLoja) params.set('numeroPedidoLoja', numeroPedidoLoja);
+        
+        const url = `/api/bling/nfe/${safeId}/etiqueta?${params.toString()}`;
         const resp = await fetchWithRetry(url, {
             headers: { Authorization: authToken },
         });
