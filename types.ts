@@ -348,6 +348,7 @@ export interface OrderItem {
     lote_id?: string;
     descontar_volatil?: boolean;
     idLojaVirtual?: string;
+    loja?: any;
 }
 
 export interface ScanLogItem {

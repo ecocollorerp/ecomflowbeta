@@ -57,6 +57,58 @@ async function startServer() {
     }
   });
 
+  // Rota para salvar múltiplas NF-e no ERP local (Supabase) em lote
+  app.post('/api/bling/nfe/save-batch', async (req, res) => {
+    try {
+      const nfes: any[] = Array.isArray(req.body?.nfes) ? req.body.nfes : (Array.isArray(req.body) ? req.body : []);
+      if (!nfes || nfes.length === 0) return res.status(400).json({ success: false, error: 'Nenhuma NFe enviada' });
+
+      const resultados: any[] = [];
+      for (const nfe of nfes) {
+        try {
+          const created = await criarNFe(nfe);
+          resultados.push({ input: nfe, result: created });
+        } catch (err: any) {
+          resultados.push({ input: nfe, result: { sucesso: false, erro: err?.message || String(err) } });
+        }
+      }
+
+      const ok = resultados.filter(r => r.result?.sucesso).length;
+      const fail = resultados.length - ok;
+      res.json({ success: true, total: resultados.length, ok, fail });
+    } catch (error: any) {
+      console.error('❌ [SAVE BATCH NFE ERROR]:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // Rota para buscar chaves de NF-e já sincronizadas
+  app.get('/api/erp/nfe/synced-ids', async (req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from('nfe')
+        .select('numero, chave_acesso, id'); // Adicionado id
+
+      if (error) {
+        console.error('❌ [SYNCED IDS ERROR]:', error);
+        return res.status(500).json({ success: false, error: error.message });
+      }
+
+      const keys = new Set<string>();
+      data?.forEach((n: any) => {
+        if (n.numero) keys.add(String(n.numero));
+        if (n.chave_acesso) keys.add(String(n.chave_acesso));
+        if (n.id) keys.add(String(n.id));
+      });
+
+      console.log(`✅ [SYNCED IDS] Retornando ${keys.size} chaves sincronizadas`);
+      res.json({ success: true, syncedKeys: Array.from(keys) });
+    } catch (error: any) {
+      console.error('❌ [SYNCED IDS ERROR]:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
   // DEBUG: Teste de token simples
   app.get("/api/debug/token-test", (req, res) => {
     res.send(`
@@ -253,24 +305,23 @@ async function startServer() {
     return t.toLowerCase().startsWith('bearer ') ? t : `Bearer ${t}`;
   };
 
-  const parseCanal = (raw: any, pedidoNumero?: any): 'ML' | 'SHOPEE' | 'SITE' => {
-    const text = String(raw || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    const num = String(pedidoNumero || '').toUpperCase();
-
-    if (text.includes('MERCADO LIVRE') || text.includes('MERCADOLIVRE') || text.includes('MERCADO-LIVRE') || text.includes('MLB') || text.includes('ML ') || text === 'ML' || num.startsWith('MLB')) return 'ML';
-    if (text.includes('SHOPEE') || num.includes('SHP')) return 'SHOPEE';
-    if (text.includes('MERCADO')) return 'ML'; 
-    if (text.includes('AMAZON')) return 'SITE';
+  /**
+   * Helper para identificar a loja (ML, Shopee, Site)
+   */
+  function parseLoja(nome: string, numeroLoja?: string): 'ML' | 'SHOPEE' | 'SITE' {
+    const n = String(nome || '').toUpperCase();
+    if (n.includes('MERCADO') || n.includes('MEU_CANAL_ML') || String(numeroLoja).startsWith('6')) return 'ML';
+    if (n.includes('SHOPEE') || String(numeroLoja).startsWith('7')) return 'SHOPEE';
     return 'SITE';
-  };
+  }
 
   /**
-   * Extrai o número da loja virtual e o canal de um pedido do Bling.
+   * Extrai o número da loja virtual e a loja de um pedido do Bling.
    */
   const extrairMetadadosPedido = (pedido: any) => {
     let numeroLojaVirtual = pedido?.numeroLoja;
-    const canalRaw = pedido?.loja?.nome || pedido?.loja?.descricao || pedido?.origem?.nome || pedido?.origem || '';
-    const canalDetectado = parseCanal(canalRaw, numeroLojaVirtual);
+    const lojaRaw = pedido?.loja?.nome || pedido?.loja?.descricao || pedido?.origem?.nome || pedido?.origem || '';
+    const detectedLoja = parseLoja(lojaRaw, numeroLojaVirtual);
 
     if (!numeroLojaVirtual) {
       const camposTexto = [
@@ -290,15 +341,15 @@ async function startServer() {
         }
       }
     }
-    return { numeroLojaVirtual, canalDetectado };
+    return { numeroLojaVirtual, detectedLoja };
   };
 
   /**
    * Realiza o PATCH em uma NF-e do Bling para injetar metadados do pedido original.
    */
   const patchNfeComDadosPedido = async (token: string, nfId: number | string, pedido: any, metadados: any) => {
-    const { numeroLojaVirtual, canalDetectado } = metadados;
-    const infoAdicional = `Pedido: ${numeroLojaVirtual || 'N/A'} | Canal: ${canalDetectado}`;
+    const { numeroLojaVirtual, detectedLoja } = metadados;
+    const infoAdicional = `Pedido: ${numeroLojaVirtual || 'N/A'} | Loja: ${detectedLoja}`;
     
     const nfeUpdatePayload = {
       contato: pedido.contato,
@@ -324,9 +375,10 @@ async function startServer() {
       const dataInicio = String(req.query.dataInicio || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
       const dataFim = String(req.query.dataFim || new Date().toISOString().split('T')[0]);
       const status = String(req.query.status || 'TODOS').toUpperCase();
-      const canal = String(req.query.canal || 'ALL').toUpperCase();
+      const loja = String(req.query.loja || 'ALL').toUpperCase();
+      const idLojaFilter = req.query.idLoja ? String(req.query.idLoja) : null;
 
-      console.log(`📋 [SYNC PEDIDOS DE VENDAS] Data: ${dataInicio} a ${dataFim} | Status: ${status} | Canal: ${canal}`);
+      console.log(`📋 [SYNC PEDIDOS DE VENDAS] Data: ${dataInicio} a ${dataFim} | Status: ${status} | Loja: ${loja}`);
 
       // ── Paginação: busca TODAS as páginas ──────────────────────────────────
       const allRawOrders: any[] = [];
@@ -344,7 +396,8 @@ async function startServer() {
 
       while (continuar) {
         const situacoesQs = situacaoIds.map((id: string, i: number) => `&idsSituacoes[${i}]=${id}`).join('');
-        const url = `https://www.bling.com.br/Api/v3/pedidos/vendas?dataInicial=${dataInicio}&dataFinal=${dataFim}&limite=100&pagina=${pagina}${situacoesQs}`;
+        let url = `https://www.bling.com.br/Api/v3/pedidos/vendas?dataInicial=${dataInicio}&dataFinal=${dataFim}&limite=100&pagina=${pagina}${situacoesQs}`;
+        if (idLojaFilter) url += `&idLoja=${encodeURIComponent(idLojaFilter)}`;
         const pageResp = await fetch(url, {
           headers: { 'Authorization': token, 'Accept': 'application/json' }
         });
@@ -368,24 +421,25 @@ async function startServer() {
           else pagina++;
         }
 
-        // Segurança: máximo 20 páginas (2000 pedidos)
-        if (pagina > 20) continuar = false;
+        // Segurança: máximo 100 páginas (10.000 pedidos)
+        if (pagina > 100) continuar = false;
       }
 
       console.log(`📋 [SYNC PEDIDOS] Total raw: ${allRawOrders.length} em ${pagina} página(s) | situacoes API: ${situacaoIds.join(',') || 'TODOS'}`);
 
       // ── Montar pedidos COMPLETOS (um por order) com itens aninhados ────────
       // Filtro de situação já foi aplicado pela API via idsSituacoes
-      // Apenas filtramos por canal se solicitado
+      // Apenas filtramos por loja se solicitado
       const completeOrders: any[] = allRawOrders
         .filter((order: any) => {
-          if (canal === 'ALL') return true;
-          const detectedCanal = parseCanal(order?.loja?.nome || order?.origem || order?.tipo);
-          return detectedCanal === canal;
+          if (loja === 'ALL') return true;
+          const detectedLoja = parseLoja(order?.loja?.nome || order?.origem || order?.tipo);
+          return detectedLoja === loja;
           return true;
         })
         .map((order: any) => {
-          const detectedCanal = parseCanal(order?.loja?.nome || order?.origem || order?.tipo);
+          const detectedLoja = parseLoja(order?.loja?.nome || order?.origem || order?.tipo);
+          const idLojaVirtual = order.loja?.id ? String(order.loja.id) : '';
           const orderDate = String(order?.data || '').split('T')[0];
           const items = Array.isArray(order?.itens) ? order.itens : [];
 
@@ -399,8 +453,9 @@ async function startServer() {
             data: orderDate,
             status: String(order?.situacao?.descricao || order?.situacao?.valor || 'Em aberto'),
             situacaoId: Number(order?.situacao?.id || 0),
-            canal: detectedCanal,
-            loja: order?.loja?.nome || '',
+            loja: detectedLoja,
+            lojaData: order.loja, // Objeto completo
+            idLojaVirtual,
             total: Number(order?.total || 0),
             desconto: Number(order?.desconto?.valor || 0),
             frete: Number(order?.transporte?.frete || 0),
@@ -439,14 +494,14 @@ async function startServer() {
             customer_name: order.customer_name,
             data: order.data,
             status: 'NOVO',
-            canal: order.canal,
+            loja: order.loja,
             total: order.total,
             lote: null,
           }))
           : [{
             id: order.id, orderId: order.orderId, blingId: order.blingId,
             customer_name: order.customer_name, data: order.data, status: 'NOVO',
-            canal: order.canal, lote: null, sku: null, quantity: 0, total: order.total
+            loja: order.loja, lote: null, sku: null, quantity: 0, total: order.total
           }]
       );
 
@@ -506,6 +561,7 @@ async function startServer() {
       const dataInicio = String(req.query.dataInicio || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
       const dataFim = String(req.query.dataFim || new Date().toISOString().split('T')[0]);
       const status = String(req.query.status || 'TODOS').toUpperCase();
+      const numeroLojaFilter = req.query.numeroLoja ? String(req.query.numeroLoja) : (req.query.idLoja ? String(req.query.idLoja) : null);
 
       console.log(`📄 [SYNC NOTAS FISCAIS] Data: ${dataInicio} a ${dataFim}`);
 
@@ -514,8 +570,13 @@ async function startServer() {
       let nfPagina = 1;
       let nfContinuar = true;
 
-      while (nfContinuar) {
-        const nfUrl = `https://www.bling.com.br/Api/v3/nfe?dataEmissaoInicial=${dataInicio}%2000:00:00&dataEmissaoFinal=${dataFim}%2023:59:59&limite=100&pagina=${nfPagina}`;
+      // Triple-Fetch: buscar no máximo 3 páginas (até ~300 registros)
+      const maxNfPages = 3;
+      while (nfContinuar && nfPagina <= maxNfPages) {
+        let nfUrl = `https://www.bling.com.br/Api/v3/nfe?dataEmissaoInicial=${dataInicio}%2000:00:00&dataEmissaoFinal=${dataFim}%2023:59:59&limite=100&pagina=${nfPagina}`;
+        if (numeroLojaFilter) nfUrl += `&numeroLoja=${encodeURIComponent(numeroLojaFilter)}`;
+        // permite filtro direto por situação (ex: ?situacao=1) repassado pelo frontend
+        if (req.query.situacao) nfUrl += `&situacao=${encodeURIComponent(String(req.query.situacao))}`;
         const pageResp = await fetch(nfUrl, {
           headers: { 'Authorization': token, 'Accept': 'application/json' }
         });
@@ -534,7 +595,8 @@ async function startServer() {
           if (pageItems.length < 100) nfContinuar = false;
           else nfPagina++;
         }
-        if (nfPagina > 20) nfContinuar = false;
+        // Segurança: limite máximo de páginas por chamada (Triple-Fetch)
+        if (nfPagina >= maxNfPages) nfContinuar = false;
       }
 
       const rawInvoices = allRawInvoices;
@@ -1135,14 +1197,14 @@ async function startServer() {
 
       let csv = '';
       if (dataType === 'orders') {
-        csv = 'ID,Pedido,BlingID,Cliente,Data,Canal,Status,SKU,ProdutoFinal,Quantidade,ValorTotal\n';
+        csv = 'ID,Pedido,BlingID,Cliente,Data,Loja,Status,SKU,ProdutoFinal,Quantidade,ValorTotal\n';
         csv += sourceItems.map((item: any) => [
           item.id,
           item.orderId,
           item.blingId,
           item.customer_name,
           item.data,
-          item.canal,
+          item.loja,
           item.status,
           item.sku,
           item.finalProductSku || '',
@@ -1923,9 +1985,22 @@ async function startServer() {
       let nfesCriadas: any[] = nfeIdParam ? [{ id: nfeIdParam }] : [];
 
       if (!nfeIdParam && blingOrderId) {
+        // Aceita IDs enviados pelo frontend no formato 'bling_123' ou já numérico.
+        const sanitizeId = (id: string | number) => {
+          if (typeof id === 'number') return id;
+          const s = String(id || '').trim();
+          const onlyDigits = s.replace(/\D/g, '');
+          return onlyDigits ? Number(onlyDigits) : NaN;
+        };
+
+        const pedidoIdNum = sanitizeId(blingOrderId);
+        if (!pedidoIdNum || Number.isNaN(pedidoIdNum)) {
+          return res.status(400).json({ success: false, error: 'ID do pedido inválido. Envie o ID numérico do pedido Bling (ex: 12345) ou bling_12345.' });
+        }
+
         // ─── Passo 0: Buscar detalhes do pedido para extrair número da loja virtual ──
-        console.log(`📋 [NFe] Buscando detalhes do pedido ${blingOrderId}...`);
-        const pedidoResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(blingOrderId)}`, { headers: readH });
+        console.log(`📋 [NFe] Buscando detalhes do pedido ${pedidoIdNum} (orig: ${blingOrderId})...`);
+        const pedidoResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${pedidoIdNum}`, { headers: readH });
 
         if (!pedidoResp.ok) {
           const detail = await pedidoResp.json().catch(() => ({}));
@@ -1936,10 +2011,10 @@ async function startServer() {
         const pedido = pedidoData?.data;
 
         const metadados = extrairMetadadosPedido(pedido);
-        const { numeroLojaVirtual, canalDetectado } = metadados;
+        const { numeroLojaVirtual, detectedLoja } = metadados;
 
         // Atualizar observações do pedido com o número da loja virtual e plataforma
-        const infoAdicional = `Pedido: ${numeroLojaVirtual || 'N/A'} | Plataforma: ${canalDetectado}`;
+        const infoAdicional = `Pedido: ${numeroLojaVirtual || 'N/A'} | Plataforma: ${detectedLoja}`;
         const observacoesAtuais = pedido?.observacoes || '';
 
         // Verifica se a info já está lá para evitar duplicação em caso de re-tentativa
@@ -2333,6 +2408,62 @@ async function startServer() {
   // ────────────────────────────────────────────────────────────────────────────
   // DETALHES / ALTERAR PEDIDO DE VENDA — GET ou PUT /api/bling/pedido-venda/:id
   // ────────────────────────────────────────────────────────────────────────────
+  // Wrapper: Gera NF-e a partir do ID do pedido de venda (convenience endpoint)
+  app.post('/api/bling/nfe/generate/:idPedidoVenda', async (req, res) => {
+    try {
+      const rawAuth = req.headers.authorization || '';
+      const token = rawAuth.startsWith('Bearer ') ? rawAuth : `Bearer ${rawAuth}`;
+      if (!rawAuth) return res.status(401).json({ error: 'Token obrigatório' });
+
+      const idPedido = req.params.idPedidoVenda;
+      if (!idPedido) return res.status(400).json({ error: 'idPedidoVenda obrigatório' });
+
+      const headers = { Authorization: token, 'Content-Type': 'application/json', Accept: 'application/json' };
+      const readH = { Authorization: token, Accept: 'application/json' };
+
+      // Buscar pedido para ter dados e metadados (número da loja virtual, loja, observações)
+      const pedidoResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(idPedido)}`, { headers: readH });
+      if (!pedidoResp.ok) {
+        const detail = await pedidoResp.json().catch(() => ({}));
+        return res.status(pedidoResp.status).json({ error: detail?.error?.description || 'Erro ao buscar pedido' });
+      }
+      const pedidoData = await pedidoResp.json().catch(() => ({}));
+      const pedido = pedidoData?.data;
+
+      // Gera NF-e via rota nativa do Bling
+      const gerarResp = await fetch(`https://www.bling.com.br/Api/v3/pedidos/vendas/${Number(idPedido)}/gerar-nfe`, { method: 'POST', headers });
+      const gerarData = await gerarResp.json().catch(() => ({}));
+
+      if (!gerarResp.ok) {
+        const blingErr = gerarData?.error || gerarData?.errors?.[0] || {};
+        const fields = Array.isArray(blingErr?.fields)
+          ? blingErr.fields.map((f: any) => `${f.element || f.field || ''}: ${f.msg || f.message || ''}`).filter(Boolean)
+          : [];
+        const errDesc = blingErr?.description || blingErr?.message || gerarData?.message || `Bling retornou ${gerarResp.status}`;
+        const fullMsg = fields.length > 0 ? `${errDesc} — ${fields.join('; ')}` : errDesc;
+        return res.status(gerarResp.status).json({ success: false, error: fullMsg, detail: gerarData });
+      }
+
+      const nfesCriadas = Array.isArray(gerarData?.data) ? gerarData.data : (gerarData?.data ? [gerarData.data] : []);
+      const primeiraId = nfesCriadas[0]?.id;
+
+      // Patch metadata na NFe criada para facilitar rastreio (numeroLojaVirtual / loja)
+      if (primeiraId) {
+        try {
+          const metadados = extrairMetadadosPedido(pedido);
+          await patchNfeComDadosPedido(token, primeiraId, pedido, metadados);
+        } catch (e) {
+          console.warn('[NFe Generate] Falha ao patcher metadados (não bloqueante):', e);
+        }
+      }
+
+      // Retornar 201 com idNotaFiscal para cliente
+      return res.status(201).json({ idNotaFiscal: primeiraId, nfes: nfesCriadas });
+    } catch (error: any) {
+      console.error('❌ [NFe Generate Error]:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
   app.get('/api/bling/pedido-venda/:id', async (req, res) => {
     try {
       const rawAuth = req.headers.authorization || '';
@@ -2416,10 +2547,8 @@ async function startServer() {
       }
 
       const paginaUI = parseInt(pagina || '1');
-      // Triple-Fetch: UI Pág 1 -> Bling 1, 2, 3 | UI Pág 2 -> Bling 4, 5, 6
-      const blingP1 = (paginaUI * 3) - 2;
-      const blingP2 = (paginaUI * 3) - 1;
-      const blingP3 = (paginaUI * 3);
+      // Deca-Fetch: UI Pág 1 -> Bling 1..10 | UI Pág 2 -> Bling 11..20
+      const startPage = (paginaUI * 10) - 9;
       const limitPerReq = 100;
       
       const fetchPage = async (p: number) => {
@@ -2438,61 +2567,21 @@ async function startServer() {
           return Array.isArray(data?.data) ? data.data : [];
       };
 
-      console.log(`📋 [NFe Saída] UI Pág ${paginaUI} -> Triple-Fetch Bling p${blingP1}, p${blingP2} & p${blingP3}`);
+      console.log(`📋 [NFe Saída] UI Pág ${paginaUI} -> Deca-Fetch Bling p${startPage}..p${startPage + 9}`);
       
-      const [p1, p2, p3] = await Promise.all([
-          fetchPage(blingP1),
-          fetchPage(blingP2),
-          fetchPage(blingP3)
-      ]);
-
-      const notas = [...p1, ...p2, ...p3];
-      res.json({ success: true, notas, count: notas.length, hasMore: p3.length === limitPerReq });
+      const pagesToFetch = Array.from({ length: 10 }, (_, i) => startPage + i);
+      const results = await Promise.all(pagesToFetch.map(p => fetchPage(p)));
+      const notas = results.flat();
+      
+      const lastPageFetched = results[9] || [];
+      res.json({ success: true, notas, count: notas.length, hasMore: lastPageFetched.length === limitPerReq });
     } catch (error: any) {
       console.error('❌ [NFe Listar Saída Error]:', error);
       res.status(500).json({ success: false, error: error.message });
     }
   });
 
-  // Salvar NF-e em lote no ERP local
-  app.post('/api/bling/nfe/save-batch', async (req, res) => {
-    try {
-      const { notas } = req.body;
-      if (!Array.isArray(notas)) return res.status(400).json({ error: 'Lista de notas obrigatória' });
-
-      console.log(`💾 [NFe BATCH SAVE] Salvando ${notas.length} notas no ERP local...`);
-
-      const rows = notas.map((n: any) => ({
-        id: String(n.id),
-        bling_id: String(n.id),
-        numero: String(n.numero || ''),
-        serie: String(n.serie || ''),
-        situacao: Number(n.situacao || 1),
-        situacao_descricao: n.situacao_descricao || n.situacaoValor || '',
-        data_emissao: n.dataEmissao || n.data || null,
-        valor_total: Number(n.valor_total || n.total || 0),
-        chave_acesso: n.chave_acesso || n.chaveAcesso || '',
-        link_danfe: n.link_danfe || n.linkDanfe || '',
-        cliente_nome: n.contato?.nome || n.cliente_nome || '',
-        cliente_doc: n.contato?.numeroDocumento || n.cliente_doc || '',
-        id_venda: String(n.idVenda || n.venda?.id || ''),
-        id_loja_virtual: String(n.idLojaVirtual || n.id_loja_virtual || ''),
-        canal_nome: n.loja || n.canal || '',
-        last_sync: new Date().toISOString()
-      }));
-
-      const { error } = await (supabase as any)
-        .from('bling_nfe')
-        .upsert(rows, { onConflict: 'id' });
-
-      if (error) throw error;
-
-      res.json({ success: true, message: `${notas.length} notas salvas com sucesso` });
-    } catch (error: any) {
-      console.error('❌ [NFe Batch Save Error]:', error);
-      res.status(500).json({ success: false, error: error.message });
-    }
-  });
+  
 
   // GET detalhes de uma NF-e (inclui XML, chave, etc.)
   app.get('/api/bling/nfe/detalhe/:id', async (req, res) => {
@@ -2614,11 +2703,11 @@ async function startServer() {
       if (!token) return res.status(401).json({ error: 'Token não fornecido' });
 
       const nfeId = req.params.id;
-      const { type, numeroPedidoLoja, canal } = req.query as any;
+      const { type, numeroPedidoLoja, loja } = req.query as any;
 
       let pdfUrl = '';
       
-      console.log(`📥 [NFe PDF] Iniciando download para ID ${nfeId} (Tipo: ${type}, Loja: ${numeroPedidoLoja}, Canal: ${canal})`);
+      console.log(`📥 [NFe PDF] Iniciando download para ID ${nfeId} (Tipo: ${type}, Loja: ${numeroPedidoLoja}, Origem/Loja: ${loja})`);
 
       if (type === 'simplified' || type === 'combined') {
         console.log(`📄 [NFe PDF] Buscando DANFE Simplificado/Combinado via logística para pedido ${numeroPedidoLoja}...`);
@@ -2641,7 +2730,12 @@ async function startServer() {
 
         if (!pdfUrl) {
           console.log(`📄 [NFe PDF] URL via logística não encontrada. Usando fallback de link direto para NF-e ${nfeId}`);
-          pdfUrl = `https://www.bling.com.br/relatorios/danfe.simplificado.php?idNota1=${nfeId}`;
+          if (type === 'transport_label') {
+             // Fallback para etiqueta de transporte se falhar via logística
+             pdfUrl = `https://www.bling.com.br/relatorios/etiqueta.objetos.postagem.php?idNota=${nfeId}`;
+          } else {
+             pdfUrl = `https://www.bling.com.br/relatorios/danfe.simplificado.php?idNota1=${nfeId}`;
+          }
         }
       }
 
@@ -2684,10 +2778,10 @@ async function startServer() {
         });
       }
 
-      // Configura headers para o navegador reconhecer como PDF e disparar download
+      // Configura headers para o navegador reconhecer como PDF e permitir visualização inline
       res.setHeader('Content-Type', 'application/pdf');
-      const filename = `${type === 'simplified' ? 'SIMPLIFICADA' : type === 'combined' ? 'COMBINADA' : 'DANFE'}_${nfeId}.pdf`;
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      const filename = `${type === 'simplified' ? 'SIMPLIFICADA' : type === 'combined' ? 'COMBINADA' : type === 'transport_label' ? 'ETIQUETA' : 'DANFE'}_${nfeId}.pdf`;
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
       
       // Envia o conteúdo do PDF como buffer
       const arrayBuffer = await pdfResp.arrayBuffer();
@@ -2720,8 +2814,8 @@ async function startServer() {
       if (!rawAuth) return res.status(401).json({ error: 'Token obrigatório' });
 
       const nfeId = req.params.id;
-      const { canal } = req.query as any;
-      console.log(`🏷️  [NFe Etiqueta] Iniciando busca para NF-e ${nfeId} (Canal: ${canal || 'não informado'})`);
+      const { loja } = req.query as any;
+      console.log(`🏷️  [NFe Etiqueta] Iniciando busca para NF-e ${nfeId} (Loja/Origem: ${loja || 'não informado'})`);
 
       // 1. Tentativa Direta (V3 NFe Etiqueta)
       let respDirect = await blingFetchRetry(
@@ -2733,7 +2827,7 @@ async function startServer() {
       let zplResult = dataDirect?.data?.zpl || dataDirect?.zpl || null;
 
       // 1.1 Fallback para Shopee via Link de Impressão Direto (Caso ZPL não retorne nada)
-      if (!zplResult && canal === 'SHOPEE') {
+      if (!zplResult && loja === 'SHOPEE') {
         console.log(`🔍 [NFe Etiqueta] Tentando fallback Shopee via relatório para NF-e ${nfeId}`);
         const shopeeReportUrl = `https://www.bling.com.br/impressao/etiquetasEnvio.php?idNota1=${nfeId}&tipoIntegracao=LogisticaShopee&descricao=Shopee%20Express`;
         
@@ -2922,6 +3016,8 @@ async function startServer() {
       req.path === '/api/bling/nfe/criar-emitir' ||
       req.path.startsWith('/api/bling/nfe/listar-saida') ||
       req.path.startsWith('/api/bling/nfe/detalhe') ||
+      req.path.startsWith('/api/bling/nfe/synced-ids') ||
+      req.path.startsWith('/api/bling/nfe/save-batch') ||
       req.path.match(/^\/api\/bling\/nfe\/\d+\/enviar/) ||
       req.path === '/api/bling/canais-venda' ||
       req.path.startsWith('/api/bling/pedido-venda') ||
@@ -3041,7 +3137,7 @@ async function startServer() {
       const orders = enrichedRaw.filter(Boolean).map((order: any) => {
         const numeroLoja = String(order?.numeroLoja || '');
         const canalRaw = order?.loja?.nome || order?.loja?.descricao || order?.origem?.nome || order?.origem || order?.tipo || '';
-        const detectedCanal = parseCanal(canalRaw, numeroLoja);
+        const detectedLoja = parseLoja(canalRaw, numeroLoja);
         const items = Array.isArray(order?.itens) ? order.itens : [];
         const parcelas = Array.isArray(order?.parcelas) ? order.parcelas : (Array.isArray(order?.pagamentos) ? order.pagamentos : []);
         const endEntrega = order?.enderecoEntrega || order?.transporte?.enderecoEntrega || null;
@@ -3059,8 +3155,8 @@ async function startServer() {
           dataPrevista: String(order?.dataPrevista || '').split('T')[0],
           status: String(order?.situacao?.descricao || order?.situacao?.valor || 'Em aberto'),
           situacaoId: Number(order?.situacao?.id || 0),
-          canal: detectedCanal,
-          canalRaw: String(canalRaw),
+          loja: detectedLoja,
+          lojaRaw: String(canalRaw),
           lojaId: Number(order?.loja?.id || 0),
           loja: order?.loja?.nome || order?.loja?.descricao || '',
           total: Number(order?.total || 0),

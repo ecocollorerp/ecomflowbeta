@@ -275,6 +275,8 @@ export async function fetchBlingOrders(
                     price_net: cleanMoney(item.valor),
                     venda_origem,
                     id_pedido_loja: blingOrder.numeroLoja || '',
+                    idLojaVirtual: blingOrder.loja?.id ? String(blingOrder.loja.id) : '',
+                    loja: blingOrder.loja,
                 });
             }
         }
@@ -478,7 +480,7 @@ export async function fetchNfeSaida(
     const authH = apiKey.startsWith('Bearer ') ? apiKey : `Bearer ${apiKey}`;
     const allNotas: NfeSaida[] = [];
     let pagina = opts.pagina || 1;
-    const MAX_PAGES = 10; // segurança
+    const MAX_PAGES = 50; // segurança: aumentado para 50 páginas (5000 notas)
 
     for (let p = 0; p < MAX_PAGES; p++) {
         const params: Record<string, string> = {

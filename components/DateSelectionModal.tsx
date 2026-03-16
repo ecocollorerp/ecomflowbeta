@@ -5,12 +5,13 @@ import { X, Calendar, CheckSquare, Square, Check, ArrowRight } from 'lucide-reac
 interface DateSelectionModalProps {
     isOpen: boolean;
     onClose: () => void;
-    availableDates: { date: string; count: number }[];
+    availableDates: { date: string; count: number; saved?: number }[];
     onConfirm: (selectedDates: string[]) => void;
     fileName: string;
+    onRunDiagnostics?: (selectedDates?: string[]) => Promise<any>;
 }
 
-const DateSelectionModal: React.FC<DateSelectionModalProps> = ({ isOpen, onClose, availableDates, onConfirm, fileName }) => {
+const DateSelectionModal: React.FC<DateSelectionModalProps> = ({ isOpen, onClose, availableDates, onConfirm, fileName, onRunDiagnostics }) => {
     const [selectedDates, setSelectedDates] = useState<Set<string>>(new Set());
 
     // Seleciona todas as datas por padrão ao abrir
@@ -18,8 +19,8 @@ const DateSelectionModal: React.FC<DateSelectionModalProps> = ({ isOpen, onClose
         if (isOpen && availableDates.length > 0) {
             // Opcional: Se quiser que venha tudo marcado, descomente a linha abaixo. 
             // Se quiser que o usuário escolha, deixe vazio.
-            // setSelectedDates(new Set(availableDates.map(d => d.date)));
-            setSelectedDates(new Set()); 
+            // Por usabilidade, marcar todas as datas por padrão para evitar que o usuário esqueça de selecionar.
+            setSelectedDates(new Set(availableDates.map(d => d.date)));
         }
     }, [isOpen, availableDates]);
 
@@ -42,6 +43,21 @@ const DateSelectionModal: React.FC<DateSelectionModalProps> = ({ isOpen, onClose
 
     const handleConfirm = () => {
         onConfirm(Array.from(selectedDates));
+    };
+
+    const [diagLoading, setDiagLoading] = useState(false);
+    const [diagResult, setDiagResult] = useState<string | null>(null);
+
+    const handleRunDiagnostics = async () => {
+        if (!onRunDiagnostics) return;
+        setDiagLoading(true);
+        setDiagResult(null);
+        try {
+            const res = await onRunDiagnostics(Array.from(selectedDates));
+            setDiagResult(typeof res === 'string' ? res : JSON.stringify(res, null, 2));
+        } catch (err: any) {
+            setDiagResult(String(err?.message || err));
+        } finally { setDiagLoading(false); }
     };
 
     if (!isOpen) return null;
@@ -83,7 +99,7 @@ const DateSelectionModal: React.FC<DateSelectionModalProps> = ({ isOpen, onClose
                             <p className="text-xs text-gray-400 mt-1">Verifique se a coluna "Data de Envio" está mapeada corretamente nas configurações.</p>
                         </div>
                     ) : (
-                        availableDates.map(({ date, count }) => (
+                        availableDates.map(({ date, count, saved }) => (
                             <div 
                                 key={date} 
                                 onClick={() => toggleDate(date)}
@@ -101,9 +117,14 @@ const DateSelectionModal: React.FC<DateSelectionModalProps> = ({ isOpen, onClose
                                         {formatDate(date)}
                                     </span>
                                 </div>
-                                <span className={`text-xs font-black px-2 py-1 rounded-lg ${selectedDates.has(date) ? 'bg-blue-200 text-blue-800' : 'bg-slate-100 text-slate-500'}`}>
-                                    {count} pedidos
-                                </span>
+                                <div className="flex flex-col items-end">
+                                    <span className={`text-xs font-black px-2 py-1 rounded-lg ${selectedDates.has(date) ? 'bg-blue-200 text-blue-800' : 'bg-slate-100 text-slate-500'}`}>
+                                        {count} pedidos
+                                    </span>
+                                    {typeof saved === 'number' && (
+                                        <span className="text-[10px] text-slate-400 mt-1">{saved} já salvos</span>
+                                    )}
+                                </div>
                             </div>
                         ))
                     )}
@@ -118,6 +139,13 @@ const DateSelectionModal: React.FC<DateSelectionModalProps> = ({ isOpen, onClose
                         <button onClick={onClose} className="flex-1 py-3 bg-slate-100 text-slate-500 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-slate-200 transition-all">
                             Cancelar
                         </button>
+                        <button
+                            onClick={handleRunDiagnostics}
+                            disabled={!onRunDiagnostics || diagLoading}
+                            className="px-4 py-3 bg-white border border-slate-200 text-slate-600 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-slate-50 transition-all mr-2"
+                        >
+                            {diagLoading ? 'Executando...' : 'Executar Diagnóstico'}
+                        </button>
                         <button 
                             onClick={handleConfirm}
                             className="flex-[2] py-3 bg-blue-600 text-white rounded-xl font-black uppercase text-xs tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 flex items-center justify-center gap-2"
@@ -126,6 +154,11 @@ const DateSelectionModal: React.FC<DateSelectionModalProps> = ({ isOpen, onClose
                         </button>
                     </div>
                 </div>
+                {diagResult && (
+                    <div className="mt-4 p-3 bg-gray-900 text-white rounded-lg overflow-auto max-h-40 text-xs font-mono">
+                        <pre className="whitespace-pre-wrap">{diagResult}</pre>
+                    </div>
+                )}
             </div>
         </div>
     );

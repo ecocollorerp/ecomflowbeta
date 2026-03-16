@@ -29,6 +29,7 @@ const normalizeDate = (rawDate: any): string => {
     const dmyMatch = dateStr.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
     if (dmyMatch) {
         return `${dmyMatch[3]}-${dmyMatch[2].padStart(2, '0')}-${dmyMatch[1].padStart(2, '0')}`;
+    
     }
 
     // Formatos YYYY-MM-DD
@@ -77,7 +78,7 @@ export const extractShippingDates = (
     fileBuffer: ArrayBuffer,
     settings: GeneralSettings,
     forcedCanal?: Canal | 'AUTO'
-): { date: string; count: number }[] => {
+): { date: string; count: number; key?: string }[] => {
     const workbook = XLSX.read(fileBuffer, { type: 'array', cellDates: true });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
@@ -128,31 +129,252 @@ export const extractShippingDates = (
         detectedChannel = forcedCanal;
     }
 
-    if (headerRowIndex === -1 || !detectedChannel) return [];
+    if (headerRowIndex === -1 || !detectedChannel) {
+        if (forcedCanal && forcedCanal !== 'AUTO') {
+            headerRowIndex = 0;
+            detectedChannel = forcedCanal;
+        } else {
+            // Tenta localizar a linha de cabeçalho por heurística semelhante a extractHeadersAndData
+            for (let i = 0; i < Math.min(rawData.length, 50); i++) {
+                const row = rawData[i];
+                if (Array.isArray(row) && row.filter(c => String(c || '').trim()).length > 2) {
+                    headerRowIndex = i;
+                    break;
+                }
+            }
+            if (headerRowIndex === -1) return [];
+
+            // Tenta identificar o canal a partir dos tokens do cabeçalho
+            const firstRowValues = (rawData[headerRowIndex] || []).map(c => String(c || '').trim().toUpperCase());
+            const possibleChannels: Canal[] = ['ML', 'SHOPEE', 'SITE'];
+            for (const canal of possibleChannels) {
+                const cfg = settings.importer[canal.toLowerCase() as 'ml' | 'shopee' | 'site'];
+                if (!cfg) continue;
+                const crit = [cfg.orderId, cfg.sku].filter(Boolean).map(h => h!.trim().toUpperCase());
+                let cnt = 0;
+                for (const h of crit) if (firstRowValues.includes(h)) cnt++;
+                if (cnt > 0) { detectedChannel = canal; break; }
+            }
+            if (!detectedChannel) detectedChannel = 'SHOPEE'; // fallback conservador
+        }
+    }
 
     // OBTEM A CONFIGURAÇÃO ESPECÍFICA DO CANAL
     mappingToUse = settings.importer[detectedChannel.toLowerCase() as 'ml' | 'shopee' | 'site'];
+    
 
     // Se não tiver coluna de data de envio configurada, tenta usar data de venda ou retorna vazio
     // Prioriza dateShipping (ex: Coluna H da Shopee)
-    const dateCol = mappingToUse.dateShipping || mappingToUse.date;
-    if (!dateCol) return [];
+    const desiredDateCol = mappingToUse.dateShipping || mappingToUse.date;
+    if (!desiredDateCol) return [];
 
     const jsonData = XLSX.utils.sheet_to_json<any>(worksheet, { range: headerRowIndex, raw: false });
+
+    // Gera mapa tolerante entre nomes configurados e chaves reais da planilha
+    const sheetKeys = jsonData.length > 0 ? Object.keys(jsonData[0]) : [];
+    const normalizeHeader = (s: any) => String(s || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9\s]/g, '').replace(/\s+/g, ' ');
+    const targetNorm = normalizeHeader(desiredDateCol);
+    const targetTokens = targetNorm.split(' ').filter(Boolean);
+    const tokenMatchThreshold = (aTokens: string[], bTokens: string[]) => {
+        const inter = aTokens.filter(t => bTokens.includes(t)).length;
+        const minNeeded = Math.min(2, Math.ceil(Math.max(aTokens.length, bTokens.length) / 2));
+        return inter >= minNeeded;
+    };
+
+    let matchedKey: string | undefined = sheetKeys.find(k => normalizeHeader(k) === targetNorm);
+    if (!matchedKey) matchedKey = sheetKeys.find(k => normalizeHeader(k).includes(targetNorm));
+    if (!matchedKey) matchedKey = sheetKeys.find(k => targetNorm.includes(normalizeHeader(k)));
+
+    // Tentativa mais estrita: todos os tokens importantes devem estar presentes (ignora stopwords como DE/DO/DA)
+    if (!matchedKey) {
+        const stopwords = new Set(['DE', 'DO', 'DA', 'E', 'PARA', 'POR', 'O', 'A', 'EM']);
+        const importantTokens = targetTokens.filter(t => !stopwords.has(t));
+        if (importantTokens.length > 0) {
+            matchedKey = sheetKeys.find(k => {
+                const hk = normalizeHeader(k).split(' ').filter(Boolean);
+                return importantTokens.every(tok => hk.includes(tok));
+            });
+        }
+    }
+
+    if (!matchedKey) matchedKey = sheetKeys.find(k => tokenMatchThreshold(normalizeHeader(k).split(' ').filter(Boolean), targetTokens));
+
+    // Fallback adicional: varre colunas e escolhe a coluna que contém mais valores parseáveis como data
+    if (!matchedKey) {
+        // DEBUG: logs para diagnosticar problemas de mapeamento (remover após investigação)
+        
+        const rowLimit = Math.min(500, jsonData.length);
+        const colScores: { key: string; count: number; percent: number }[] = [];
+        for (const key of sheetKeys) {
+            let count = 0;
+            for (let i = 0; i < rowLimit; i++) {
+                const cell = jsonData[i] && jsonData[i][key];
+                const d = normalizeDate(cell);
+                if (d) count++;
+            }
+            colScores.push({ key, count, percent: rowLimit > 0 ? count / rowLimit : 0 });
+        }
+        colScores.sort((a, b) => b.count - a.count);
+        
+        const best = colScores[0];
+        if (best && best.count >= 3 && best.percent >= 0.03) {
+            matchedKey = best.key;
+        }
+    }
+
+    if (!matchedKey) return [];
+
     const dateMap = new Map<string, number>();
 
     jsonData.forEach(row => {
-        const dateVal = normalizeDate(row[dateCol]); // Usa a chave 'dateCol' para acessar a propriedade
+        const dateVal = normalizeDate(row[matchedKey]); // Usa a chave 'matchedKey' para acessar a propriedade
         if (dateVal) {
             dateMap.set(dateVal, (dateMap.get(dateVal) || 0) + 1);
         }
     });
 
+    // Se não encontrou datas na coluna preferida (dateShipping):
+    // - Priorizar apenas colunas relacionadas a envio (HEADER contendo 'ENVIO', 'PREVISTA', 'ENTREGA')
+    // - NÃO fazer fallback automático para a coluna de venda quando o usuário configurou dateShipping
+    if (dateMap.size === 0 && mappingToUse && mappingToUse.dateShipping) {
+        const envioTokens = ['ENVIO', 'PREVISTA', 'PREVIST', 'ENTREGA', 'SHIP'];
+        const candidateKeys = sheetKeys.filter(k => {
+            const nh = normalizeHeader(k);
+            return envioTokens.some(t => nh.includes(t));
+        });
+
+        // Se não achou por tokens, escolher a melhor coluna por contagem de datas (mas apenas entre colunas com alguma relação semântica leve)
+        let bestKey: string | null = null;
+        let bestCount = 0;
+        const rowLimit = Math.min(500, jsonData.length);
+
+        const keysToScan = candidateKeys.length > 0 ? candidateKeys : sheetKeys;
+        for (const key of keysToScan) {
+            let count = 0;
+            for (let i = 0; i < rowLimit; i++) {
+                const cell = jsonData[i] && jsonData[i][key];
+                const d = normalizeDate(cell);
+                if (d) count++;
+            }
+            if (count > bestCount) { bestCount = count; bestKey = key; }
+        }
+
+        // Aceita somente se encontrar pelo menos 3 datas parseáveis (evita falso-positivo)
+        if (bestKey && bestCount >= 3) {
+            jsonData.forEach(row => {
+                const d = normalizeDate(row[bestKey!]);
+                if (d) dateMap.set(d, (dateMap.get(d) || 0) + 1);
+            });
+        }
+    }
+
     return Array.from(dateMap.entries())
-        .map(([date, count]) => ({ date, count }))
+        .map(([date, count]) => ({ date, count, key: matchedKey }))
         .sort((a, b) => a.date.localeCompare(b.date));
 };
 
+// Retorna detalhes internos usados pelo parser para diagnóstico (headerRowIndex, canal detectado,
+// mappingToUse, sheetKeys, headerKeyMap e primeira linha de jsonData). Não altera fluxo de import.
+export const getParserInternals = (
+    fileBuffer: ArrayBuffer,
+    settings: GeneralSettings,
+    forcedCanal?: Canal | 'AUTO',
+    options?: { columnOverrides?: Partial<any> }
+): any => {
+    const workbook = XLSX.read(fileBuffer, { type: 'array', cellDates: true });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const rawData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
+
+    let canalDetectado: Canal | null = null;
+    let headerRowIndex = -1;
+    let mappingToUse: any = null;
+
+    let candidateChannels: Canal[] = [];
+    if (forcedCanal && forcedCanal !== 'AUTO') candidateChannels = [forcedCanal as Canal];
+    else candidateChannels = ['ML', 'SHOPEE', 'SITE'];
+
+    let bestMatch = { rowIndex: -1, channel: null as Canal | null, score: 0 };
+    for (let i = 0; i < Math.min(rawData.length, 50); i++) {
+        const row = rawData[i];
+        if (!Array.isArray(row) || row.length === 0) continue;
+        const rowValues = row.map(cell => String(cell || '').trim().toUpperCase());
+        for (const canal of candidateChannels) {
+            const config = settings.importer[canal.toLowerCase() as 'ml' | 'shopee' | 'site'];
+            if (!config) continue;
+            const criticalColumns = [config.orderId, config.sku].filter(Boolean).map((h: any) => String(h).trim().toUpperCase());
+            if (criticalColumns.length === 0) continue;
+            let matchCount = 0;
+            for (const header of criticalColumns) if (rowValues.includes(header)) matchCount++;
+            if (matchCount > bestMatch.score) bestMatch = { rowIndex: i, channel: canal, score: matchCount };
+        }
+    }
+
+    if (bestMatch.rowIndex !== -1) {
+        headerRowIndex = bestMatch.rowIndex;
+        canalDetectado = bestMatch.channel;
+        if (canalDetectado) mappingToUse = settings.importer[canalDetectado.toLowerCase() as 'ml' | 'shopee' | 'site'];
+    } else if (forcedCanal && forcedCanal !== 'AUTO') {
+        headerRowIndex = 0;
+        canalDetectado = forcedCanal as Canal;
+        mappingToUse = settings.importer[canalDetectado.toLowerCase() as 'ml' | 'shopee' | 'site'];
+    } else {
+        // heurística similar à extractHeadersAndData
+        for (let i = 0; i < Math.min(rawData.length, 50); i++) {
+            const row = rawData[i];
+            if (Array.isArray(row) && row.filter(c => String(c || '').trim()).length > 2) { headerRowIndex = i; break; }
+        }
+        if (headerRowIndex !== -1) {
+            const firstRowValues = (rawData[headerRowIndex] || []).map(c => String(c || '').trim().toUpperCase());
+            const possibleChannels: Canal[] = ['ML', 'SHOPEE', 'SITE'];
+            for (const canal of possibleChannels) {
+                const cfg = settings.importer[canal.toLowerCase() as 'ml' | 'shopee' | 'site'];
+                if (!cfg) continue;
+                const crit = [cfg.orderId, cfg.sku].filter(Boolean).map((h: any) => String(h).trim().toUpperCase());
+                let cnt = 0; for (const h of crit) if (firstRowValues.includes(h)) cnt++;
+                if (cnt > 0) { canalDetectado = canal; mappingToUse = cfg; break; }
+            }
+            if (!canalDetectado) canalDetectado = 'SHOPEE';
+        }
+    }
+
+    if (options && options.columnOverrides && mappingToUse) {
+        mappingToUse = { ...mappingToUse, ...(options.columnOverrides || {}) };
+    }
+
+    const jsonData = XLSX.utils.sheet_to_json<any>(worksheet, { range: headerRowIndex, raw: false });
+    const sheetKeys = jsonData.length > 0 ? Object.keys(jsonData[0]) : [];
+
+    const normalizeHeader = (s: any) => String(s || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9\s]/g, '').replace(/\s+/g, ' ');
+    const tryMatch = (desired: any) => {
+        if (!desired) return undefined;
+        const target = normalizeHeader(desired);
+        const targetTokensLocal = target.split(' ').filter(Boolean);
+        const tokenMatchThresholdLocal = (aTokens: string[], bTokens: string[]) => {
+            const inter = aTokens.filter(t => bTokens.includes(t)).length;
+            const minNeeded = Math.min(2, Math.ceil(Math.max(aTokens.length, bTokens.length) / 2));
+            return inter >= minNeeded;
+        };
+        let mk = sheetKeys.find(k => normalizeHeader(k) === target);
+        if (!mk) mk = sheetKeys.find(k => normalizeHeader(k).includes(target));
+        if (!mk) mk = sheetKeys.find(k => target.includes(normalizeHeader(k)));
+        if (!mk) mk = sheetKeys.find(k => tokenMatchThresholdLocal(normalizeHeader(k).split(' ').filter(Boolean), targetTokensLocal));
+        return mk;
+    };
+
+    const headerKeyMap: { [key: string]: string | undefined } = {};
+    if (mappingToUse) {
+        headerKeyMap['orderId'] = tryMatch(mappingToUse.orderId);
+        headerKeyMap['sku'] = tryMatch(mappingToUse.sku);
+        headerKeyMap['qty'] = tryMatch(mappingToUse.qty);
+        headerKeyMap['tracking'] = tryMatch(mappingToUse.tracking);
+        headerKeyMap['date'] = tryMatch(mappingToUse.date);
+        headerKeyMap['dateShipping'] = tryMatch(mappingToUse.dateShipping);
+        headerKeyMap['statusColumn'] = tryMatch(mappingToUse.statusColumn);
+    }
+
+    return { headerRowIndex, canalDetectado, mappingToUse, sheetKeys, headerKeyMap, sampleRow: jsonData[0] || null, jsonDataLength: jsonData.length };
+};
 
 export const parseExcelFile = (
     fileBuffer: ArrayBuffer,
@@ -241,10 +463,62 @@ export const parseExcelFile = (
         mappingToUse = { ...mappingToUse!, ...options.columnOverrides };
     }
 
+    if (options.columnOverrides) {
+        mappingToUse = { ...mappingToUse!, ...options.columnOverrides };
+    }
+
     // 5. Re-ler a planilha
     const jsonData = XLSX.utils.sheet_to_json<any>(worksheet, { range: headerRowIndex, raw: false });
 
     if (jsonData.length === 0) throw new Error('A planilha parece estar vazia após o cabeçalho detectado.');
+
+    // Gera mapa tolerante entre nomes configurados e chaves reais da planilha
+    const sheetKeys = Object.keys(jsonData[0] || {});
+    const normalizeHeader = (s: any) => String(s || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9\s]/g, '').replace(/\s+/g, ' ');
+    const headerKeyMap: { [key: string]: string | undefined } = {};
+    const tryMatch = (desired: any) => {
+        if (!desired) return undefined;
+        const target = normalizeHeader(desired);
+        const targetTokensLocal = target.split(' ').filter(Boolean);
+        const tokenMatchThresholdLocal = (aTokens: string[], bTokens: string[]) => {
+            const inter = aTokens.filter(t => bTokens.includes(t)).length;
+            const minNeeded = Math.min(2, Math.ceil(Math.max(aTokens.length, bTokens.length) / 2));
+            return inter >= minNeeded;
+        };
+
+        let mk = sheetKeys.find(k => normalizeHeader(k) === target);
+        if (!mk) mk = sheetKeys.find(k => normalizeHeader(k).includes(target));
+        if (!mk) mk = sheetKeys.find(k => target.includes(normalizeHeader(k)));
+        if (!mk) mk = sheetKeys.find(k => tokenMatchThresholdLocal(normalizeHeader(k).split(' ').filter(Boolean), targetTokensLocal));
+        return mk;
+    };
+
+    // Mapeia cada propriedade relevante
+    headerKeyMap['orderId'] = tryMatch(mappingToUse!.orderId);
+    headerKeyMap['sku'] = tryMatch(mappingToUse!.sku);
+    headerKeyMap['qty'] = tryMatch(mappingToUse!.qty);
+    headerKeyMap['tracking'] = tryMatch(mappingToUse!.tracking);
+    headerKeyMap['date'] = tryMatch(mappingToUse!.date);
+    headerKeyMap['dateShipping'] = tryMatch(mappingToUse!.dateShipping);
+    headerKeyMap['priceGross'] = tryMatch(mappingToUse!.priceGross);
+    headerKeyMap['totalValue'] = tryMatch(mappingToUse!.totalValue);
+    headerKeyMap['shippingFee'] = tryMatch(mappingToUse!.shippingFee);
+    headerKeyMap['shippingPaidByCustomer'] = tryMatch(mappingToUse!.shippingPaidByCustomer);
+    headerKeyMap['priceNet'] = tryMatch(mappingToUse!.priceNet);
+    headerKeyMap['customerName'] = tryMatch(mappingToUse!.customerName);
+    headerKeyMap['customerCpf'] = tryMatch(mappingToUse!.customerCpf);
+    headerKeyMap['statusColumn'] = tryMatch(mappingToUse!.statusColumn);
+
+    // Hard fallback para Shopee (Data de envio) se não encontrar via config
+    if (!headerKeyMap['dateShipping'] && canalDetectado === 'SHOPEE') {
+        headerKeyMap['dateShipping'] = tryMatch('Data de envio') || tryMatch('Data de envio prevista');
+    }
+    // fees é array - encontrar múltiplas colunas
+    const feeColumns: string[] = [];
+    (mappingToUse!.fees || []).forEach((f: string) => {
+        const fk = tryMatch(f);
+        if (fk) feeColumns.push(fk);
+    });
 
     const cleanMoney = (val: any): number => {
         if (typeof val === 'number') return val;
@@ -275,8 +549,8 @@ export const parseExcelFile = (
         const row = jsonData[i];
 
         // --- FILTRO DE DATA ---
-        const dataEnvioStr = normalizeDate(row[mappingToUse!.dateShipping]);
-        const dataVendaStr = normalizeDate(row[mappingToUse!.date]);
+        const dataEnvioStr = normalizeDate(row[headerKeyMap['dateShipping']]);
+        const dataVendaStr = normalizeDate(row[headerKeyMap['date']]);
 
         // Data principal para filtro é a de envio, fallback para venda se não houver envio
         const dateToCheck = dataEnvioStr || dataVendaStr;
@@ -293,33 +567,33 @@ export const parseExcelFile = (
         let errorReason = undefined;
 
         if (statusColumnName && acceptedStatusValues.length > 0) {
-            const rawStatus = String(row[statusColumnName] || '').trim().toLowerCase();
+            const rawStatus = String(row[headerKeyMap['statusColumn']] || '') .trim().toLowerCase();
             const isAccepted = acceptedStatusValues.includes(rawStatus);
             if (!isAccepted) {
                 continue; // Ignorar totalmente linhas com status indesejados
             }
         }
 
-        const orderId = safeUpper(row[mappingToUse!.orderId]);
-        const sku = safeUpper(row[mappingToUse!.sku]);
+        const orderId = safeUpper(row[headerKeyMap['orderId']]);
+        const sku = safeUpper(row[headerKeyMap['sku']]);
 
         if (!orderId || !sku) continue;
 
-        const qty_raw = Number(row[mappingToUse!.qty] || 0);
+        const qty_raw = Number(row[headerKeyMap['qty']] || 0);
         if (isNaN(qty_raw) || qty_raw <= 0) continue;
 
         // --- Valores Financeiros ---
-        let rawTotalValue = mappingToUse!.totalValue ? cleanMoney(row[mappingToUse!.totalValue]) : 0;
-        let rawPriceColumn = mappingToUse!.priceGross ? cleanMoney(row[mappingToUse!.priceGross]) : 0;
+        let rawTotalValue = mappingToUse!.totalValue ? cleanMoney(row[headerKeyMap['totalValue']]) : 0;
+        let rawPriceColumn = mappingToUse!.priceGross ? cleanMoney(row[headerKeyMap['priceGross']]) : 0;
 
         if (rawTotalValue === 0 && rawPriceColumn > 0) rawTotalValue = rawPriceColumn;
         else if (rawTotalValue > 0 && rawPriceColumn === 0) rawPriceColumn = rawTotalValue;
 
-        const customerShipping = mappingToUse!.shippingPaidByCustomer ? Math.abs(cleanMoney(row[mappingToUse!.shippingPaidByCustomer])) : 0;
-        const sellerShipping = mappingToUse!.shippingFee ? Math.abs(cleanMoney(row[mappingToUse!.shippingFee])) : 0;
+        const customerShipping = mappingToUse!.shippingPaidByCustomer ? Math.abs(cleanMoney(row[headerKeyMap['shippingPaidByCustomer']])) : 0;
+        const sellerShipping = mappingToUse!.shippingFee ? Math.abs(cleanMoney(row[headerKeyMap['shippingFee']])) : 0;
 
-        const fees = (mappingToUse!.fees || []).reduce((sum, f) => {
-            const val = Math.abs(cleanMoney(row[f]));
+        const fees = feeColumns.reduce((sum, col) => {
+            const val = Math.abs(cleanMoney(row[col]));
             return sum + (isNaN(val) ? 0 : val);
         }, 0);
 
@@ -340,7 +614,7 @@ export const parseExcelFile = (
         orders.push({
             id: `${canalDetectado}_${Date.now()}_${i}`,
             orderId,
-            tracking: safeUpper(row[mappingToUse!.tracking]),
+            tracking: safeUpper(row[headerKeyMap['tracking']]),
             sku,
             qty_original: qty_raw,
             multiplicador: mult,
@@ -351,8 +625,8 @@ export const parseExcelFile = (
             data_prevista_envio: dataEnvioStr || undefined,
             status: statusParaImportacao,
             error_reason: errorReason,
-            customer_name: options.importName ? String(row[mappingToUse!.customerName] || '') : undefined,
-            customer_cpf_cnpj: options.importCpf ? String(row[mappingToUse!.customerCpf] || '') : undefined,
+            customer_name: options.importName ? String(row[headerKeyMap['customerName']] || '') : undefined,
+            customer_cpf_cnpj: options.importCpf ? String(row[headerKeyMap['customerCpf']] || '') : undefined,
             venda_origem: canalDetectado!,
             id_pedido_loja: orderId,
 

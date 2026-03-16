@@ -8,30 +8,39 @@ import { BlingSync } from '../components/BlingSync';
 import { Cloud, Zap, Link as LinkIcon, Settings, Loader2, CheckCircle, Info, FileText, ShoppingCart, Download, Printer, Lock, Package, Search, Save, Eye, EyeOff, X, AlertTriangle, RefreshCw, ToggleLeft, ToggleRight, FileOutput, ExternalLink, Filter, HelpCircle, ChevronDown, ChevronRight, ChevronLeft, Copy, TrendingDown, ShoppingBag, CheckSquare, Square, Tag, Send, History, Clock, User, MapPin, CreditCard, XCircle, Sparkles, Files } from 'lucide-react';
 
 // Transforma pedido do endpoint de sync para o formato OrderItem do ERP
-const transformSyncedOrder = (o: any): OrderItem => ({
-    id: o.id || `sync-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-    orderId: o.orderId || o.numeroPedidoLoja || '',           // = numeroLoja (pedido da loja virtual/marketplace)
-    blingId: o.blingId || '',           // = ID interno do Bling
-    blingNumero: o.blingNumero || o.numero || '',   // = número do pedido no Bling
-    tracking: o.rastreamento || o.tracking || '', // código de rastreio do transporte
-    sku: o.sku || '',
-    qty_original: Number(o.quantity || o.quantidade || 1),
-    multiplicador: 1,
-    qty_final: Number(o.quantity || o.quantidade || 1),
-    color: '',
-    canal: (o.canal || 'SITE') as any,
-    idLojaVirtual: o.idLojaVirtual || o.idLoja || '',
-    data: o.data || new Date().toISOString().split('T')[0],
-    status: 'NORMAL',
-    customer_name: o.customer_name || o.cliente?.nome || 'Não informado',
-    customer_cpf_cnpj: o.customer_cpf_cnpj || o.cliente?.numeroDocumento || '',
-    price_gross: Number(o.unit_price || o.valorUnitario || 0),
-    price_total: Number(o.total || o.valorTotal || 0),
-    platform_fees: 0,
-    shipping_fee: 0,
-    shipping_paid_by_customer: 0,
-    price_net: Number(o.unit_price || o.valorUnitario || 0),
-});
+const transformSyncedOrder = (o: any): OrderItem => {
+    // Tenta extrair id_pedido_loja (numeroLoja) e venda_origem de diversas fontes possíveis
+    const orderId = String(o.orderId || o.numeroPedidoLoja || o.numeroLoja || '').trim();
+    const vendaOrigem = o.venda_origem || o.loja?.nome || o.loja?.descricao || o.origem?.nome || o.origem || '';
+
+    return {
+        id: o.id || `sync-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        orderId: orderId,           // = numeroLoja (pedido da loja virtual/marketplace)
+        blingId: String(o.blingId || o.id || ''), 
+        blingNumero: String(o.blingNumero || o.numero || ''),   // = número do pedido no Bling
+        tracking: o.rastreamento || o.tracking || '', // código de rastreio do transporte
+        sku: String(o.sku || '').trim(),
+        qty_original: Number(o.quantity || o.quantidade || 1),
+        multiplicador: 1,
+        qty_final: Number(o.quantity || o.quantidade || 1),
+        color: o.color || '',
+        canal: (o.canal || 'SITE') as any,
+        id_pedido_loja: orderId, // Crucial para Shopee/ML
+        venda_origem: vendaOrigem,
+        idLojaVirtual: o.idLojaVirtual || o.idLoja || (typeof o.loja === 'object' ? String(o.loja.id || '') : ''),
+        loja: o.loja, // Preserva para renderCanalBadge
+        data: o.data || new Date().toISOString().split('T')[0],
+        status: 'NORMAL',
+        customer_name: o.customer_name || o.cliente?.nome || 'Não informado',
+        customer_cpf_cnpj: o.customer_cpf_cnpj || o.cliente?.numeroDocumento || '',
+        price_gross: Number(o.unit_price || o.valorUnitario || 0),
+        price_total: Number(o.total || o.valorTotal || 0),
+        platform_fees: 0,
+        shipping_fee: Number(o.frete || 0),
+        shipping_paid_by_customer: 0,
+        price_net: Number(o.unit_price || o.valorUnitario || 0),
+    };
+};
 
 interface BlingPageProps {
     generalSettings: GeneralSettings;
@@ -989,7 +998,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     const [vendasStartDate, setVendasStartDate] = useState(() => localStorage.getItem('vendasStartDate') || getSevenDaysAgo());
     const [vendasEndDate, setVendasEndDate] = useState(() => localStorage.getItem('vendasEndDate') || new Date().toISOString().split('T')[0]);
     const [vendasSituacao, setVendasSituacao] = useState<string>(() => localStorage.getItem('vendasSituacao') || '6');
-    const [vendasCanalFilter, setVendasCanalFilter] = useState<string>(() => localStorage.getItem('vendasCanalFilter') || 'TODOS');
+    const [vendasLojaFilter, setVendasLojaFilter] = useState<string>(() => localStorage.getItem('vendasLojaFilter') || 'TODOS');
     const [vendasSearch, setVendasSearch] = useState('');
     const [selectedVendasIds, setSelectedVendasIds] = useState<Set<string>>(new Set());
     const [isGeneratingBatchZpl, setIsGeneratingBatchZpl] = useState(false);
@@ -1029,6 +1038,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         return [];
     });
     const [isLoadingNfeSaida, setIsLoadingNfeSaida] = useState(false);
+    const [hideSavedInErp, setHideSavedInErp] = useState(false);
+    const [savedNfeKeys, setSavedNfeKeys] = useState<Set<string>>(new Set());
     const [nfeSaidaFiltro, setNfeSaidaFiltro] = useState<'todas' | 'pendentes' | 'autorizadas' | 'emitidas' | 'canceladas' | 'rejeitadas' | 'aguardando_recibo' | 'denegadas' | 'encerradas' | 'autorizadas_sem_danfe' | 'emitida_danfe'>('todas');
     const [nfeSaidaSearch, setNfeSaidaSearch] = useState('');
     const [selectedNfeSaidaIds, setSelectedNfeSaidaIds] = useState<Set<number>>(new Set());
@@ -1075,7 +1086,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     });
     const [showNfeSaveConfirm, setShowNfeSaveConfirm] = useState(false);
     // Filtro de canal na aba NF-e de saída
-    const [nfeSaidaCanalFilter, setNfeSaidaCanalFilter] = useState<string>(() => localStorage.getItem('nfeSaidaCanalFilter') || 'TODOS');
+    const [nfeSaidaLojaFilter, setNfeSaidaLojaFilter] = useState<string>(() => localStorage.getItem('nfeSaidaLojaFilter') || 'TODOS');
     // Modal de vínculo catálogo Bling → ERP
     const [catalogLinkModal, setCatalogLinkModal] = useState<{ blingCode: string; blingName: string } | null>(null);
     const [catalogLinkTarget, setCatalogLinkTarget] = useState<string>('');
@@ -1161,19 +1172,19 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             );
         }
 
-        // Channel/Store ID filter
-        if (vendasCanalFilter !== 'TODOS') {
+        // Loja/Store filter
+        if (vendasLojaFilter !== 'TODOS') {
             list = list.filter(o => {
                 const orderStoreId = String(o.idLojaVirtual || o.id_loja_virtual || o.loja?.id || o.loja || '').toLowerCase();
-                const canalRaw = String(o.canal || o.venda_origem || o.loja?.descricao || '').toLowerCase();
-                const filter = vendasCanalFilter.toLowerCase();
+                const lojaRaw = String(o.canal || o.venda_origem || o.loja?.descricao || '').toLowerCase();
+                const filter = vendasLojaFilter.toLowerCase();
                 
-                if (filter === 'ml') return canalRaw.includes('mercado') || orderStoreId.includes('mercado');
-                if (filter === 'shopee') return canalRaw.includes('shopee') || orderStoreId.includes('shopee');
-                if (filter === 'site') return canalRaw.includes('site') || (!o.canal && (!orderStoreId || orderStoreId === '0'));
+                if (filter === 'ml') return lojaRaw.includes('mercado') || orderStoreId.includes('mercado');
+                if (filter === 'shopee') return lojaRaw.includes('shopee') || orderStoreId.includes('shopee');
+                if (filter === 'site') return lojaRaw.includes('site') || (!o.canal && (!orderStoreId || orderStoreId === '0'));
                 
                 // Filtro dinâmico por ID ou Nome
-                return orderStoreId === filter || canalRaw.includes(filter) || String(o.idLojaVirtual) === filter;
+                return orderStoreId === filter || lojaRaw.includes(filter) || String(o.idLojaVirtual) === filter;
             });
         }
 
@@ -1186,7 +1197,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         }
 
         return list;
-    }, [vendasDirectOrders, vendasSearch, vendasCanalFilter, showOnlyWithLink, showOnlyWithoutLink, erpImportedBlingIds]);
+    }, [vendasDirectOrders, vendasSearch, vendasLojaFilter, showOnlyWithLink, showOnlyWithoutLink, erpImportedBlingIds]);
 
     // Filter logic for NF-e de Saída
     const filteredNfeSaida = useMemo(() => {
@@ -1221,18 +1232,18 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             });
         }
 
-        // Loja/Canal filter (idLojaVirtual)
-        if (nfeSaidaCanalFilter !== 'TODOS') {
+        // Loja filter (idLojaVirtual)
+        if (nfeSaidaLojaFilter !== 'TODOS') {
             list = list.filter(n => {
                 const orderStoreId = String(n.idLojaVirtual || n.id_loja_virtual || n.loja?.id || n.loja || '').toLowerCase();
-                const canalRaw = String(n.canal || n.origem || n.loja?.descricao || '').toLowerCase();
-                const filter = nfeSaidaCanalFilter.toLowerCase();
+                const lojaRaw = String(n.canal || n.origem || n.loja?.descricao || '').toLowerCase();
+                const filter = nfeSaidaLojaFilter.toLowerCase();
                 
-                if (filter === 'ml') return canalRaw.includes('mercado') || orderStoreId.includes('mercado');
-                if (filter === 'shopee') return canalRaw.includes('shopee') || orderStoreId.includes('shopee');
-                if (filter === 'site') return canalRaw.includes('site') || (!n.canal && (!orderStoreId || orderStoreId === '0' || orderStoreId === 'site'));
+                if (filter === 'ml') return lojaRaw.includes('mercado') || orderStoreId.includes('mercado');
+                if (filter === 'shopee') return lojaRaw.includes('shopee') || orderStoreId.includes('shopee');
+                if (filter === 'site') return lojaRaw.includes('site') || (!n.canal && (!orderStoreId || orderStoreId === '0' || orderStoreId === 'site'));
                 
-                return orderStoreId === filter || canalRaw.includes(filter) || String(n.idLojaVirtual) === filter;
+                return orderStoreId === filter || lojaRaw.includes(filter) || String(n.idLojaVirtual) === filter;
             });
         }
 
@@ -1270,8 +1281,15 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             });
         }
 
+        if (hideSavedInErp && savedNfeKeys && savedNfeKeys.size > 0) {
+            list = list.filter(n => {
+                const k = String(n.id || n.numero || n.chaveAcesso || n.linkDanfe || '');
+                return !savedNfeKeys.has(k) && !savedNfeKeys.has(String(n.id)) && !savedNfeKeys.has(String(n.chaveAcesso));
+            });
+        }
+
         return list;
-    }, [nfeSaida, nfeSaidaSearch, nfeSaidaFiltro, nfeSaidaCanalFilter, nfeCpfCnpjFilter, nfeLojaFilter, nfeTipoFilter, nfePedidoLojaFilter, nfeRastreioFilter, nfeChaveFilter, nfeTransportadorFilter, nfeSerieFilter, nfeItemSearch, nfeItemsCache]);
+    }, [nfeSaida, nfeSaidaSearch, nfeSaidaFiltro, nfeSaidaLojaFilter, nfeCpfCnpjFilter, nfeLojaFilter, nfeTipoFilter, nfePedidoLojaFilter, nfeRastreioFilter, nfeChaveFilter, nfeTransportadorFilter, nfeSerieFilter, nfeItemSearch, nfeItemsCache, hideSavedInErp, savedNfeKeys]);
     const [products, setProducts] = useState<BlingProduct[]>([]);
     const [productSearch, setProductSearch] = useState('');
 
@@ -1434,8 +1452,8 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             // Aplica um atraso na inicialização para n\u00e3o estourar o limite assim que entra na p\u00e1gina
             const initialTimeout = setTimeout(() => {
                 runAutoSync();
-                interval = setInterval(runAutoSync, 60 * 1000); // 60 seconds
-            }, 15000);
+                interval = setInterval(runAutoSync, 30 * 1000); // 30 seconds
+            }, 10000);
 
             return () => {
                 clearTimeout(initialTimeout);
@@ -1445,6 +1463,26 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
 
         return () => { if (interval) clearInterval(interval); };
     }, [settings?.autoSync, activeTab]);
+
+    useEffect(() => {
+        if (!isConnected) return;
+        
+        const fetchSyncedNfes = async () => {
+            try {
+                const resp = await fetch('/api/erp/nfe/synced-ids'); // Mudado para evitar conflito com proxy /api/bling
+                const result = await resp.json();
+                if (result.success && result.syncedKeys) {
+                    setSavedNfeKeys(new Set(result.syncedKeys));
+                }
+            } catch (err) {
+                console.error('Erro ao buscar NFes sincronizadas:', err);
+            }
+        };
+
+        fetchSyncedNfes();
+        const interval = setInterval(fetchSyncedNfes, 300000); // Atualiza a cada 5 min
+        return () => clearInterval(interval);
+    }, [isConnected]);
 
     // ── Fetch canais de venda do Bling (para detecção dinâmica de canal) ──
     useEffect(() => {
@@ -1950,25 +1988,42 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             
             const situacaoBusca = status !== undefined ? String(status) : (nfeSaidaFiltro === 'pendentes' ? '1' : '');
             
-            const isDynamicStore = !['TODOS', 'ML', 'SHOPEE', 'SITE'].includes(nfeSaidaCanalFilter);
+            const isDynamicStore = !['TODOS', 'ML', 'SHOPEE', 'SITE'].includes(nfeSaidaLojaFilter);
             
             const qs = new URLSearchParams({
                 dataInicial: filters.startDate,
                 dataFinal: filters.endDate,
                 pagina: String(pageToFetch),
                 ...(situacaoBusca ? { situacao: situacaoBusca } : {}),
-                ...(isDynamicStore ? { idLoja: nfeSaidaCanalFilter } : {}),
+                ...(isDynamicStore ? { idLoja: nfeSaidaLojaFilter } : {}),
             }).toString();
             
             const resp = await fetch(`/api/bling/nfe/listar-saida?${qs}`, {
                 headers: { Authorization: token },
             });
             const result = await resp.json();
-            
+
             if (!result.success) throw new Error(result.error || 'Erro ao buscar notas');
-            
+
             const notas = result.notas || result.data || [];
             setNfeHasMore(!!result.hasMore);
+
+            // Atualiza lista de NFes já salvas localmente para indicar badges
+            try {
+                const localResp = await fetch('/api/nfe/listar');
+                const localJson = await localResp.json().catch(() => ({}));
+                // O endpoint pode retornar { nfes: { nfes: [...], count } } ou { nfes: [...] }
+                const localArray = Array.isArray(localJson.nfes) ? localJson.nfes : (Array.isArray(localJson.nfes?.nfes) ? localJson.nfes.nfes : []);
+                const keys = new Set<string>();
+                for (const ln of localArray) {
+                    if (ln.blingId) keys.add(String(ln.blingId));
+                    if (ln.chaveAcesso) keys.add(String(ln.chaveAcesso));
+                    if (ln.id) keys.add(String(ln.id));
+                }
+                setSavedNfeKeys(keys);
+            } catch (err) {
+                console.warn('Não foi possível carregar NFes locais:', err);
+            }
             
             // Não salva automaticamente — exibe modal de confirmação
             setPendingNfeSaida(notas);
@@ -1982,6 +2037,52 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             addToast(`Erro ao buscar NF-e de saída: ${err.message}`, 'error');
         } finally {
             setIsLoadingNfeSaida(false);
+        }
+    };
+
+    const handleSaveSelectedNfeToErp = async () => {
+        if (selectedNfeSaidaIds.size === 0) return addToast('Selecione pelo menos uma nota para salvar', 'error');
+        try {
+            const token = await getValidToken();
+            if (!token) throw new Error('Token inválido');
+
+            const notasASalvar = nfeSaida.filter(n => selectedNfeSaidaIds.has(Number(n.id)) || selectedNfeSaidaIds.has(n.id));
+            if (notasASalvar.length === 0) return addToast('Notas selecionadas não estão carregadas localmente', 'error');
+
+            addToast(`Enviando ${notasASalvar.length} notas para salvar no ERP...`, 'info');
+
+            const resp = await fetch('/api/bling/nfe/save-batch', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: token },
+                body: JSON.stringify({ nfes: notasASalvar })
+            });
+
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                addToast(`Erro ao salvar notas: ${data.error || data.message || resp.statusText}`, 'error');
+                return;
+            }
+
+            addToast(`✅ ${data.ok || 0}/${data.total || notasASalvar.length} notas salvas no ERP`, 'success');
+
+            // Atualiza saved keys localmente
+            const newKeys = new Set(savedNfeKeys);
+            for (const n of notasASalvar) {
+                if (n.id) newKeys.add(String(n.id));
+                if (n.numero) newKeys.add(String(n.numero));
+                if (n.chaveAcesso) newKeys.add(String(n.chaveAcesso));
+            }
+            setSavedNfeKeys(newKeys);
+
+            // Se o filtro ocultar salvas estiver ativo, remove-as da lista visível
+            if (hideSavedInErp) {
+                setNfeSaida(prev => prev.filter(n => !newKeys.has(String(n.id)) && !newKeys.has(String(n.chaveAcesso))));
+            }
+
+            // limpa seleção
+            setSelectedNfeSaidaIds(new Set());
+        } catch (err: any) {
+            addToast(`Erro ao salvar no ERP: ${err.message}`, 'error');
         }
     };
 
@@ -2074,7 +2175,7 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
         }
     };
 
-    const handleDownloadDanfe = async (nfe: NfeSaida, type: 'normal' | 'simplified' | 'combined' = 'normal') => {
+    const handleDownloadDanfe = async (nfe: NfeSaida, type: 'normal' | 'simplified' | 'combined' | 'transport_label' = 'normal') => {
         try {
             const token = await getValidToken();
             if (!token) throw new Error('Token inválido.');
@@ -2114,20 +2215,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 }
             }
 
-            // Se o conteúdo for retornado como stream/blob
-            const blob = await resp.blob();
-            
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            const prefix = type === 'simplified' ? 'SIMPLIFICADA' : type === 'combined' ? 'COMBINADA' : 'DANFE';
-            a.download = `${prefix}_${nfe.numero || nfe.id}.pdf`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
-            
-            addToast('Download concluído!', 'success');
+            // Abrir em nova aba em vez de download forçado
+            const finalUrl = `${downloadUrl}&token=${token.replace('Bearer ', '')}`;
+            window.open(finalUrl, '_blank');
+            addToast(`Abrindo ${label} em nova aba...`, 'success');
         } catch (err: any) {
             console.error('[DownloadDanfe] Erro:', err);
             addToast(`Erro ao baixar DANFE: ${err.message}`, 'error');
@@ -3070,45 +3161,76 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
 
     /**
      * Busca pedidos de vendas diretamente do Bling com “Situação: Em Aberto”.
-     * Usa o endpoint dedicado que envia idsSituacoes[0]=6 ao Bling.
+     * Implementado para buscar blocos de 200 pedidos (2 páginas da API v3).
+     * Acumula os resultados na lista vendasDirectOrders.
      */
     const handleFetchVendasEmAberto = async (replace = false, targetPage?: number) => {
         const token = await getValidToken();
         if (!token) return addToast('Token do Bling expirado. Reconecte a integração.', 'error');
         setIsLoadingVendas(true);
-        const pageToFetch = targetPage !== undefined ? targetPage : vendasPage;
+        
+        // uiPage 1 = api pages 1 & 2 (200 orders approx)
+        const uiPage = targetPage !== undefined ? targetPage : vendasPage;
+        const apiPage1 = (uiPage * 2) - 1;
+        const apiPage2 = uiPage * 2;
+
         try {
             const situacoesParam = vendasSituacao === 'TODOS' ? '' : vendasSituacao;
-            const isDynamicStore = !['TODOS', 'ML', 'SHOPEE', 'SITE'].includes(vendasCanalFilter);
-            const qs = new URLSearchParams({
-                dataInicio: vendasStartDate,
-                dataFim: vendasEndDate,
-                pagina: String(pageToFetch),
-                ...(situacoesParam ? { situacoes: situacoesParam } : {}),
-                ...(isDynamicStore ? { idLoja: vendasCanalFilter } : {}),
-            }).toString();
-            const resp = await fetch(`/api/bling/vendas/buscar?${qs}`, {
-                headers: { Authorization: token },
-            });
-            const data = await resp.json();
-            if (!resp.ok || !data.success) throw new Error(data.error || `Erro ${resp.status}`);
+            const isDynamicStore = !['TODOS', 'ML', 'SHOPEE', 'SITE'].includes(vendasLojaFilter);
             
-            setVendasHasMore(!!data.hasMore);
+            const fetchPage = async (page: number) => {
+                const qs = new URLSearchParams({
+                    dataInicio: vendasStartDate,
+                    dataFim: vendasEndDate,
+                    pagina: String(page),
+                    ...(situacoesParam ? { situacoes: situacoesParam } : {}),
+                    ...(isDynamicStore ? { idLoja: vendasLojaFilter } : {}),
+                }).toString();
+                const resp = await fetch(`/api/bling/vendas/buscar?${qs}`, {
+                    headers: { Authorization: token },
+                });
+                const data = await resp.json();
+                if (!resp.ok || !data.success) throw new Error(data.error || `Erro ${resp.status}`);
+                return data;
+            };
+
+            // Download Primeira Parte (100)
+            const data1 = await fetchPage(apiPage1);
+            let combinedOrders = data1.orders || [];
+            let hasMore = !!data1.hasMore;
+
+            // Tenta Segunda Parte (mais 100) para completar o lote de 200 se houver mais
+            if (hasMore && combinedOrders.length >= 100) {
+                try {
+                    const data2 = await fetchPage(apiPage2);
+                    combinedOrders = [...combinedOrders, ...(data2.orders || [])];
+                    hasMore = !!data2.hasMore;
+                } catch (e) {
+                    console.warn(`[handleFetchVendasEmAberto] Erro ao buscar api-page ${apiPage2}:`, e);
+                }
+            }
+
+            setVendasHasMore(hasMore);
             
             setVendasDirectOrders(prev => {
-                if (replace || targetPage !== undefined) return data.orders || [];
+                // Se for uma busca nova (replace=true) e targetPage for indefinido (botão principal), limpa a lista.
+                // Se for navegação por página, sempre acumulamos.
+                if (replace && targetPage === undefined) return combinedOrders;
+                
                 const existingIds = new Set(prev.map((o: any) => o.blingId || o.orderId));
-                const newOrders = (data.orders || []).filter((o: any) => !existingIds.has(o.blingId || o.orderId));
+                const newOrders = combinedOrders.filter((o: any) => !existingIds.has(o.blingId || o.orderId));
                 return [...prev, ...newOrders];
             });
             
-            if (targetPage !== undefined) setVendasPage(targetPage);
+            // Incrementa a página para a próxima busca se carregou algo
+            if (combinedOrders.length > 0 && targetPage === undefined) {
+                setVendasPage(uiPage + 1);
+            } else if (targetPage !== undefined) {
+                setVendasPage(targetPage);
+            }
             
             setSelectedVendasIds(new Set());
-            // Debug: log dos canais detectados
-            const canais = [...new Set((data.orders || []).map((o: any) => `${o.canal}(${o.canalRaw || '?'})`))].join(', ');
-            console.log('[Marketplace] canais detectados:', canais);
-            addToast(`✅ ${data.orders?.length || 0} pedido(s) carregados da página ${pageToFetch}!`, 'success');
+            addToast(`✅ ${combinedOrders.length} pedido(s) carregados!`, 'success');
         } catch (err: any) {
             addToast(`Erro ao buscar pedidos: ${err.message}`, 'error');
         } finally {
@@ -3340,20 +3462,20 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                 else if (filterNfeStatus === 'SEM_NOTA') matchesNfe = !order.invoice;
             }
 
-            // Filtro de loja/canal
-            let matchesCanal = true;
+            // Filtro de loja/integração
+            let matchesLoja = true;
             if (nfeCanalFilter !== 'TODOS') {
+                const orderLojaRaw = (order as any).loja || '';
                 const orderCanal = (order as any).canal || '';
-                const orderLoja = (order as any).loja || '';
                 if (['ML', 'SHOPEE', 'SITE'].includes(nfeCanalFilter)) {
-                    matchesCanal = orderCanal === nfeCanalFilter;
+                    matchesLoja = orderCanal === nfeCanalFilter;
                 } else {
                     // Filtro por nome exato da loja (canais customizados do Bling)
-                    matchesCanal = orderLoja.toUpperCase().includes(nfeCanalFilter.toUpperCase());
+                    matchesLoja = orderLojaRaw.toUpperCase().includes(nfeCanalFilter.toUpperCase());
                 }
             }
 
-            return matchesSearch && matchesNfe && matchesCanal;
+            return matchesSearch && matchesNfe && matchesLoja;
         });
     }, [enrichedOrders, searchTerm, filterNfeStatus, nfeCanalFilter]);
 
@@ -3365,10 +3487,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
     };
 
     /**
-     * Helper para renderizar o badge do canal de venda de forma dinâmica
+     * Helper para renderizar o badge da loja de venda de forma dinâmica
      */
-    const renderCanalBadge = (canalIdOrName: string | number | undefined, lojaNome?: string) => {
-        const idStr = String(canalIdOrName || '');
+    const renderLojaBadge = (lojaIdOrName: string | number | undefined, lojaNome?: string) => {
+        const idStr = String(lojaIdOrName || '');
         const nomeMapeado = blingCanaisDict[idStr];
         
         // Se temos um nome mapeado (do dicionário Bling), usamos ele
@@ -3381,30 +3503,34 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
             
             return (
                 <div className="flex flex-col gap-0.5" title={`ID Loja: ${idStr}`}>
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border whitespace-nowrap ${colorClass}`}>
-                        {isML ? '🟡 ' : isShopee ? '🟠 ' : '🔵 '} {nomeMapeado}
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border whitespace-nowrap shadow-sm ${colorClass}`}>
+                        {isML ? '🛒 ' : isShopee ? '🛍️ ' : '🏪 '} {nomeMapeado} [ID: {idStr}]
                     </span>
-                    {lojaNome && lojaNome !== nomeMapeado && <span className="text-[9px] text-slate-400 truncate max-w-[100px]">{lojaNome}</span>}
+                    {lojaNome && lojaNome !== nomeMapeado && <span className="text-[9px] text-slate-400 truncate max-w-[120px] font-bold">{lojaNome}</span>}
                 </div>
             );
         }
 
         // Fallback: Lógica estática se o ID não estiver no dicionário
-        const c = String(canalIdOrName || '').toUpperCase();
+        const c = String(lojaIdOrName || '').toUpperCase();
         const isML = c === 'ML' || c.includes('MERCADO');
         const isShopee = c === 'SHOPEE' || c.includes('SHOPEE');
-        const isSite = !isML && !isShopee;
-
-        const badge = isML ? 'bg-yellow-100 text-yellow-800 border-yellow-200' 
+        
+        const badgeClass = isML ? 'bg-yellow-100 text-yellow-800 border-yellow-200' 
                     : isShopee ? 'bg-orange-100 text-orange-700 border-orange-200' 
                     : 'bg-blue-100 text-blue-700 border-blue-200';
         
-        const label = isML ? '🟡 Mercado Livre' : isShopee ? '🟠 Shopee' : '🔵 Loja / Site';
+        // Prioriza lojaNome se o ID for genérico (0, SITE, etc.)
+        const isGenericId = !lojaIdOrName || c === '0' || c === 'SITE';
+        const displayLabel = (isGenericId && lojaNome) ? lojaNome : (isML ? 'Mercado Livre' : isShopee ? 'Shopee' : 'Loja / Site');
+        const icon = isML ? '🛒 ' : isShopee ? '🛍️ ' : '🏪 ';
 
         return (
             <div className="flex flex-col gap-0.5">
-                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border whitespace-nowrap ${badge}`}>{label}</span>
-                {lojaNome && <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={lojaNome}>{lojaNome}</span>}
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-widest border whitespace-nowrap shadow-sm ${badgeClass}`}>
+                    {icon} {displayLabel} [ID: {idStr}]
+                </span>
+                {(lojaNome && lojaNome !== displayLabel) && <span className="text-[10px] text-slate-400 truncate max-w-[120px] font-bold" title={lojaNome}>{lojaNome}</span>}
             </div>
         );
     };
@@ -3630,15 +3756,15 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                 <input type="text" value={vendasSearch} onChange={e => setVendasSearch(e.target.value)} placeholder="Nº pedido, cliente, loja, SKU..." className="w-full pl-9 p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-yellow-400" />
                             </div>
                             <div className="flex gap-2">
-                                <select value={vendasCanalFilter} onChange={e => {
+                                <select value={vendasLojaFilter} onChange={e => {
                                     const val = e.target.value;
-                                    setVendasCanalFilter(val);
-                                    localStorage.setItem('vendasCanalFilter', val);
+                                    setVendasLojaFilter(val);
+                                    localStorage.setItem('vendasLojaFilter', val);
                                 }} className="p-3 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-yellow-400 min-w-[200px]">
-                                    <option value="TODOS">Todos os canais</option>
-                                    <option value="ML">🟡 Mercado Livre</option>
-                                    <option value="SHOPEE">🟠 Shopee</option>
-                                    <option value="SITE">🔵 Site / Outros</option>
+                                    <option value="TODOS">Todas as lojas</option>
+                                    <option value="ML">🛒 Mercado Livre</option>
+                                    <option value="SHOPEE">🛍️ Shopee</option>
+                                    <option value="SITE">🏪 Loja / Site</option>
                                     {blingCanais.filter(c => !['ml', 'shopee', 'site'].includes(c.tipo) && !['MERCADO LIVRE', 'SHOPEE'].includes(c.descricao.toUpperCase())).map(c => (
                                         <option key={c.id} value={String(c.id)}>{c.descricao}</option>
                                     ))}
@@ -3732,7 +3858,10 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                 : <span className="w-3 inline-block" />}
                                                         </td>
                                                         <td className="p-3">
-                                                            {renderCanalBadge((order as any).idLojaVirtual || order.canal, (order as any).loja)}
+                                                            {renderLojaBadge(
+                                                                (order as any).idLojaVirtual || (typeof (order as any).loja === 'object' ? (order as any).loja.id : (order as any).loja || order.canal),
+                                                                (typeof (order as any).loja === 'object' ? (order as any).loja.nome : (typeof (order as any).loja === 'string' ? (order as any).loja : undefined))
+                                                            )}
                                                         </td>
                                                         <td className="p-3 font-black text-slate-800 whitespace-nowrap">{order.orderId || '-'}</td>
                                                         <td className="p-3 font-mono text-xs text-slate-400">{order.blingId || '-'}</td>
@@ -3981,16 +4110,16 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                     <input type="date" value={filters.endDate} onChange={e => setFilters(p => ({ ...p, endDate: e.target.value }))} className="w-full p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500" />
                                 </div>
                                 <div>
-                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Canal Marketplace</label>
-                                    <select value={nfeSaidaCanalFilter} onChange={e => {
+                                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Loja / Integração</label>
+                                    <select value={nfeSaidaLojaFilter} onChange={e => {
                                         const val = e.target.value;
-                                        setNfeSaidaCanalFilter(val);
-                                        localStorage.setItem('nfeSaidaCanalFilter', val);
+                                        setNfeSaidaLojaFilter(val);
+                                        localStorage.setItem('nfeSaidaLojaFilter', val);
                                     }} className="w-full p-2.5 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-emerald-500">
-                                        <option value="TODOS">Todos os Canais</option>
-                                        <option value="ML">🟡 Mercado Livre</option>
-                                        <option value="SHOPEE">🟠 Shopee</option>
-                                        <option value="SITE">🔵 Site / Outros</option>
+                                        <option value="TODOS">Todas as Lojas</option>
+                                        <option value="ML">🛒 Mercado Livre</option>
+                                        <option value="SHOPEE">🛍️ Shopee</option>
+                                        <option value="SITE">🏪 Loja / Site</option>
                                         {blingCanais.filter(c => !['ml', 'shopee', 'site'].includes(c.tipo) && !['MERCADO LIVRE', 'SHOPEE'].includes(c.descricao.toUpperCase())).map(c => (
                                             <option key={c.id} value={String(c.id)}>{c.descricao}</option>
                                         ))}
@@ -4042,6 +4171,15 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                     >
                                         <Filter size={14} />
                                     </button>
+                                    
+                                    <button onClick={handleSaveSelectedNfeToErp} disabled={selectedNfeSaidaIds.size === 0} className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 text-white text-xs font-black rounded-xl hover:bg-blue-700 disabled:opacity-50 uppercase tracking-wide">
+                                        <Save size={14} /> Salvar no ERP ({selectedNfeSaidaIds.size})
+                                    </button>
+
+                                    <label className="flex items-center gap-2 text-sm ml-2">
+                                        <input type="checkbox" checked={hideSavedInErp} onChange={e => setHideSavedInErp(e.target.checked)} className="w-4 h-4" />
+                                        <span className="text-gray-600 text-xs font-bold">Ocultar Salvas no ERP</span>
+                                    </label>
                                 </div>
                             </div>
 
@@ -4127,18 +4265,21 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                             })}
                         </div>
 
-                        {/* Filtro por canal (ML / Shopee / Site) */}
+                        {/* Filtro por Loja (ML / Shopee / Site) */}
                         <div className="flex flex-wrap gap-2 mb-4">
                             {([
-                                { key: 'TODOS', label: 'Todos os Canais' },
-                                { key: 'ML', label: '🟡 Mercado Livre' },
-                                { key: 'SHOPEE', label: '🟠 Shopee' },
-                                { key: 'SITE', label: '🔵 Site / Outros' },
+                                { key: 'TODOS', label: 'Todas as Lojas' },
+                                { key: 'ML', label: '🛒 Mercado Livre' },
+                                { key: 'SHOPEE', label: '🛍️ Shopee' },
+                                { key: 'SITE', label: '🏪 Loja / Site' },
                             ] as const).map(c => (
                                 <button
                                     key={c.key}
-                                    onClick={() => setNfeSaidaCanalFilter(c.key)}
-                                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${nfeSaidaCanalFilter === c.key ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                                    onClick={() => {
+                                        setNfeSaidaLojaFilter(c.key);
+                                        localStorage.setItem('nfeSaidaLojaFilter', c.key);
+                                    }}
+                                    className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${nfeSaidaLojaFilter === c.key ? 'bg-slate-800 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
                                 >
                                     {c.label}
                                 </button>
@@ -4313,7 +4454,12 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                             <td className="p-3 text-center cursor-pointer" onClick={() => handleExpandNfeItems(nfe)}>
                                                                 {isExpanded ? <ChevronDown size={14} className="text-blue-500" /> : <ChevronRight size={14} className="text-slate-400" />}
                                                             </td>
-                                                            <td className="p-3 font-black text-slate-700">{nfe.numero || nfe.id}</td>
+                                                            <td className="p-3 font-black text-slate-700 flex items-center gap-2">
+                                                                <span>{nfe.numero || nfe.id}</span>
+                                                                {((savedNfeKeys && (savedNfeKeys.has(String(nfe.id)) || savedNfeKeys.has(String(nfe.chaveAcesso)) || savedNfeKeys.has(String(nfe.numero))))) && (
+                                                                    <span className="text-[10px] font-black uppercase tracking-widest bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full">Salvo</span>
+                                                                )}
+                                                            </td>
                                                             <td className="p-3 font-mono text-xs text-slate-400">{nfe.serie || '-'}</td>
                                                             <td className="p-3 font-bold text-slate-600 max-w-[160px] truncate" title={nfe.contato?.nome}>{nfe.contato?.nome || '-'}</td>
                                                             <td className="p-3 font-mono text-[10px] text-slate-400">{formatDoc(nfe.contato?.numeroDocumento)}</td>
@@ -4337,8 +4483,12 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                             </td>
                                                             <td className="p-3">
                                                                 <div className="flex flex-col gap-0.5">
-                                                                    {renderCanalBadge(nfe as any)}
-                                                                    {nfe.loja && <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={nfe.loja}>{nfe.loja}</span>}
+                                                                    {renderLojaBadge(
+                                                                        (nfe as any).idLojaVirtual || (typeof nfe.loja === 'object' ? (nfe.loja as any).id : nfe.loja),
+                                                                        (typeof nfe.loja === 'object' ? (nfe.loja as any).nome : (typeof nfe.loja === 'string' ? nfe.loja : undefined))
+                                                                    )}
+                                                                    {(nfe.loja && typeof nfe.loja === 'string') && <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={nfe.loja}>{nfe.loja}</span>}
+                                                                    {(typeof nfe.loja === 'object' && (nfe.loja as any).nome) && <span className="text-[10px] text-slate-400 truncate max-w-[100px]" title={(nfe.loja as any).nome}>{(nfe.loja as any).nome}</span>}
                                                                 </div>
                                                             </td>
                                                             <td className="p-3">
@@ -4380,11 +4530,15 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                                                             <div className="flex bg-orange-50 rounded-lg border border-orange-100 overflow-hidden shadow-sm">
                                                                                 <button onClick={() => handleDownloadDanfe(nfe, 'normal')} title="Baixar DANFE Normal"
                                                                                     className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-1.5 hover:bg-orange-100 transition-all border-r border-orange-100 text-orange-700">
-                                                                                    <Download size={11} /> Normal
+                                                                                    <Download size={11} /> DANFE
                                                                                 </button>
-                                                                                <button onClick={() => handleDownloadDanfe(nfe, 'simplified')} title="Baixar DANFE Simplificado (Logística)"
+                                                                                <button onClick={() => handleDownloadDanfe(nfe, 'simplified')} title="Baixar DANFE Simplificado"
+                                                                                    className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-1.5 hover:bg-orange-100 transition-all border-r border-orange-100 text-orange-700">
+                                                                                    <Zap size={11} /> Danfe Simp.
+                                                                                </button>
+                                                                                <button onClick={() => handleDownloadDanfe(nfe, 'transport_label')} title="Baixar Etiqueta de Transporte"
                                                                                     className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest px-2 py-1.5 hover:bg-orange-100 transition-all text-orange-700">
-                                                                                    <Zap size={11} /> Simplif.
+                                                                                    <Printer size={11} /> Etiqueta Transp.
                                                                                 </button>
                                                                             </div>
                                                                             <button onClick={() => handleDownloadDanfe(nfe, 'combined')} title="Baixar DANFE + Etiqueta (PDF Único)"
@@ -5333,7 +5487,19 @@ const BlingPage: React.FC<BlingPageProps> = ({ generalSettings, onSaveSettings, 
                                         const toImport = filteredVendasOrders
                                             .filter(o => ids.includes(o.blingId || o.orderId))
                                             .slice(0, importQuantityLimit);
-                                        const orderItems = toImport.map(transformSyncedOrder);
+                                        const orderItems: OrderItem[] = [];
+                                        toImport.forEach(order => {
+                                            if (order.itens && order.itens.length > 0) {
+                                                // Expande o pedido em múltiplos itens (um para cada SKU)
+                                                order.itens.forEach((item: any) => {
+                                                    orderItems.push(transformSyncedOrder({ ...order, ...item }));
+                                                });
+                                            } else {
+                                                // Caso não tenha itens (improvável no Bling v3, mas seguro)
+                                                orderItems.push(transformSyncedOrder(order));
+                                            }
+                                        });
+
                                         await onLaunchSuccess(orderItems);
                                         addToast(`✅ ${orderItems.length} pedido(s) importados para o ERP!`, 'success');
                                         setShowImportConfirm(false);

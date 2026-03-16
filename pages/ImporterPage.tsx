@@ -6,7 +6,7 @@ import LinkSkuModal from '../components/LinkSkuModal';
 import CreateProductFromImportModal from '../components/CreateProductFromImportModal';
 import DateSelectionModal from '../components/DateSelectionModal';
 import { ProcessedData, OrderItem, SkuLink, StockItem, ProdutoCombinado, GeneralSettings, User, ImportHistoryItem, Canal } from '../types';
-import { parseExcelFile, extractShippingDates } from '../lib/parser';
+import { parseExcelFile, extractShippingDates, extractHeadersAndData, getParserInternals } from '../lib/parser';
 import { verifyDatabaseSetup } from '../lib/supabaseClient';
 import { Loader2, Zap, History, Settings, X, ChevronLeft, Eye, AlertCircle, Copy, Check, Info, AlertTriangle, Trash2, List, Archive, Calendar, CheckSquare, Square } from 'lucide-react';
 import { SETUP_SQL_STRING } from '../lib/sql';
@@ -65,7 +65,8 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
     const [selectedChannel, setSelectedChannel] = useState<Canal | 'AUTO'>('AUTO');
 
     // Estados para o fluxo de datas
-    const [availableShippingDates, setAvailableShippingDates] = useState<{ date: string, count: number }[]>([]);
+    const [availableShippingDates, setAvailableShippingDates] = useState<{ date: string, count: number, saved?: number }[]>([]);
+    const [shippingDateKey, setShippingDateKey] = useState<string | null>(null);
     const [isDateModalOpen, setIsDateModalOpen] = useState(false);
     const [isScanningDates, setIsScanningDates] = useState(false);
 
@@ -167,16 +168,127 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         try {
             const buffer = await selectedFile.arrayBuffer();
 
-            // Tenta extrair datas PRIMEIRO, passando o canal selecionado para forçar a configuração correta
-            const dates = extractShippingDates(buffer, generalSettings, selectedChannel);
+            // Primeiro tentamos usar explicitamente o mapeamento vindo das configurações de Planilhas
+            // para garantir que a coluna configurada (`dateShipping`) seja usada quando disponível.
+            const { headers, sheetData } = extractHeadersAndData(buffer);
+            console.debug('DEBUG: extracted headers =>', headers.slice(0, 50));
+            const normalizeHeaderLocal = (s: any) => String(s || '').trim().toUpperCase().normalize('NFD').replace(/[ -\u036f]/g, '').replace(/[^A-Z0-9\s]/g, '').replace(/\s+/g, ' ');
+            const targetMatch = (desired: string | undefined) => {
+                if (!desired) return undefined;
+                const t = normalizeHeaderLocal(desired);
+                let mk = headers.find(h => normalizeHeaderLocal(h) === t);
+                if (mk) return mk;
+                mk = headers.find(h => normalizeHeaderLocal(h).includes(t));
+                if (mk) return mk;
+                mk = headers.find(h => t.includes(normalizeHeaderLocal(h)));
+                return mk;
+            };
+
+            // Determina qual canal usar para buscar a configuração
+            const channelCandidates: (Canal | 'AUTO')[] = selectedChannel && selectedChannel !== 'AUTO' ? [selectedChannel] : ['SHOPEE', 'ML', 'SITE'];
+            let foundDates: { date: string; count: number; key?: string }[] = [];
+            let detectedKeyFromConfig: string | null = null;
+
+            for (const ch of channelCandidates) {
+                const cfgKey = ch === 'SHOPEE' ? 'shopee' : ch === 'ML' ? 'ml' : 'site';
+                // @ts-ignore
+                const cfg = (generalSettings.importer || {})[cfgKey];
+                if (!cfg) continue;
+                const desired = cfg.dateShipping || cfg.date;
+                if (!desired) continue;
+
+                const matched = targetMatch(desired);
+                console.debug('DEBUG: trying config', ch, 'desired:', desired, 'matched:', matched);
+                if (!matched) continue;
+
+                // Computa contagem de datas usando a coluna mapeada da config
+                const dateMap = new Map<string, number>();
+                const normalizeDateLocal = (raw: any) => {
+                    if (!raw) return '';
+                    if (raw instanceof Date) return raw.toISOString().split('T')[0];
+                    let s = String(raw).trim();
+                    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.split('T')[0];
+                    const dmy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+                    if (dmy) return `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
+                    const parsed = new Date(s);
+                    if (!isNaN(parsed.getTime())) return parsed.toISOString().split('T')[0];
+                    return '';
+                };
+
+                for (const row of sheetData as any[]) {
+                    const val = row[matched];
+                    const nd = normalizeDateLocal(val);
+                    if (nd) dateMap.set(nd, (dateMap.get(nd) || 0) + 1);
+                }
+
+                if (dateMap.size > 0) {
+                    foundDates = Array.from(dateMap.entries()).map(([date, count]) => ({ date, count, key: matched }));
+                    detectedKeyFromConfig = matched;
+                    console.debug('DEBUG: foundDates from config column', matched, '=>', foundDates.slice(0,20));
+                    // log sample rows for diagnosis
+                    console.debug('DEBUG: sample sheet rows (first 5) for column', matched, sheetData.slice(0,5).map(r => r[matched]));
+                    break;
+                }
+            }
+
+            if (foundDates.length === 0) {
+                // Fallback para heurística existente
+                const dates = extractShippingDates(buffer, generalSettings, selectedChannel);
+                console.debug('DEBUG: extractShippingDates ->', dates);
+                foundDates = dates;
+            }
+
+            if (foundDates.length > 0) {
+                const normalizeYMD = (v?: string) => {
+                    if (!v) return '';
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+                    const d = new Date(v);
+                    if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+                    return '';
+                };
+
+                const enriched = (foundDates as any[]).map(d => {
+                    const date = d.date as string;
+                    const saved = allOrders.filter(o => normalizeYMD(o.data_prevista_envio) === date).length;
+                    return { date, count: d.count, saved };
+                });
+
+                setAvailableShippingDates(enriched);
+                // guarda a coluna detectada (para forçar o parse a usar a mesma coluna)
+                const detectedKey = detectedKeyFromConfig || (foundDates[0] as any).key || null;
+                setShippingDateKey(detectedKey);
+                console.debug('DEBUG: shippingDateKey set to', detectedKey, 'enriched:', enriched);
+                setIsScanningDates(false);
+                setIsDateModalOpen(true);
+                return;
+            }
 
             if (dates.length > 0) {
-                // Se encontrar datas, abre o modal e PAUSA o processamento
-                setAvailableShippingDates(dates);
+                // Se encontrar datas, calcula quantas já existem no banco e abre o modal
+                const normalizeYMD = (v?: string) => {
+                    if (!v) return '';
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+                    const d = new Date(v);
+                    if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+                    return '';
+                };
+
+                const enriched = (dates as any[]).map(d => {
+                    const date = d.date as string;
+                    const saved = allOrders.filter(o => normalizeYMD(o.data_prevista_envio) === date).length;
+                    return { date, count: d.count, saved };
+                });
+
+                setAvailableShippingDates(enriched);
+                // guarda a coluna detectada (para forçar o parse a usar a mesma coluna)
+                const detectedKey = (dates[0] as any).key || null;
+                setShippingDateKey(detectedKey);
+                console.debug('DEBUG: shippingDateKey set to', detectedKey, 'enriched:', enriched);
                 setIsScanningDates(false);
                 setIsDateModalOpen(true);
             } else {
                 // Se não encontrar (ML ou arquivo sem coluna H configurada), processa direto sem filtro
+                setShippingDateKey(null);
                 executeFullProcessing(buffer, undefined); // undefined = sem filtro de data
                 setIsScanningDates(false);
             }
@@ -191,15 +303,91 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
 
     // 2. Callback do Modal de Datas (Confirmar)
     const handleDateConfirm = async (selectedDates: string[]) => {
-        setIsDateModalOpen(false);
         if (!selectedFile) return;
 
         setIsProcessing(true); // Mostra loading principal
         try {
+            // Primeiro rodar diagnóstico com as datas selecionadas para garantir que haverá resultados
+            const diag = await runDiagnostics(selectedDates);
+            const available = diag?.parseWithOverride?.total ?? 0;
+            if (!available || available === 0) {
+                setError('Nenhum pedido encontrado para as datas selecionadas. Execute o diagnóstico para mais detalhes.');
+                setIsProcessing(false);
+                return;
+            }
+
+            // Se passou no diagnóstico, fecha o modal e processa
+            setIsDateModalOpen(false);
             const buffer = await selectedFile.arrayBuffer();
+            console.debug('DEBUG: handleDateConfirm -> selectedDates', selectedDates, 'shippingDateKey', shippingDateKey);
             executeFullProcessing(buffer, selectedDates);
         } catch (e) {
             setIsProcessing(false);
+        }
+    };
+
+    // Handler para diagnóstico acionado pelo modal — retorna um objeto serializável
+    const runDiagnostics = async (selectedDates?: string[]) => {
+        if (!selectedFile) return { error: 'Nenhum arquivo selecionado' };
+        try {
+            const buffer = await selectedFile.arrayBuffer();
+            const { headers, sheetData } = extractHeadersAndData(buffer as any);
+            const sampleRows = (sheetData as any[]).slice(0, 5).map((r: any) => {
+                const obj: any = {};
+                headers.slice(0, 20).forEach((h: any) => obj[h] = r[h]);
+                return obj;
+            });
+
+            let extractDates: any = null;
+            try { extractDates = extractShippingDates(buffer as any, generalSettings, selectedChannel); } catch (e) { extractDates = { error: String(e) }; }
+
+            const diagnostics: any = { headers: headers.slice(0, 200), sampleRows, extractShippingDates: extractDates, shippingDateKey };
+
+            // Incluir mapeamentos atuais das configurações de importer e checar presença nos headers
+            try {
+                const importerCfg = generalSettings.importer || {};
+                diagnostics.importerConfig = importerCfg;
+                const cfgChecks: any = {};
+                for (const canalKey of ['ml', 'shopee', 'site']) {
+                    const cfg = importerCfg[canalKey as 'ml'|'shopee'|'site'] || {} as any;
+                    cfgChecks[canalKey] = {};
+                    for (const k of Object.keys(cfg)) {
+                        const v = cfg[k];
+                        if (typeof v === 'string' && v) {
+                            cfgChecks[canalKey][k] = { expected: v, presentInHeaders: headers.includes(v), normalizedHeaderMatch: headers.find(h => String(h).trim().toUpperCase().normalize('NFD').replace(/\u0300-\u036f/g, '') === String(v).trim().toUpperCase()) };
+                        }
+                    }
+                }
+                diagnostics.importerConfigChecks = cfgChecks;
+            } catch (e) { diagnostics.importerConfigChecksError = String(e); }
+
+            // Tenta parse sem filtros
+            try {
+                const rawNoFilter = parseExcelFile(buffer, selectedFile.name, allOrders, generalSettings, { ...importOptions, allowedShippingDates: undefined, columnOverrides: undefined }, selectedChannel);
+                diagnostics.parseWithoutFilters = { total: rawNoFilter.lists?.completa?.length ?? null, sample: (rawNoFilter.lists?.completa || []).slice(0, 10) };
+            } catch (e: any) {
+                diagnostics.parseWithoutFiltersError = String(e?.message || e);
+            }
+
+            // Tenta parse com columnOverrides e as datas selecionadas (se fornecidas) ou todas as datas detectadas
+            try {
+                // Coleta internals do parser para diagnóstico (headerKeyMap, sheetKeys, sampleRow)
+                try {
+                    const internals = getParserInternals(buffer as any, generalSettings, selectedChannel, { columnOverrides: shippingDateKey ? { dateShipping: shippingDateKey } : undefined });
+                    diagnostics.parserInternals = internals;
+                } catch (inner) {
+                    diagnostics.parserInternalsError = String(inner);
+                }
+                const datesAll = (selectedDates && selectedDates.length > 0) ? selectedDates : availableShippingDates.map(d => d.date);
+                const rawWithOverride = parseExcelFile(buffer, selectedFile.name, allOrders, generalSettings, { ...importOptions, allowedShippingDates: datesAll.length ? datesAll : undefined, columnOverrides: shippingDateKey ? { dateShipping: shippingDateKey } : undefined }, selectedChannel);
+                diagnostics.parseWithOverride = { total: rawWithOverride.lists?.completa?.length ?? null, sample: (rawWithOverride.lists?.completa || []).slice(0, 10) };
+            } catch (e: any) {
+                diagnostics.parseWithOverrideError = String(e?.message || e);
+            }
+
+            return diagnostics;
+        } catch (err: any) {
+            return { error: String(err?.message || err) };
         }
     };
 
@@ -208,6 +396,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         if (!selectedFile) return;
         setIsProcessing(true);
         try {
+            console.debug('DEBUG: executeFullProcessing -> allowedDates', allowedDates, 'columnOverrides', shippingDateKey ? { dateShipping: shippingDateKey } : undefined, 'fileName', selectedFile?.name);
             const data = parseExcelFile(
                 buffer,
                 selectedFile.name,
@@ -215,7 +404,8 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 generalSettings,
                 {
                     ...importOptions,
-                    allowedShippingDates: allowedDates
+                    allowedShippingDates: allowedDates,
+                    columnOverrides: shippingDateKey ? { dateShipping: shippingDateKey } : undefined
                 },
                 selectedChannel
             );
@@ -225,12 +415,32 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 fileName: selectedFile.name,
                 processedAt: new Date().toISOString(),
                 user: currentUser.name,
-                itemCount: data.lists.completa.length,
+                item_count: data.lists.completa.length,
                 unlinked_count: data.skusNaoVinculados.length,
                 canal: data.canal
             }, data);
         } catch (err: any) {
-            setError(err.message || 'Erro crítico ao ler planilha.');
+            const msg = err?.message || 'Erro crítico ao ler planilha.';
+            console.error('DEBUG: parse error ->', err);
+            // Se for o erro conhecido de nenhum pedido importado, coletar diagnósticos adicionais
+            if (msg.includes('Nenhum pedido importado')) {
+                try {
+                    const hdrs = extractHeadersAndData(buffer as any).headers;
+                    const datesDiag = extractShippingDates(buffer as any, generalSettings, selectedChannel);
+                    console.debug('DEBUG-DIAG: headers', hdrs.slice(0, 100));
+                    console.debug('DEBUG-DIAG: extractShippingDates', datesDiag);
+                    // Tenta rodar parse sem filtro para ver se existem pedidos sem filtro
+                    try {
+                        const raw = parseExcelFile(buffer, selectedFile.name, allOrders, generalSettings, { ...importOptions, allowedShippingDates: undefined, columnOverrides: undefined }, selectedChannel);
+                        console.debug('DEBUG-DIAG: parse without filters -> total', raw.lists.completa.length, 'sample', raw.lists.completa.slice(0,10));
+                    } catch (innerErr: any) {
+                        console.debug('DEBUG-DIAG: parse without filters erro ->', innerErr?.message || innerErr);
+                    }
+                } catch (diagErr) {
+                    console.debug('DEBUG-DIAG: failed to collect diagnostics', diagErr);
+                }
+            }
+            setError(msg);
         } finally { setIsProcessing(false); }
     };
 
@@ -569,6 +779,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 availableDates={availableShippingDates}
                 onConfirm={handleDateConfirm}
                 fileName={selectedFile?.name || ''}
+                onRunDiagnostics={runDiagnostics}
             />
         </div>
     );

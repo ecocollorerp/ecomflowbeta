@@ -411,9 +411,12 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                       <label className="flex items-center gap-2 text-sm cursor-pointer">
                         <input
                           type="checkbox"
+                          name="apenasComEtiqueta"
+                          id="apenasComEtiqueta"
                           checked={apenasComEtiqueta}
                           onChange={(e) => setApenasComEtiqueta(e.target.checked)}
                           className="w-4 h-4 rounded"
+                          aria-label="Apenas pedidos com etiqueta"
                         />
                         <span className="text-gray-700">Apenas pedidos com etiqueta</span>
                       </label>
@@ -422,9 +425,12 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                     <label className="flex items-center gap-2 text-sm">
                       <span className="text-gray-700 font-medium">Buscar até:</span>
                       <select
+                        name="quantidadeDesejada"
+                        id="quantidadeDesejada"
                         value={quantidadeDesejada}
                         onChange={(e) => setQuantidadeDesejada(Number(e.target.value))}
                         className="border border-gray-300 rounded p-1 text-sm bg-gray-50 text-gray-800"
+                        aria-label="Quantidade máxima a buscar"
                       >
                         <option value={50}>50 Pedidos</option>
                         <option value={100}>100 Pedidos</option>
@@ -439,28 +445,37 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                       <span className="text-gray-700">Loja ID:</span>
                       <input
                         type="text"
+                        name="idLojaFiltro"
+                        id="idLojaFiltro"
                         value={idLojaFiltro}
                         onChange={e => setIdLojaFiltro(e.target.value)}
                         className="border border-gray-300 rounded p-1 text-sm bg-gray-50 text-gray-800 w-24"
                         placeholder="ex: 1234"
+                        aria-label="Filtro por ID da loja"
                       />
                     </label>
                     <label className="flex items-center gap-2 text-sm">
                       <span className="text-gray-700">Página:</span>
                       <input
                         type="number"
+                        name="pagina"
+                        id="pagina"
                         min={1}
                         value={pagina}
                         onChange={e => setPagina(parseInt(e.target.value) || 1)}
                         className="border border-gray-300 rounded p-1 text-sm bg-gray-50 text-gray-800 w-20"
+                        aria-label="Número da página"
                       />
                     </label>
                     <label className="flex items-center gap-2 text-sm">
                       <span className="text-gray-700">Ordenação:</span>
                       <select
+                        name="ordenacao"
+                        id="ordenacao"
                         value={ordenacao}
                         onChange={e => setOrdenacao(e.target.value as any)}
                         className="border border-gray-300 rounded p-1 text-sm bg-gray-50 text-gray-800"
+                        aria-label="Ordenação de resultados"
                       >
                         <option value="asc">Antigo→Novo</option>
                         <option value="desc">Novo→Antigo</option>
@@ -470,12 +485,15 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                       <span className="text-gray-700">Situações (IDs):</span>
                       <input
                         type="text"
+                        name="situacoesFiltro"
+                        id="situacoesFiltro"
                         value={situacoesFiltro.join(',')}
                         onChange={e => setSituacoesFiltro(
                           e.target.value.split(',').map(v => parseInt(v.trim())).filter(n => !isNaN(n))
                         )}
                         className="border border-gray-300 rounded p-1 text-sm bg-gray-50 text-gray-800 w-32"
                         placeholder="6,15"
+                        aria-label="IDs de situação para filtro"
                       />
                     </label>
                   </div>
@@ -493,6 +511,13 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                   Buscar Pedidos
                 </button>
               </div>
+
+              {/* Aviso específico para Shopee (ajuda no processamento) */}
+              {plataformaSelecionada === 'SHOPEE' && (
+                <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded text-yellow-800 text-sm">
+                  <strong>Atenção Shopee:</strong> Caso haja erro ao processar pedidos da Shopee, verifique mapeamento de SKUs, formas de pagamento e endereços. Mesmo que os dados pareçam corretos, diferenças nos campos esperados pelo importador podem causar falhas. Abra os detalhes do pedido para ver mensagens de erro específicas.
+                </div>
+              )}
 
               {/* Barra de Filtro + Abas por Canal */}
               {pedidosEmAberto.length > 0 && (
@@ -515,6 +540,9 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                     <Search size={16} className="absolute left-3 top-3 text-gray-400" />
                     <input
                       type="text"
+                      id="filtroTexto"
+                      name="filtroTexto"
+                      aria-label="Filtrar pedidos por número, cliente ou loja"
                       placeholder="Filtrar por número do pedido, cliente, loja..."
                       value={filtroTexto}
                       onChange={(e) => setFiltroTexto(e.target.value)}
@@ -536,6 +564,9 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                       <label className="flex items-center gap-1 text-xs font-bold text-gray-500 cursor-pointer">
                         <input
                           type="checkbox"
+                          id="selectAllPedidos"
+                          name="selectAllPedidos"
+                          aria-label="Selecionar todos os pedidos listados"
                           checked={pedidosFiltrados.length > 0 && pedidosFiltrados.every(p => pedidosSelecionados.has(p.id))}
                           onChange={e => {
                             const next = new Set(pedidosSelecionados);
@@ -584,6 +615,9 @@ export const AbaImportacaoPedidosBling: React.FC<AbaImportacaoPedidosBlingProps>
                         <div className="flex items-center gap-3">
                           <input
                             type="checkbox"
+                            id={`select-pedido-${pedido.id}`}
+                            name={`select-pedido-${pedido.id}`}
+                            aria-label={`Selecionar pedido ${pedido.numero}`}
                             checked={pedidosSelecionados.has(pedido.id)}
                             onChange={(e) => {
                               const newSelecionados = new Set(pedidosSelecionados);
