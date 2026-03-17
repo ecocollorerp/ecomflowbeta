@@ -514,7 +514,62 @@ ALTER TABLE stock_pack_groups ADD COLUMN IF NOT EXISTS barcode TEXT;
 CREATE INDEX IF NOT EXISTS idx_pack_groups_name ON stock_pack_groups (name);
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 19. ROW LEVEL SECURITY (todas as tabelas abertas via anon key)
+-- 19. TABELA: nfes (Notas Fiscais Eletrônicas — cache/espelho do Bling)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS nfes (
+    id               UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    pedido_id        TEXT,
+    nfe_id           TEXT         UNIQUE,
+    chave_acesso     TEXT,
+    rastreio         TEXT,
+    transportadora   TEXT,
+    url_etiqueta     TEXT,
+    status           TEXT,
+    numero           INTEGER,
+    serie            TEXT,
+    data_emissao     TIMESTAMPTZ,
+    valor_total      REAL         DEFAULT 0,
+    cliente_nome     TEXT,
+    cliente_documento TEXT,
+    loja_id          TEXT,
+    loja_nome        TEXT,
+    lote_id          TEXT,
+    atualizado_em    TIMESTAMPTZ  DEFAULT NOW(),
+    criado_em        TIMESTAMPTZ  DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_nfes_pedido_id   ON nfes (pedido_id);
+CREATE INDEX IF NOT EXISTS idx_nfes_nfe_id      ON nfes (nfe_id);
+CREATE INDEX IF NOT EXISTS idx_nfes_lote_id     ON nfes (lote_id);
+CREATE INDEX IF NOT EXISTS idx_nfes_status      ON nfes (status);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 20. TABELA: bling_lotes_nfe (Lotes de geração de NF-e via Importação)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS bling_lotes_nfe (
+    id        TEXT         PRIMARY KEY,
+    tipo      TEXT         NOT NULL DEFAULT 'GERACAO_APENAS',
+    total     INTEGER      DEFAULT 0,
+    ok        INTEGER      DEFAULT 0,
+    fail      INTEGER      DEFAULT 0,
+    nfes      JSONB        DEFAULT '[]',
+    criado_em TIMESTAMPTZ  DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_lotes_nfe_criado_em ON bling_lotes_nfe (criado_em DESC);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Colunas adicionais em orders (Bling integration fields)
+-- ─────────────────────────────────────────────────────────────────────────────
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS bling_id      TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS bling_numero  TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS situacao_id   INTEGER;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS situacao_valor TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS loja_id       TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS loja_nome     TEXT;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 21. ROW LEVEL SECURITY (todas as tabelas abertas via anon key)
 -- ─────────────────────────────────────────────────────────────────────────────
 DO $$ DECLARE
     tbl TEXT;
@@ -529,7 +584,7 @@ BEGIN
 END $$;
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 20. VIEW: vw_dados_analiticos (BI / relatórios)
+-- 22. VIEW: vw_dados_analiticos (BI / relatórios)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE VIEW vw_dados_analiticos AS
 SELECT
