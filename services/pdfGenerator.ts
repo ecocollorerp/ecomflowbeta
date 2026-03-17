@@ -243,7 +243,9 @@ export const buildPdf = async (
         const pairData = processedData.get(i);
 
         // Determine platform-specific settings for this pair
-        const platformSettings = pairData?.isMercadoLivre ? settings.mercadoLivre : settings.shopee;
+        const platformSettings = pairData?.isTikTokShop
+            ? (settings.tikTokShop ?? settings.shopee)
+            : (pairData?.isMercadoLivre ? settings.mercadoLivre : settings.shopee);
 
         // DANFE (Odd Page)
         const isDanfeInvalid = !danfePage || danfePage === 'ERROR' || danfePage.includes('R0lGOD') || danfePage === 'SKIPPED';
@@ -277,6 +279,7 @@ export const buildPdf = async (
             const x = (width_mm - finalWidth) / 2;
             pdf.addImage(labelPage, 'PNG', x, 0, finalWidth, finalHeight, undefined, 'FAST');
             
+            // Skip footer for TikTok: SKU is already embedded in the generated label ZPL
             if (pairData && pairData.skus.length > 0) {
                 const lines: string[] = [];
                 const grouped = new Map<string, { product: StockItem | null, totalQty: number }>();

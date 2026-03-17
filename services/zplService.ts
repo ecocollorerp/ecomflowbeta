@@ -110,6 +110,17 @@ export const extractFields = async (zplPage: string, patterns: ZplSettings['rege
         if (orderIdMatch && orderIdMatch[1]) orderId = orderIdMatch[1].trim();
     } catch (e) { }
 
+    // Fallback: TikTok Shop order IDs are long numeric strings (12–20 digits).
+    // They appear in ^FD...^FS ZPL fields inside the DANFE Simplificado.
+    // The NF-e access key is 44 digits (excluded here) and NF-e number is ≤9 digits
+    // (excluded below), so matching 12–20 digit values is TikTok-safe.
+    if (!orderId) {
+        for (const fdMatch of zplPage.matchAll(/\^FD(\d{12,20})\^FS/gi)) {
+            orderId = fdMatch[1];
+            break; // use first match
+        }
+    }
+
     return { orderId, skus };
 };
 
@@ -129,7 +140,7 @@ export async function* processZplStream(
 
         yield { type: 'progress', message: 'Analisando ZPL...' };
         const rawPages = splitZpl(zplInput);
-        const { pairedZpl, extractedData } = await filterAndPairZplPages(rawPages, settings.regex, allOrders);
+        const { pairedZpl, extractedData } = await filterAndPairZplPages(rawPages, settings, allOrders);
 
         const warnings: string[] = [];
         const hasMlWithoutProperDanfe = Array.from(extractedData.values()).some(

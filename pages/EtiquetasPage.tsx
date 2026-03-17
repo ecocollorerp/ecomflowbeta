@@ -1,7 +1,7 @@
 
 import React, { useRef, useCallback, useState, useMemo, useEffect } from 'react';
 import { Settings, Printer, Trash2, X, FileText, Loader2, Image as ImageIcon, Zap, Link as LinkIcon, PlusCircle, AlertTriangle, Package, File, Eye, History, Clock, CheckCircle2, ExternalLink, ChevronDown, ChevronRight, Search, Copy, LayoutList, CalendarDays } from 'lucide-react';
-import { ZplSettings, ExtractedZplData, GeneralSettings, UiSettings, StockItem, SkuLink, User, OrderItem, ZplPlatformSettings, EtiquetaHistoryItem, EtiquetasState } from '../types';
+import { ZplSettings, ExtractedZplData, GeneralSettings, UiSettings, StockItem, SkuLink, User, OrderItem, ZplPlatformSettings, EtiquetaHistoryItem, EtiquetasState, defaultZplSettings } from '../types';
 import { buildPdf } from '../services/pdfGenerator';
 import LinkSkuModal from '../components/LinkSkuModal';
 import CreateProductFromImportModal from '../components/CreateProductFromImportModal';
@@ -131,7 +131,7 @@ const SettingsModal: React.FC<{
     extractedData: Map<number, ExtractedZplData>;
 }> = ({ isOpen, onClose, currentSettings, onSave, previews, extractedData }) => {
     const [settings, setSettings] = useState<ZplSettings>(currentSettings);
-    const [activeTab, setActiveTab] = useState<'general' | 'shopee' | 'mercadoLivre'>('general');
+    const [activeTab, setActiveTab] = useState<'general' | 'shopee' | 'mercadoLivre' | 'tikTokShop'>('general');
 
     React.useEffect(() => {
         if (isOpen) setSettings(currentSettings);
@@ -141,14 +141,16 @@ const SettingsModal: React.FC<{
         if (previews.length === 0 || extractedData.size === 0) return undefined;
 
         const targetIsMercadoLivre = activeTab === 'mercadoLivre';
+        const targetIsTikTok = activeTab === 'tikTokShop';
 
         for (let i = 0; i < previews.length; i += 2) {
             const pairData = extractedData.get(i);
-            if (pairData?.isMercadoLivre === targetIsMercadoLivre) {
+            if (targetIsTikTok && pairData?.isTikTokShop) {
                 const labelPreview = previews[i + 1];
-                if (labelPreview && labelPreview.startsWith('data:image')) {
-                    return labelPreview;
-                }
+                if (labelPreview && labelPreview.startsWith('data:image')) return labelPreview;
+            } else if (!targetIsTikTok && pairData?.isMercadoLivre === targetIsMercadoLivre) {
+                const labelPreview = previews[i + 1];
+                if (labelPreview && labelPreview.startsWith('data:image')) return labelPreview;
             }
         }
         // Fallback to first available label if no match for the active tab
@@ -161,15 +163,21 @@ const SettingsModal: React.FC<{
 
     if (!isOpen) return null;
 
-    const handlePlatformChange = (platform: 'shopee' | 'mercadoLivre', key: keyof ZplPlatformSettings, value: any) => {
-        setSettings(prev => ({ ...prev, [platform]: { ...prev[platform], [key]: value } }));
+    const handlePlatformChange = (platform: 'shopee' | 'mercadoLivre' | 'tikTokShop', key: keyof ZplPlatformSettings, value: any) => {
+        const base = platform === 'tikTokShop'
+            ? (settings.tikTokShop ?? defaultZplSettings.tikTokShop!)
+            : settings[platform];
+        setSettings(prev => ({ ...prev, [platform]: { ...base, [key]: value } }));
     };
 
-    const handlePlatformFooterChange = (platform: 'shopee' | 'mercadoLivre', key: keyof ZplPlatformSettings['footer'], value: any) => {
-        setSettings(prev => ({ ...prev, [platform]: { ...prev[platform], footer: { ...prev[platform].footer, [key]: value } } }));
+    const handlePlatformFooterChange = (platform: 'shopee' | 'mercadoLivre' | 'tikTokShop', key: keyof ZplPlatformSettings['footer'], value: any) => {
+        const base = platform === 'tikTokShop'
+            ? (settings.tikTokShop ?? defaultZplSettings.tikTokShop!)
+            : settings[platform];
+        setSettings(prev => ({ ...prev, [platform]: { ...base, footer: { ...base.footer, [key]: value } } }));
     };
 
-    const handlePresetChange = (platform: 'shopee' | 'mercadoLivre', preset: 'below' | 'above' | 'custom') => {
+    const handlePresetChange = (platform: 'shopee' | 'mercadoLivre' | 'tikTokShop', preset: 'below' | 'above' | 'custom') => {
         handlePlatformFooterChange(platform, 'positionPreset', preset);
     };
 
@@ -177,12 +185,16 @@ const SettingsModal: React.FC<{
         setSettings(prev => ({ ...prev, regex: { ...prev.regex, [key]: value } }));
     };
 
-    const renderPlatformSettings = (platform: 'shopee' | 'mercadoLivre') => (
+    const renderPlatformSettings = (platform: 'shopee' | 'mercadoLivre' | 'tikTokShop') => {
+        const platformCfg = platform === 'tikTokShop'
+            ? (settings.tikTokShop ?? defaultZplSettings.tikTokShop!)
+            : settings[platform];
+        return (
         <div className="space-y-6">
             <div>
                 <h3 className="text-lg font-semibold mb-3">Layout da Etiqueta</h3>
                 <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-700">
-                    <div><label className="text-sm font-medium">Área da Imagem da Etiqueta (%)</label><input type="number" value={settings[platform].imageAreaPercentage_even} onChange={e => handlePlatformChange(platform, 'imageAreaPercentage_even', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" /></div>
+                    <div><label className="text-sm font-medium">Área da Imagem da Etiqueta (%)</label><input type="number" value={platformCfg.imageAreaPercentage_even} onChange={e => handlePlatformChange(platform, 'imageAreaPercentage_even', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" /></div>
                 </div>
             </div>
             <div>
@@ -191,7 +203,7 @@ const SettingsModal: React.FC<{
                     <div>
                         <label className="text-sm font-medium">Posição Padrão</label>
                         <select
-                            value={settings[platform].footer.positionPreset}
+                            value={platformCfg.footer.positionPreset}
                             onChange={e => handlePresetChange(platform, e.target.value as any)}
                             className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"
                         >
@@ -201,50 +213,50 @@ const SettingsModal: React.FC<{
                         </select>
                     </div>
 
-                    {settings[platform].footer.positionPreset === 'custom' ? (
+                    {platformCfg.footer.positionPreset === 'custom' ? (
                         <>
                             <DraggableFooterEditor
-                                settings={settings[platform].footer}
+                                settings={platformCfg.footer}
                                 pageWidth_mm={settings.pageWidth}
                                 pageHeight_mm={settings.pageHeight}
-                                imageAreaPercentage={settings[platform].imageAreaPercentage_even}
+                                imageAreaPercentage={platformCfg.imageAreaPercentage_even}
                                 onChange={(key, value) => handlePlatformFooterChange(platform, key, value)}
                                 previewImageUrl={previewImageUrl}
                             />
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="text-sm font-medium">Posição X (mm)</label>
-                                    <input type="number" value={settings[platform].footer.x_position_mm.toFixed(0)} onChange={e => handlePlatformFooterChange(platform, 'x_position_mm', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" />
+                                    <input type="number" value={platformCfg.footer.x_position_mm.toFixed(0)} onChange={e => handlePlatformFooterChange(platform, 'x_position_mm', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" />
                                 </div>
                                 <div>
                                     <label className="text-sm font-medium">Posição Y (mm)</label>
-                                    <input type="number" value={settings[platform].footer.y_position_mm.toFixed(0)} onChange={e => handlePlatformFooterChange(platform, 'y_position_mm', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" />
+                                    <input type="number" value={platformCfg.footer.y_position_mm.toFixed(0)} onChange={e => handlePlatformFooterChange(platform, 'y_position_mm', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" />
                                 </div>
                             </div>
                         </>
                     ) : (
                         <div>
                             <label className="text-sm font-medium">Espaçamento (mm)</label>
-                            <input type="number" value={settings[platform].footer.spacing_mm} onChange={e => handlePlatformFooterChange(platform, 'spacing_mm', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" />
+                            <input type="number" value={platformCfg.footer.spacing_mm} onChange={e => handlePlatformFooterChange(platform, 'spacing_mm', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" />
                             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Distância entre a imagem da etiqueta e o texto do rodapé.</p>
                         </div>
                     )}
 
                     <div className="grid grid-cols-2 gap-4">
-                        <div><label className="text-sm font-medium">Tam. Fonte (pt)</label><input type="number" value={settings[platform].footer.fontSize_pt} onChange={e => handlePlatformFooterChange(platform, 'fontSize_pt', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" /></div>
-                        <div><label className="text-sm font-medium">Espaçamento (pt)</label><input type="number" value={settings[platform].footer.lineSpacing_pt} onChange={e => handlePlatformFooterChange(platform, 'lineSpacing_pt', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" /></div>
+                        <div><label className="text-sm font-medium">Tam. Fonte (pt)</label><input type="number" value={platformCfg.footer.fontSize_pt} onChange={e => handlePlatformFooterChange(platform, 'fontSize_pt', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" /></div>
+                        <div><label className="text-sm font-medium">Espaçamento (pt)</label><input type="number" value={platformCfg.footer.lineSpacing_pt} onChange={e => handlePlatformFooterChange(platform, 'lineSpacing_pt', Number(e.target.value))} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800" /></div>
                     </div>
-                    <div><label className="text-sm font-medium">Fonte</label><select value={settings[platform].footer.fontFamily} onChange={e => handlePlatformFooterChange(platform, 'fontFamily', e.target.value as any)} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"><option value="helvetica">Helvetica</option><option value="times">Times</option><option value="courier">Courier</option></select></div>
+                    <div><label className="text-sm font-medium">Fonte</label><select value={platformCfg.footer.fontFamily} onChange={e => handlePlatformFooterChange(platform, 'fontFamily', e.target.value as any)} className="mt-1 w-full p-2 border rounded-md bg-white dark:bg-gray-800"><option value="helvetica">Helvetica</option><option value="times">Times</option><option value="courier">Courier</option></select></div>
                     <div>
                         <label className="text-sm font-medium">Alinhamento do Texto</label>
                         <div className="flex gap-2 mt-1">
-                            <button onClick={() => handlePlatformFooterChange(platform, 'textAlign', 'left')} className={`px-3 py-1 text-sm rounded-md border ${settings[platform].footer.textAlign === 'left' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Esquerda</button>
-                            <button onClick={() => handlePlatformFooterChange(platform, 'textAlign', 'center')} className={`px-3 py-1 text-sm rounded-md border ${settings[platform].footer.textAlign === 'center' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Centro</button>
-                            <button onClick={() => handlePlatformFooterChange(platform, 'textAlign', 'right')} className={`px-3 py-1 text-sm rounded-md border ${settings[platform].footer.textAlign === 'right' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Direita</button>
+                            <button onClick={() => handlePlatformFooterChange(platform, 'textAlign', 'left')} className={`px-3 py-1 text-sm rounded-md border ${platformCfg.footer.textAlign === 'left' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Esquerda</button>
+                            <button onClick={() => handlePlatformFooterChange(platform, 'textAlign', 'center')} className={`px-3 py-1 text-sm rounded-md border ${platformCfg.footer.textAlign === 'center' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Centro</button>
+                            <button onClick={() => handlePlatformFooterChange(platform, 'textAlign', 'right')} className={`px-3 py-1 text-sm rounded-md border ${platformCfg.footer.textAlign === 'right' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white'}`}>Direita</button>
                         </div>
                     </div>
-                    <div><label className="flex items-center"><input type="checkbox" checked={settings[platform].footer.multiColumn} onChange={e => handlePlatformFooterChange(platform, 'multiColumn', e.target.checked)} className="h-4 w-4 rounded" /><span className="ml-2 text-sm">Dividir SKUs em colunas se necessário</span></label></div>
-                    <div><label className="text-sm font-medium">Template</label><input type="text" value={settings[platform].footer.template} onChange={e => handlePlatformFooterChange(platform, 'template', e.target.value)} className="mt-1 w-full p-2 border rounded-md font-mono text-sm bg-white dark:bg-gray-800" /><p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Variáveis: {'{sku}'}, {'{name}'}, {'{qty}'}.</p></div>
+                    <div><label className="flex items-center"><input type="checkbox" checked={platformCfg.footer.multiColumn} onChange={e => handlePlatformFooterChange(platform, 'multiColumn', e.target.checked)} className="h-4 w-4 rounded" /><span className="ml-2 text-sm">Dividir SKUs em colunas se necessário</span></label></div>
+                    <div><label className="text-sm font-medium">Template</label><input type="text" value={platformCfg.footer.template} onChange={e => handlePlatformFooterChange(platform, 'template', e.target.value)} className="mt-1 w-full p-2 border rounded-md font-mono text-sm bg-white dark:bg-gray-800" /><p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Variáveis: {'{sku}'}, {'{name}'}, {'{qty}'}.</p></div>
                 </div>
             </div>
         </div>
@@ -260,6 +272,7 @@ const SettingsModal: React.FC<{
                         <button onClick={() => setActiveTab('general')} className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 ${activeTab === 'general' ? 'border-blue-500 text-blue-600' : 'border-transparent'}`}>Geral</button>
                         <button onClick={() => setActiveTab('shopee')} className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 ${activeTab === 'shopee' ? 'border-blue-500 text-blue-600' : 'border-transparent'}`}>Shopee</button>
                         <button onClick={() => setActiveTab('mercadoLivre')} className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 ${activeTab === 'mercadoLivre' ? 'border-blue-500 text-blue-600' : 'border-transparent'}`}>Mercado Livre</button>
+                        <button onClick={() => setActiveTab('tikTokShop')} className={`px-4 py-2 text-sm font-medium rounded-t-lg border-b-2 ${activeTab === 'tikTokShop' ? 'border-blue-500 text-blue-600' : 'border-transparent'}`}>🎵 TikTok Shop</button>
                     </div>
                 </div>
 
@@ -307,6 +320,7 @@ const SettingsModal: React.FC<{
                     )}
                     {activeTab === 'shopee' && renderPlatformSettings('shopee')}
                     {activeTab === 'mercadoLivre' && renderPlatformSettings('mercadoLivre')}
+                    {activeTab === 'tikTokShop' && renderPlatformSettings('tikTokShop')}
                 </div>
                 <div className="mt-6 flex justify-end gap-3 border-t pt-4"><button onClick={onClose} className="px-4 py-2 rounded-md bg-gray-50 dark:bg-gray-700">Cancelar</button><button onClick={() => { onSave(settings); onClose(); }} className="px-4 py-2 rounded-md bg-blue-600 dark:bg-blue-500 text-white font-semibold">Salvar</button></div>
             </div>
@@ -775,7 +789,9 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                                     if (!includeLabel && index % 2 !== 0) return null;
                                     const isEvenPage = index % 2 !== 0;
                                     const pairData = extractedData.get(Math.floor(index / 2) * 2);
-                                    const platformSettings = pairData?.isMercadoLivre ? settings.mercadoLivre : settings.shopee;
+                                    const platformSettings = pairData?.isTikTokShop
+                                        ? (settings.tikTokShop ?? settings.shopee)
+                                        : (pairData?.isMercadoLivre ? settings.mercadoLivre : settings.shopee);
 
                                     // Prepara as linhas de pré-visualização para o rodapé usando agrupamento por mestre
                                     const previewLines: string[] = [];
@@ -817,6 +833,11 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                                             </div>
                                             {isEvenPage && pairData && (
                                                 <div className="text-center font-semibold text-xs text-gray-800 dark:text-gray-100 p-2 border-t mt-1 bg-gray-50 dark:bg-gray-800/50 rounded-b">
+                                                    {pairData.isTikTokShop && (
+                                                        <div className="mb-1">
+                                                            <span className="bg-black text-white text-[9px] font-black px-2 py-0.5 rounded">🎵 TikTok Shop</span>
+                                                        </div>
+                                                    )}
                                                     {previewLines.length > 0 ? (
                                                         previewLines.map((line, lIdx) => (
                                                             <div key={lIdx} className="truncate" title={line}>{line}</div>

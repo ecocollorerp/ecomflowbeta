@@ -670,7 +670,20 @@ export async function fetchNfeSaida(
           linkXml: n.linkXml || n.xml || undefined,
           numeroVenda: n.numeroPedidoCompra || rawNumeroLoja || undefined,
           numeroLoja: rawNumeroLoja,
-          idVenda: n.pedido?.id || n.idPedidoVenda || undefined,
+          idVenda:
+            n.vendas?.[0]?.id ||
+            n.pedidoVenda?.id ||
+            n.pedido?.id ||
+            n.idPedidoVenda ||
+            n.idVenda
+              ? Number(
+                  n.vendas?.[0]?.id ||
+                    n.pedidoVenda?.id ||
+                    n.pedido?.id ||
+                    n.idPedidoVenda ||
+                    n.idVenda
+                )
+              : undefined,
           loja:
             n.loja?.descricao || n.vendedor?.descricao || n.canal || undefined,
           lojaId: n.loja?.id ? Number(n.loja.id) : undefined,
@@ -902,7 +915,7 @@ export async function enrichNfeSaidaBatch(
   // 2. Buscar pedidos de venda em massa (paginado)
   const pedidosMap = new Map<
     string,
-    { rastreamento?: string; loja?: string; lojaId?: number; numeroLoja?: string }
+    { rastreamento?: string; loja?: string; lojaId?: number; numeroLoja?: string; numero?: string }
   >();
 
   let pagina = 1;
@@ -927,8 +940,9 @@ export async function enrichNfeSaidaBatch(
         const lojaDesc = p.loja?.descricao || p.loja?.nome || undefined;
         const lojaId = p.loja?.id ? Number(p.loja.id) : undefined;
         const numeroLoja = p.numeroLoja || p.numeroPedidoLoja || undefined;
+        const numero = p.numero ? String(p.numero) : undefined;
 
-        pedidosMap.set(id, { rastreamento, loja: lojaDesc, lojaId, numeroLoja });
+        pedidosMap.set(id, { rastreamento, loja: lojaDesc, lojaId, numeroLoja, numero });
       }
 
       if (pedidos.length < 100) break;
@@ -951,7 +965,11 @@ export async function enrichNfeSaidaBatch(
 
     // Verifica se precisa de enriquecimento
     const needsEnrich =
-      !nfe.rastreamento || !nfe.loja || !nfe.linkDanfe || !nfe.chaveAcesso;
+      !nfe.idVenda ||
+      !nfe.rastreamento ||
+      !nfe.loja ||
+      !nfe.linkDanfe ||
+      !nfe.chaveAcesso;
     if (!needsEnrich) continue;
 
     // Tenta via pedidosMap (rápido, sem chamada extra)
@@ -964,24 +982,39 @@ export async function enrichNfeSaidaBatch(
         rastreamento: pedidoData.rastreamento || nfe.rastreamento,
         loja: pedidoData.loja || nfe.loja,
         lojaId: pedidoData.lojaId || nfe.lojaId,
-        numeroLoja: pedidoData.numeroLoja || nfe.numeroLoja
+        numeroLoja: pedidoData.numeroLoja || nfe.numeroLoja,
+        numeroVenda: pedidoData.numero || nfe.numeroVenda
       };
       enrichCount++;
     }
 
-    // Se ainda falta linkDanfe/chaveAcesso, faz chamada individual ao detalhe da NF-e
-    if (!enriched[i].linkDanfe || !enriched[i].chaveAcesso) {
+    // Se ainda falta idVenda/linkDanfe/chaveAcesso/rastreamento, faz chamada individual ao detalhe da NF-e
+    if (!enriched[i].idVenda || !enriched[i].linkDanfe || !enriched[i].chaveAcesso || !enriched[i].rastreamento) {
       try {
         const det = await fetchNfeDetalhe(token, nfe.id);
         const d = det?.data || det;
         if (d) {
+          // Extrair rastreamento do detalhe da NF-e (transporte.objeto)
+          const transporte = d.transporte || {};
+          const rastreamentoDet =
+            transporte.objeto?.codigoRastreamento ||
+            transporte.volumes?.[0]?.codigoRastreamento ||
+            d.pedido?.transporte?.codigoRastreamento;
+
           enriched[i] = {
             ...enriched[i],
             linkDanfe: d.linkDanfe || d.linkPDF || enriched[i].linkDanfe,
             linkXml: d.linkXml || d.xml || enriched[i].linkXml,
             chaveAcesso: d.chaveAcesso || enriched[i].chaveAcesso,
             situacao: d.situacao ?? enriched[i].situacao,
-            situacaoDescr: NFE_SIT_MAP[d.situacao] || enriched[i].situacaoDescr
+            situacaoDescr: NFE_SIT_MAP[d.situacao] || enriched[i].situacaoDescr,
+            rastreamento: rastreamentoDet || enriched[i].rastreamento,
+            idTransportador:
+              transporte.contato?.id ? Number(transporte.contato.id) : enriched[i].idTransportador,
+            numeroPedidoLoja:
+              d.intermediador?.numeroPedido || d.numeroPedidoLoja || enriched[i].numeroPedidoLoja,
+            numeroLoja:
+              d.intermediador?.numeroPedido || d.numeroPedidoLoja || enriched[i].numeroLoja
           };
           // Se idVenda não existia, extrair agora
           if (!enriched[i].idVenda) {
@@ -996,7 +1029,24 @@ export async function enrichNfeSaidaBatch(
                   pd.rastreamento || enriched[i].rastreamento;
                 enriched[i].loja = pd.loja || enriched[i].loja;
                 enriched[i].lojaId = pd.lojaId || enriched[i].lojaId;
+                enriched[i].numeroLoja = pd.numeroLoja || enriched[i].numeroLoja;
+                enriched[i].numeroVenda = pd.numero || enriched[i].numeroVenda;
               }
+            }
+          }
+
+          // Se rastreamento ainda não encontrado, tenta via objetos-postagem
+          if (!enriched[i].rastreamento) {
+            const numLoja = enriched[i].numeroPedidoLoja || enriched[i].numeroLoja ||
+              d.intermediador?.numeroPedido || d.numeroPedidoLoja;
+            if (numLoja || enriched[i].idVenda) {
+              try {
+                const objetos = await fetchObjetosPostagem(token, numLoja || "", enriched[i].idVenda);
+                const obj = objetos[0];
+                if (obj?.codigoRastreamento) {
+                  enriched[i].rastreamento = obj.codigoRastreamento;
+                }
+              } catch (_) { /* skip */ }
             }
           }
           enrichCount++;
@@ -2120,29 +2170,34 @@ export async function searchNfeByOrder(
 
 /**
  * Busca objetos de postagem associados a um pedido.
+ * Tenta com numeroPedidoLoja primeiro, depois com idVenda.
  */
 export async function fetchObjetosPostagem(
   apiKey: string,
-  numeroPedido: string
+  numeroPedidoLoja: string,
+  idVenda?: string | number
 ): Promise<any[]> {
   const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
-  try {
-    const params = { numeroPedido };
-    const resp = await fetchWithRetry(
-      `/api/bling/objetos-postagem?${new URLSearchParams(params).toString()}`,
-      {
-        headers: { Authorization: authH, Accept: "application/json" }
+  const buscas = [numeroPedidoLoja, idVenda ? String(idVenda) : ""].filter(Boolean);
+  for (const id of buscas) {
+    try {
+      const resp = await fetchWithRetry(
+        `/api/bling/objetos-postagem?numeroPedidoLoja=${encodeURIComponent(id)}`,
+        {
+          headers: { Authorization: authH, Accept: "application/json" }
+        }
+      );
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        console.warn(`[fetchObjetosPostagem] Status ${resp.status} para ${id}:`, err);
+        continue;
       }
-    );
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      console.warn(`[fetchObjetosPostagem] Status ${resp.status}:`, err);
-      return [];
+      const data = await resp.json();
+      const objetos = data?.data || [];
+      if (objetos.length > 0) return objetos;
+    } catch (e) {
+      console.warn(`[fetchObjetosPostagem] Erro para ${id}:`, e);
     }
-    const data = await resp.json();
-    return data?.data || [];
-  } catch (e) {
-    console.warn("[fetchObjetosPostagem] Erro:", e);
-    return [];
   }
+  return [];
 }

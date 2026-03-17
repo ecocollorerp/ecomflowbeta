@@ -841,6 +841,7 @@ export interface ZplSettings {
   };
   shopee: ZplPlatformSettings;
   mercadoLivre: ZplPlatformSettings;
+  tikTokShop?: ZplPlatformSettings;
 }
 
 export const defaultZplSettings: ZplSettings = {
@@ -885,6 +886,21 @@ export const defaultZplSettings: ZplSettings = {
       multiColumn: false,
       template: "{qty} un - SKU: {sku}"
     }
+  },
+  tikTokShop: {
+    imageAreaPercentage_even: 100,
+    footer: {
+      positionPreset: "below",
+      x_position_mm: 3,
+      y_position_mm: 60,
+      spacing_mm: 5,
+      fontSize_pt: 10,
+      lineSpacing_pt: 12,
+      fontFamily: "helvetica",
+      textAlign: "left",
+      multiColumn: false,
+      template: "{qty}x {sku}"
+    }
   }
 };
 
@@ -894,6 +910,7 @@ export interface ExtractedZplData {
   hasDanfe?: boolean;
   isMercadoLivre?: boolean;
   containsDanfeInLabel?: boolean;
+  isTikTokShop?: boolean;
 }
 
 export interface EtiquetaHistoryItem {

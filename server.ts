@@ -3391,9 +3391,12 @@ async function startServer() {
       }
 
       const paginaUI = parseInt(pagina || "1");
-      // Deca-Fetch: UI Pág 1 -> Bling 1..10 | UI Pág 2 -> Bling 11..20
-      const startPage = paginaUI * 10 - 9;
+      const { limite: limiteParam } = req.query as any;
+      // Quantidade de notas solicitada pelo usuário (padrão 1000)
+      const limiteTotal = Math.min(Math.max(parseInt(limiteParam || "1000"), 100), 5000);
       const limitPerReq = 100;
+      const blingPagesNeeded = Math.ceil(limiteTotal / limitPerReq);
+      const startPage = (paginaUI - 1) * blingPagesNeeded + 1;
 
       const fetchPage = async (p: number) => {
         const params = new URLSearchParams();
@@ -3414,14 +3417,16 @@ async function startServer() {
       };
 
       console.log(
-        `📋 [NFe Saída] UI Pág ${paginaUI} -> Deca-Fetch Bling p${startPage}..p${startPage + 9}`
+        `📋 [NFe Saída] UI Pág ${paginaUI} | Limite: ${limiteTotal} | Bling p${startPage}..p${startPage + blingPagesNeeded - 1}`
       );
 
-      const pagesToFetch = Array.from({ length: 10 }, (_, i) => startPage + i);
+      const pagesToFetch = Array.from({ length: blingPagesNeeded }, (_, i) => startPage + i);
       const results = await Promise.all(pagesToFetch.map((p) => fetchPage(p)));
-      const notas = results.flat();
+      const allNotas = results.flat();
+      // Cortar ao limite solicitado
+      const notas = allNotas.slice(0, limiteTotal);
 
-      const lastPageFetched = results[9] || [];
+      const lastPageFetched = results[results.length - 1] || [];
       res.json({
         success: true,
         notas,
@@ -3596,65 +3601,91 @@ async function startServer() {
       }
 
       const nfeId = req.params.id;
-      const { type, numeroPedidoLoja: _pedidoLojaParam } = req.query as any;
+      const { type, numeroPedidoLoja: _pedidoLojaParam, idVenda: _idVendaParam } = req.query as any;
       let numeroPedidoLoja: string = String(_pedidoLojaParam || "").trim();
 
       console.log(
-        `📥 [NFe PDF] Iniciando fluxo para ID ${nfeId} | Pedido: ${numeroPedidoLoja || "(auto)"} | Tipo: ${type}`
+        `📥 [NFe PDF] Iniciando fluxo para ID ${nfeId} | Pedido: ${numeroPedidoLoja || "(auto)"} | Tipo: ${type || "normal"}`
       );
 
-      // Se numeroPedidoLoja não veio na query, tenta extrair o idVenda do NF-e via Bling
-      let idVendaBling = "";
+      // Se idVenda veio como query param, usa direto
+      let idVendaBling = String(_idVendaParam || "").trim();
+
+      // Para tipos que precisam de logística, busca o detalhe da NF-e para extrair idVenda
       if (
         type === "transport_label" ||
         type === "simplified" ||
-        type === "combined"
+        type === "combined" ||
+        !type ||
+        type === "normal"
       ) {
-        try {
-          const nfeLookup = await fetch(
-            `https://www.bling.com.br/Api/v3/nfe/${nfeId}`,
-            {
-              headers: { Authorization: token, Accept: "application/json" }
-            }
-          );
-          if (nfeLookup.ok) {
-            const nfeLookupData = await nfeLookup.json();
-            const d = nfeLookupData?.data;
-            const vendas = d?.vendas;
-            if (Array.isArray(vendas) && vendas.length > 0) {
-              idVendaBling = String(vendas[0].id || "").trim();
+        // Sempre busca detalhe se não temos idVenda (para logística) ou se é DANFE normal (para linkDanfe)
+        if (!idVendaBling || !numeroPedidoLoja || type === "normal" || !type) {
+          try {
+            const nfeLookup = await fetch(
+              `https://www.bling.com.br/Api/v3/nfe/${nfeId}`,
+              {
+                headers: { Authorization: token, Accept: "application/json" }
+              }
+            );
+            if (nfeLookup.ok) {
+              const nfeLookupData = await nfeLookup.json();
+              const d = nfeLookupData?.data;
+
+              // Extrai idVenda de múltiplas estruturas possíveis do Bling v3
+              if (!idVendaBling) {
+                const vendas = d?.vendas;
+                const candidateId =
+                  (Array.isArray(vendas) && vendas.length > 0 ? vendas[0].id : null) ||
+                  d?.pedidoVenda?.id ||
+                  d?.pedido?.id ||
+                  d?.idPedidoVenda ||
+                  d?.idVenda;
+                if (candidateId) {
+                  idVendaBling = String(candidateId).trim();
+                }
+              }
+
+              // Extrai numeroPedidoLoja
               if (!numeroPedidoLoja) {
+                const vendas = d?.vendas;
                 numeroPedidoLoja = String(
-                  vendas[0].numeroPedidoLoja || vendas[0].numero || ""
+                  d?.intermediador?.numeroPedido ||
+                  d?.numeroPedidoLoja ||
+                  (Array.isArray(vendas) && vendas.length > 0 ? vendas[0].numeroPedidoLoja || vendas[0].numero : null) ||
+                  d?.pedido?.numeroLoja ||
+                  ""
                 ).trim();
               }
+
               console.log(
-                `🔍 [NFe PDF] idVenda=${idVendaBling}, numeroPedidoLoja=${numeroPedidoLoja}`
+                `🔍 [NFe PDF] idVenda=${idVendaBling || "(vazio)"}, numeroPedidoLoja=${numeroPedidoLoja || "(vazio)"}`
               );
             }
+          } catch (lookupErr: any) {
+            console.warn(
+              `⚠️ [NFe PDF] Falha ao buscar dados do NF-e:`,
+              lookupErr.message
+            );
           }
-        } catch (lookupErr: any) {
-          console.warn(
-            `⚠️ [NFe PDF] Falha ao buscar dados do NF-e:`,
-            lookupErr.message
-          );
         }
       }
 
       let pdfUrl = "";
 
-      // ERRO 2 CORRIGIDO: Se for etiqueta ou simplificada, BUSCA NA LOGÍSTICA
+      // Logística: busca URL correta dependendo do tipo solicitado
       if (
         type === "transport_label" ||
         type === "simplified" ||
         type === "combined"
       ) {
         console.log(
-          `🔍 [Logística] Buscando etiqueta para idVenda=${idVendaBling || numeroPedidoLoja}...`
+          `🔍 [Logística] Buscando ${type} para idVenda=${idVendaBling || "(vazio)"}, numeroPedidoLoja=${numeroPedidoLoja || "(vazio)"}...`
         );
 
-        // Tentativa 1: API correta GET /logisticas/etiquetas?formato=PDF&idsVendas[]=ID
-        if (idVendaBling) {
+        // /logisticas/etiquetas retorna ETIQUETA DE TRANSPORTE (não DANFE simplificada!)
+        // Só usar para transport_label
+        if (type === "transport_label" && idVendaBling) {
           try {
             const etiqUrl = `https://www.bling.com.br/Api/v3/logisticas/etiquetas?formato=PDF&idsVendas[]=${idVendaBling}`;
             const etiqResp = await fetch(etiqUrl, {
@@ -3669,96 +3700,108 @@ async function startServer() {
               }
             }
           } catch (e: any) {
-            console.warn(`⚠️ [Logística] Fallback — /logisticas/etiquetas falhou:`, e.message);
+            console.warn(`⚠️ [Logística] /logisticas/etiquetas falhou:`, e.message);
           }
         }
 
-        // Tentativa 2: Fallback via objetos-postagem (para urlDanfeSimplificado etc.)
+        // objetos-postagem: fonte principal para simplified/combined, fallback para transport_label
         if (!pdfUrl) {
-          const idBusca = idVendaBling || numeroPedidoLoja;
-          const objUrl = `https://www.bling.com.br/Api/v3/objetos-postagem?numeroPedidoLoja=${idBusca}`;
-          const objResp = await fetch(objUrl, {
-            headers: { Authorization: token, Accept: "application/json" }
-          });
+          // Tenta múltiplas buscas: primeiro por idVenda, depois por numeroPedidoLoja
+          const buscas = [idVendaBling, numeroPedidoLoja].filter(Boolean);
+          let objeto: any = null;
 
-          if (objResp.ok) {
-            const objData = await objResp.json();
-            const objeto = objData?.data?.[0];
-
-            if (objeto) {
-              console.log(
-                `✅ [Logística] Objeto encontrado. Rastreio: ${objeto.codigoRastreamento}`
-              );
-
-              // Define a URL correta baseada no tipo solicitado
-              if (type === "transport_label") {
-                pdfUrl = objeto.urlEtiqueta;
-              } else if (type === "combined") {
-                pdfUrl = objeto.urlEtiquetaDanfe;
-              } else {
-                pdfUrl = objeto.urlDanfeSimplificado;
+          for (const idBusca of buscas) {
+            if (objeto) break;
+            try {
+              const objUrl = `https://www.bling.com.br/Api/v3/objetos-postagem?numeroPedidoLoja=${idBusca}`;
+              const objResp = await fetch(objUrl, {
+                headers: { Authorization: token, Accept: "application/json" }
+              });
+              if (objResp.ok) {
+                const objData = await objResp.json();
+                objeto = objData?.data?.[0];
               }
+            } catch (e: any) {
+              console.warn(`⚠️ [Logística] objetos-postagem com ${idBusca} falhou:`, e.message);
+            }
+          }
 
-              // Persistência na tabela 'nfes' via Supabase
-              if (numeroPedidoLoja) {
-                try {
-                  const nfeResp = await fetch(
-                    `https://www.bling.com.br/Api/v3/nfe/${nfeId}`,
-                    {
-                      headers: {
-                        Authorization: token,
-                        Accept: "application/json"
-                      }
+          if (objeto) {
+            console.log(
+              `✅ [Logística] Objeto encontrado. Rastreio: ${objeto.codigoRastreamento}`
+            );
+
+            // Define a URL correta baseada no tipo solicitado
+            if (type === "transport_label") {
+              pdfUrl = objeto.urlEtiqueta;
+            } else if (type === "combined") {
+              pdfUrl = objeto.urlEtiquetaDanfe;
+            } else {
+              pdfUrl = objeto.urlDanfeSimplificado;
+            }
+
+            // Persistência na tabela 'nfes' via Supabase
+            if (numeroPedidoLoja) {
+              try {
+                const nfeResp = await fetch(
+                  `https://www.bling.com.br/Api/v3/nfe/${nfeId}`,
+                  {
+                    headers: {
+                      Authorization: token,
+                      Accept: "application/json"
                     }
-                  );
-                  const nfeData = await nfeResp.json();
-                  const chave = nfeData?.data?.chaveAcesso;
+                  }
+                );
+                const nfeData = await nfeResp.json();
+                const chave = nfeData?.data?.chaveAcesso;
 
-                  await supabase
-                    .from("nfes")
-                    .upsert(
-                      {
-                        pedido_id: numeroPedidoLoja,
-                        nfe_id: nfeId,
-                        chave_acesso: chave,
-                        rastreio: objeto.codigoRastreamento,
-                        transportadora:
-                          objeto.transporte?.transportadora?.nome ||
-                          "Não informada",
-                        url_etiqueta: pdfUrl,
-                        atualizado_em: new Date().toISOString()
-                      },
-                      { onConflict: "pedido_id" }
-                    );
+                await supabase
+                  .from("nfes")
+                  .upsert(
+                    {
+                      pedido_id: numeroPedidoLoja,
+                      nfe_id: nfeId,
+                      chave_acesso: chave,
+                      rastreio: objeto.codigoRastreamento,
+                      transportadora:
+                        objeto.transporte?.transportadora?.nome ||
+                        "Não informada",
+                      url_etiqueta: pdfUrl,
+                      atualizado_em: new Date().toISOString()
+                    },
+                    { onConflict: "pedido_id" }
+                  );
 
-                  console.log(
-                    `💾 [Supabase] Dados de logística sincronizados na tabela 'nfes'`
-                  );
-                } catch (dbErr: any) {
-                  console.error(
-                    `⚠️ [Supabase] Falha ao salvar em nfes:`,
-                    dbErr.message
-                  );
-                }
+                console.log(
+                  `💾 [Supabase] Dados de logística sincronizados na tabela 'nfes'`
+                );
+              } catch (dbErr: any) {
+                console.error(
+                  `⚠️ [Supabase] Falha ao salvar em nfes:`,
+                  dbErr.message
+                );
               }
             }
           }
         } // fim if (!pdfUrl) — fallback objetos-postagem
 
-        // Se a logística ainda não gerou o rastreio, retornamos 404 claro
-        if (!pdfUrl && (type === "transport_label" || type === "combined")) {
+        // Se a logística falhou, retorna 404 claro (não cair no fallback de linkDanfe)
+        if (!pdfUrl) {
           console.warn(
-            `⚠️ [Logística] Etiqueta ainda não disponível no Bling para o pedido ${numeroPedidoLoja}`
+            `⚠️ [Logística] ${type} não disponível no Bling para o pedido ${numeroPedidoLoja || nfeId}`
           );
           return res.status(404).json({
             error: "Logística Pendente",
-            message:
-              "O código de rastreio ou etiqueta ainda não foi gerado no Bling."
+            message: type === "simplified"
+              ? "A DANFE Simplificada ainda não foi gerada. Verifique se o objeto logístico existe no Bling."
+              : type === "combined"
+                ? "O documento combinado (DANFE + Etiqueta) ainda não foi gerado no Bling."
+                : "O código de rastreio ou etiqueta ainda não foi gerado no Bling."
           });
         }
       }
 
-      // Se for DANFE Normal ou fallback seguro (apenas se for simplificada e logística falhar)
+      // DANFE Normal (linkDanfe da NF-e) — NÃO é fallback para simplified/transport_label/combined
       if (!pdfUrl) {
         const nfeResp = await fetch(
           `https://www.bling.com.br/Api/v3/nfe/${nfeId}`,
@@ -3844,9 +3887,9 @@ async function startServer() {
       let zplResult = dataDirect?.data?.zpl || dataDirect?.zpl || null;
 
       // 2. Busca via Objeto Logístico (usando Pedido se fornecido)
-      if (!zplResult) {
-        console.log(`🔍 [NFe Etiqueta] Fallback: buscando objeto logístico...`);
-        let idBuscaLogistica = numeroPedidoLoja || nfeId;
+      if (!zplResult && numeroPedidoLoja) {
+        console.log(`🔍 [NFe Etiqueta] Fallback: buscando objeto logístico via pedido ${numeroPedidoLoja}...`);
+        const idBuscaLogistica = numeroPedidoLoja;
 
         const objUrl = `https://www.bling.com.br/Api/v3/objetos-postagem?numeroPedidoLoja=${idBuscaLogistica}`;
         const objResp = await fetch(objUrl, {
@@ -4956,6 +4999,15 @@ async function startServer() {
 
       const nfe = payload?.data || payload;
       if (nfe?.id) {
+        const idVendaWebhook =
+          nfe.venda?.id ||
+          nfe.vendas?.[0]?.id ||
+          nfe.pedidoVenda?.id ||
+          nfe.pedido?.id ||
+          nfe.idPedidoVenda ||
+          nfe.idVenda ||
+          "";
+
         // Persiste/Atualiza na tabela bling_nfe
         const { error } = await (supabase as any).from("bling_nfe").upsert(
           {
@@ -4968,7 +5020,7 @@ async function startServer() {
             valor_total: nfe.valor_total || 0,
             chave_acesso: nfe.chave_acesso || "",
             link_danfe: nfe.link_danfe || "",
-            id_venda: String(nfe.venda?.id || ""),
+            id_venda: String(idVendaWebhook),
             last_sync: new Date().toISOString()
           },
           { onConflict: "id" }

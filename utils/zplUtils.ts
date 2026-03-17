@@ -28,6 +28,14 @@ export const simpleHash = (str: string): string => {
 export const classifyPage = (zplPage: string): 'danfe' | 'label' | 'other' => {
     const upperZpl = zplPage.toUpperCase();
 
+    // GFA-based labels: TikTok Shop (and similar) embed the full label as a bitmap
+    // using ^GFA (Graphic Field Array). These pages have no DANFE text at all.
+    // Must be classified as 'label', NOT 'other', so the pairing loop doesn't consume them.
+    const isGfaLabel =
+        upperZpl.includes('^GFA,') &&
+        !upperZpl.includes('DANFE SIMPLIFICADO') &&
+        !upperZpl.includes('CHAVE DE ACESSO');
+
     // A page is a shipping label if it contains carrier identifiers, specific commands, or ML-specific fields.
     // Check this FIRST.
     const isLabelCandidate =
@@ -39,6 +47,7 @@ export const classifyPage = (zplPage: string): 'danfe' | 'label' | 'other' => {
         upperZpl.includes('KANGU') ||
         upperZpl.includes('TOTAL EXPRESS') ||
         upperZpl.includes('^XG') || // Command to recall a graphic, common in carrier labels.
+        isGfaLabel || // TikTok Shop and other GFA-only labels
         (upperZpl.includes('^FX LOGO_MELI ^FS') && upperZpl.includes('SHIPMENT_NUMBER_BAR_CODE'));
 
     if (isLabelCandidate) {
@@ -65,10 +74,11 @@ export const classifyPage = (zplPage: string): 'danfe' | 'label' | 'other' => {
  * @returns A promise that resolves to an object with the visually paired ZPL and the full extracted data.
  */
 export const filterAndPairZplPages = async (
-    rawPages: string[], 
-    regex: ZplSettings['regex'],
+    rawPages: string[],
+    settings: ZplSettings,
     allOrders: OrderItem[]
 ): Promise<{ pairedZpl: string[]; extractedData: Map<number, ExtractedZplData> }> => {
+    const regex = settings.regex;
     
     const classifiedPages = rawPages.map(p => ({ zpl: p, type: classifyPage(p) }));
     
@@ -111,7 +121,19 @@ export const filterAndPairZplPages = async (
         const pairIndex = pairedZpl.length;
         pairedZpl.push(visualDanfe, visualLabel);
 
-        const finalData: ExtractedZplData = { skus: [], hasDanfe: !!danfePage };
+        const finalData: ExtractedZplData = {
+            skus: [],
+            hasDanfe: !!danfePage,
+        };
+
+        // Detect TikTok Shop: the TikTok-provided label is a full GFA bitmap
+        // paired directly after a DANFE Simplificado in the ZPL file.
+        // We set the flag so the UI can display the badge and apply the right settings.
+        if (labelPage && labelPage.includes('^GFA,') &&
+                danfePage && danfePage.toUpperCase().includes('DANFE SIMPLIFICADO')) {
+            finalData.isTikTokShop = true;
+        }
+
         let dataExtracted = false;
 
         if (labelPage) {
