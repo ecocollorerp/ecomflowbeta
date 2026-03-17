@@ -1291,8 +1291,15 @@ export interface PedidoOverride {
 // ─── Lote de NF-e gerado na Importação ───────────────────────────────────────
 export interface LoteNfeItem {
   pedidoVendaId: string;
+  pedidoNumero?: string;
   nfeId?: string;
   nfeNumero?: string;
+}
+
+export interface LoteNfeFalha {
+  pedidoVendaId: string;
+  pedidoNumero?: string;
+  error: string;
 }
 
 export interface LoteNfe {
@@ -1303,6 +1310,7 @@ export interface LoteNfe {
   ok: number;
   fail: number;
   nfes: LoteNfeItem[];
+  falhas?: LoteNfeFalha[];
 }
 
 // ─── Lote de etiquetas ZPL gerado ────────────────────────────────────────────

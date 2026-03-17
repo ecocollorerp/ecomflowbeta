@@ -312,7 +312,8 @@ export class ImportacaoControllerService {
               // Checa etiqueta
               if (apenasComEtiqueta) {
                 const temRastreio =
-                  p?.transporte?.codigoRastreamento?.length > 0;
+                  p?.transporte?.codigoRastreamento?.length > 0 ||
+                  p?.transporte?.volumes?.[0]?.codigoRastreamento?.length > 0;
                 if (temRastreio) todosOsPedidos.push(p);
               } else {
                 todosOsPedidos.push(p);
@@ -356,7 +357,11 @@ export class ImportacaoControllerService {
 
           let origem: "SHOPEE" | "MERCADO_LIVRE" | "SITE" | "OUTRO" = "OUTRO";
           const lojaName = pedido?.loja?.descricao || pedido?.loja?.nome || "";
-          const canalStr = (lojaName || pedido?.canal?.descricao || "").toUpperCase();
+          const canalStr = (
+            lojaName ||
+            pedido?.canal?.descricao ||
+            ""
+          ).toUpperCase();
           if (canalStr.includes("MERCADO")) origem = "MERCADO_LIVRE";
           else if (canalStr.includes("SHOPEE")) origem = "SHOPEE";
           else if (canalStr.includes("SITE")) origem = "SITE";
@@ -383,7 +388,10 @@ export class ImportacaoControllerService {
             })),
             total: pedido.total || 0,
             status: pedido.situacao?.descricao || "Em aberto",
-            rastreamento: pedido?.transporte?.codigoRastreamento || "",
+            rastreamento:
+              pedido?.transporte?.codigoRastreamento ||
+              pedido?.transporte?.volumes?.[0]?.codigoRastreamento ||
+              "",
             venda_origem: pedido?.loja?.nome || "N/A",
             id_pedido_loja: numeroLojaOriginal,
             jaImportado: false

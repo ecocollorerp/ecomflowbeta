@@ -30,6 +30,7 @@ import {
   fetchNfePdf,
   fetchLogisticaEtiquetas,
   enrichNfeSaida,
+  enrichNfeSaidaBatch,
   atualizarNfe,
   searchNfeByOrder,
   fetchObjetosPostagem,
@@ -3027,44 +3028,51 @@ const BlingPage: React.FC<BlingPageProps> = ({
       const token = await getValidToken();
       if (!token) return;
 
-      const enrichedList = [...notasList];
-      let changed = false;
-
-      // Processa em blocos de 5 para não travar e respeitar rate limits
-      for (let i = 0; i < enrichedList.length; i++) {
-        const nfe = enrichedList[i];
-
-        // Só enriquece se faltar dados críticos
-        const isMissingData =
-          !nfe.numeroLoja ||
+      // Filtra NF-es que precisam de enriquecimento
+      const needsEnrich = notasList.filter(
+        (nfe) =>
           !nfe.rastreamento ||
           !nfe.loja ||
           !nfe.canal ||
+          !nfe.linkDanfe ||
           nfe.valorLiquido === undefined ||
-          !nfe.valorTotal;
-        if (isMissingData) {
-          const enriched = await enrichNfeSaida(token, nfe);
-          enrichedList[i] = enriched;
-          changed = true;
+          !nfe.valorTotal
+      );
 
-          // Atualiza o estado a cada 5 notas para feedback visual progressivo
-          if ((i + 1) % 5 === 0 || i === enrichedList.length - 1) {
-            setNfeSaida([...enrichedList]);
-            persistNfeSaida(enrichedList);
+      if (needsEnrich.length === 0) {
+        addToast("Todas as NF-es já estão completas.", "info");
+        return;
+      }
+
+      addToast(
+        `Enriquecendo ${needsEnrich.length} NF-es em massa via pedidos/vendas...`,
+        "info"
+      );
+
+      // Usa batch: busca pedidos/vendas por data e aplica dados em massa
+      const enrichedBatch = await enrichNfeSaidaBatch(
+        token,
+        notasList,
+        (done, total) => {
+          // Atualiza progresso a cada 10
+          if (done % 10 === 0 || done === total) {
+            setNfeSaida((prev) => {
+              // Merge parcial — não queremos perder dados de NF-es já enriquecidas
+              return prev;
+            });
           }
-
-          // Delay maior (800ms) para evitar 429 com maior volume de dados (itens)
-          await new Promise((r) => setTimeout(r, 800));
         }
-      }
+      );
 
-      if (changed) {
-        setNfeSaida(enrichedList);
-        persistNfeSaida(enrichedList);
-        addToast("Dados de pedidos e rastreio atualizados!", "success");
-      }
+      setNfeSaida(enrichedBatch);
+      persistNfeSaida(enrichedBatch);
+      addToast(
+        `Dados de ${needsEnrich.length} pedidos e rastreios atualizados!`,
+        "success"
+      );
     } catch (err) {
       console.error("Erro no enriquecimento:", err);
+      addToast("Erro ao enriquecer dados. Tente novamente.", "error");
     } finally {
       setIsEnrichingNfe(false);
     }

@@ -862,6 +862,159 @@ export async function enrichNfeSaida(
 }
 
 /**
+ * Enriquecimento em MASSA: Busca pedidos/vendas por data para extrair rastreios,
+ * loja, etc. de vários pedidos de uma só vez (evita N chamadas individuais).
+ *
+ * Fluxo:
+ * 1. Extrai datas min/max das NF-es para definir o range
+ * 2. GET /pedidos/vendas?dataInicial=X&dataFinal=Y (paginado)
+ * 3. Mapeia pedido.id → { rastreamento, loja, numeroLoja }
+ * 4. Para cada NF-e que tem idVenda, aplica os dados do pedido
+ */
+export async function enrichNfeSaidaBatch(
+  apiKey: string,
+  nfes: NfeSaida[],
+  onProgress?: (done: number, total: number) => void
+): Promise<NfeSaida[]> {
+  const token = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
+  const authH = { Authorization: token, Accept: "application/json" };
+
+  // 1. Calcular range de datas a partir das NF-es
+  const datas = nfes
+    .map((n) => n.dataEmissao || n.dataSaida)
+    .filter(Boolean)
+    .map((d) => new Date(d!).getTime())
+    .filter((t) => !isNaN(t));
+
+  const minDate = datas.length > 0 ? new Date(Math.min(...datas)) : new Date();
+  const maxDate = datas.length > 0 ? new Date(Math.max(...datas)) : new Date();
+
+  // Expandir range em 3 dias para pegar pedidos que não batem exato
+  minDate.setDate(minDate.getDate() - 3);
+  maxDate.setDate(maxDate.getDate() + 1);
+
+  const fmtDate = (d: Date) => d.toISOString().split("T")[0];
+  const dataInicial = fmtDate(minDate);
+  const dataFinal = fmtDate(maxDate);
+
+  console.log(`🔄 [enrichBatch] Buscando pedidos/vendas de ${dataInicial} a ${dataFinal}...`);
+
+  // 2. Buscar pedidos de venda em massa (paginado)
+  const pedidosMap = new Map<
+    string,
+    { rastreamento?: string; loja?: string; lojaId?: number; numeroLoja?: string }
+  >();
+
+  let pagina = 1;
+  let continuar = true;
+
+  while (continuar) {
+    try {
+      const url = `/api/bling/pedidos/vendas?limite=100&pagina=${pagina}&dataInicial=${dataInicial}&dataFinal=${dataFinal}`;
+      const resp = await fetchWithRetry(url, { headers: authH });
+      if (!resp.ok) break;
+
+      const data = await resp.json();
+      const pedidos: any[] = data?.data || [];
+      if (pedidos.length === 0) break;
+
+      for (const p of pedidos) {
+        const id = String(p.id);
+        const rastreamento =
+          p.transporte?.codigoRastreamento ||
+          p.transporte?.volumes?.[0]?.codigoRastreamento ||
+          undefined;
+        const lojaDesc = p.loja?.descricao || p.loja?.nome || undefined;
+        const lojaId = p.loja?.id ? Number(p.loja.id) : undefined;
+        const numeroLoja = p.numeroLoja || p.numeroPedidoLoja || undefined;
+
+        pedidosMap.set(id, { rastreamento, loja: lojaDesc, lojaId, numeroLoja });
+      }
+
+      if (pedidos.length < 100) break;
+      pagina++;
+      await new Promise((r) => setTimeout(r, 400));
+    } catch (e) {
+      console.warn(`[enrichBatch] Erro na página ${pagina}:`, e);
+      break;
+    }
+  }
+
+  console.log(`🔄 [enrichBatch] ${pedidosMap.size} pedidos carregados. Aplicando a ${nfes.length} NF-es...`);
+
+  // 3. Aplicar dados em cada NF-e
+  const enriched = [...nfes];
+  let enrichCount = 0;
+
+  for (let i = 0; i < enriched.length; i++) {
+    const nfe = enriched[i];
+
+    // Verifica se precisa de enriquecimento
+    const needsEnrich =
+      !nfe.rastreamento || !nfe.loja || !nfe.linkDanfe || !nfe.chaveAcesso;
+    if (!needsEnrich) continue;
+
+    // Tenta via pedidosMap (rápido, sem chamada extra)
+    const idVenda = nfe.idVenda ? String(nfe.idVenda) : undefined;
+    const pedidoData = idVenda ? pedidosMap.get(idVenda) : undefined;
+
+    if (pedidoData) {
+      enriched[i] = {
+        ...nfe,
+        rastreamento: pedidoData.rastreamento || nfe.rastreamento,
+        loja: pedidoData.loja || nfe.loja,
+        lojaId: pedidoData.lojaId || nfe.lojaId,
+        numeroLoja: pedidoData.numeroLoja || nfe.numeroLoja
+      };
+      enrichCount++;
+    }
+
+    // Se ainda falta linkDanfe/chaveAcesso, faz chamada individual ao detalhe da NF-e
+    if (!enriched[i].linkDanfe || !enriched[i].chaveAcesso) {
+      try {
+        const det = await fetchNfeDetalhe(token, nfe.id);
+        const d = det?.data || det;
+        if (d) {
+          enriched[i] = {
+            ...enriched[i],
+            linkDanfe: d.linkDanfe || d.linkPDF || enriched[i].linkDanfe,
+            linkXml: d.linkXml || d.xml || enriched[i].linkXml,
+            chaveAcesso: d.chaveAcesso || enriched[i].chaveAcesso,
+            situacao: d.situacao ?? enriched[i].situacao,
+            situacaoDescr: NFE_SIT_MAP[d.situacao] || enriched[i].situacaoDescr
+          };
+          // Se idVenda não existia, extrair agora
+          if (!enriched[i].idVenda) {
+            const vid =
+              d.vendas?.[0]?.id || d.pedidoVenda?.id || d.pedido?.id;
+            if (vid) {
+              enriched[i].idVenda = Number(vid);
+              // Tenta mapear do pedidosMap agora que temos o idVenda
+              const pd = pedidosMap.get(String(vid));
+              if (pd) {
+                enriched[i].rastreamento =
+                  pd.rastreamento || enriched[i].rastreamento;
+                enriched[i].loja = pd.loja || enriched[i].loja;
+                enriched[i].lojaId = pd.lojaId || enriched[i].lojaId;
+              }
+            }
+          }
+          enrichCount++;
+        }
+        await new Promise((r) => setTimeout(r, 300));
+      } catch (e) {
+        console.warn(`[enrichBatch] Detalhe NF-e ${nfe.id} falhou:`, e);
+      }
+    }
+
+    onProgress?.(i + 1, enriched.length);
+  }
+
+  console.log(`✅ [enrichBatch] ${enrichCount} NF-es enriquecidas.`);
+  return enriched;
+}
+
+/**
  * Envia (emite) uma NF-e pendente para a SEFAZ via Bling.
  */
 export async function enviarNfe(apiKey: string, nfeId: number): Promise<any> {

@@ -20,10 +20,11 @@ import {
   ChevronUp,
   Edit,
   X,
-  ArrowRight
+  ArrowRight,
+  Download
 } from "lucide-react";
 import { ImportacaoControllerService } from "../services/importacaoControllerService";
-import type { PedidoOverride, LoteNfe } from "../types";
+import type { PedidoOverride, LoteNfe, LoteNfeFalha } from "../types";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Tipos locais
@@ -104,7 +105,9 @@ function getLojaNome(
   if (pedido.loja?.nome) return pedido.loja.nome;
   // 2) Resolve pelo ID da loja usando os canais de venda carregados
   if (pedido.loja?.id && canaisVenda.length > 0) {
-    const canal = canaisVenda.find((c) => String(c.id) === String(pedido.loja!.id));
+    const canal = canaisVenda.find(
+      (c) => String(c.id) === String(pedido.loja!.id)
+    );
     if (canal) return canal.descricao;
   }
   // 3) Fallback: venda_origem ou origem genérica
@@ -159,6 +162,7 @@ export const AbaImportacaoPedidosBling: React.FC<
     erros: number;
   } | null>(null);
   const [lotesGerados, setLotesGerados] = useState<LoteNfe[]>([]);
+  const [expandedLoteId, setExpandedLoteId] = useState<string | null>(null);
 
   // ── Campos editáveis por pedido (accordion) ────────────────────────────────
   const [expandedOverride, setExpandedOverride] = useState<string | null>(null);
@@ -169,7 +173,9 @@ export const AbaImportacaoPedidosBling: React.FC<
   // ── Filtros de busca ───────────────────────────────────────────────────────
   const [situacoesFiltro, setSituacoesFiltro] = useState<number[]>([6, 15]);
   const [idLojaFiltro, setIdLojaFiltro] = useState("");
-  const [apenasComEtiqueta, setApenasComEtiqueta] = useState(false);
+  const [mlEtiquetaFiltro, setMlEtiquetaFiltro] = useState<
+    "todos" | "com" | "sem"
+  >("todos");
   const [quantidadeDesejada, setQuantidadeDesejada] = useState(200);
   const [pagina, setPagina] = useState(1);
   const [ordenacao, setOrdenacao] = useState<"asc" | "desc">("desc");
@@ -188,7 +194,6 @@ export const AbaImportacaoPedidosBling: React.FC<
       setSelecionados(new Set());
     }
   }, [
-    apenasComEtiqueta,
     quantidadeDesejada,
     idLojaFiltro,
     ordenacao,
@@ -214,7 +219,9 @@ export const AbaImportacaoPedidosBling: React.FC<
         p.numero.toLowerCase().includes(texto) ||
         p.numeroLoja.toLowerCase().includes(texto) ||
         p.cliente.nome.toLowerCase().includes(texto) ||
-        (p.loja?.nome || getLojaNome(p, canaisVenda) || "").toLowerCase().includes(texto);
+        (p.loja?.nome || getLojaNome(p, canaisVenda) || "")
+          .toLowerCase()
+          .includes(texto);
 
       const passSku =
         !filtroSku ||
@@ -223,11 +230,25 @@ export const AbaImportacaoPedidosBling: React.FC<
         );
 
       const passLoja =
-        lojaFiltroNome === "TODOS" || getLojaNome(p, canaisVenda) === lojaFiltroNome;
+        lojaFiltroNome === "TODOS" ||
+        getLojaNome(p, canaisVenda) === lojaFiltroNome;
 
-      return passTexto && passSku && passLoja;
+      // Filtro de etiqueta ML — só aplica a pedidos Mercado Livre
+      const passEtiqueta =
+        mlEtiquetaFiltro === "todos" ||
+        p.origem !== "MERCADO_LIVRE" ||
+        (mlEtiquetaFiltro === "com" ? !!p.rastreamento : !p.rastreamento);
+
+      return passTexto && passSku && passLoja && passEtiqueta;
     });
-  }, [pedidos, filtroTexto, filtroSku, lojaFiltroNome, canaisVenda]);
+  }, [
+    pedidos,
+    filtroTexto,
+    filtroSku,
+    lojaFiltroNome,
+    canaisVenda,
+    mlEtiquetaFiltro
+  ]);
 
   // ── Lojas distintas (para as tabs de filtro) ──────────────────────────────
   const lojasDistintas = useMemo(() => {
@@ -256,7 +277,6 @@ export const AbaImportacaoPedidosBling: React.FC<
           "TODOS",
           {
             quantidadeDesejada,
-            apenasComEtiqueta,
             pagina,
             limite: 100,
             idsSituacoes: situacoesFiltro,
@@ -291,6 +311,7 @@ export const AbaImportacaoPedidosBling: React.FC<
     setLoading(true);
 
     const ids: string[] = Array.from(selecionados);
+    const pedidosSnapshot = [...pedidos]; // captura antes do loop (itens vão sendo removidos)
     const resultados: Array<{
       pedidoVendaId: string;
       success: boolean;
@@ -375,8 +396,18 @@ export const AbaImportacaoPedidosBling: React.FC<
           .filter((r) => r.success)
           .map((r) => ({
             pedidoVendaId: r.pedidoVendaId,
+            pedidoNumero: pedidosSnapshot.find((p) => p.id === r.pedidoVendaId)
+              ?.numero,
             nfeId: r.nfe?.id,
             nfeNumero: r.nfe?.numero
+          })),
+        falhas: resultados
+          .filter((r) => !r.success)
+          .map((r) => ({
+            pedidoVendaId: r.pedidoVendaId,
+            pedidoNumero: pedidosSnapshot.find((p) => p.id === r.pedidoVendaId)
+              ?.numero,
+            error: r.error || "Erro desconhecido"
           }))
       };
       setLotesGerados((prev) => [lote, ...prev]);
@@ -419,10 +450,12 @@ export const AbaImportacaoPedidosBling: React.FC<
           nfes: [
             {
               pedidoVendaId: String(pedido.id),
+              pedidoNumero: pedido.numero,
               nfeId: data.nfe?.id,
               nfeNumero: data.nfe?.numero
             }
-          ]
+          ],
+          falhas: []
         };
         setPedidos((prev) => prev.filter((p) => p.id !== pedido.id));
         setLotesGerados((prev) => [lote, ...prev]);
@@ -453,6 +486,42 @@ export const AbaImportacaoPedidosBling: React.FC<
       ...prev,
       [id]: { ...prev[id], ...patch }
     }));
+
+  const downloadLote = (lote: LoteNfe) => {
+    const tipo =
+      lote.tipo === "GERACAO_EMISSAO" ? "Geração + Emissão" : "Geração Apenas";
+    const lines = [
+      `LOTE: ${lote.id}`,
+      `Data: ${new Date(lote.data).toLocaleString("pt-BR")}`,
+      `Tipo: ${tipo}`,
+      `Total: ${lote.total} | Sucesso: ${lote.ok} | Falha: ${lote.fail}`,
+      "",
+      `✅ PEDIDOS COM SUCESSO (${lote.nfes.length}):`,
+      "---",
+      ...lote.nfes.map(
+        (n) =>
+          `Pedido: ${n.pedidoNumero || n.pedidoVendaId} | NF-e: ${n.nfeNumero || "-"} | ID NF-e: ${n.nfeId || "-"}`
+      ),
+      "",
+      `❌ PEDIDOS COM FALHA (${lote.falhas?.length || 0}):`,
+      "---",
+      ...(lote.falhas?.length
+        ? lote.falhas.map(
+            (f) =>
+              `Pedido: ${f.pedidoNumero || f.pedidoVendaId} | Erro: ${f.error}`
+          )
+        : ["(nenhum)"])
+    ];
+    const blob = new Blob([lines.join("\n")], {
+      type: "text/plain;charset=utf-8"
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${lote.id}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   // ── Seleção ────────────────────────────────────────────────────────────────
   const toggleTodos = () => {
@@ -495,53 +564,153 @@ export const AbaImportacaoPedidosBling: React.FC<
 
   return (
     <div className="flex flex-col gap-4">
-      {/* ── Lotes gerados (banners) ─────────────────────────────────────────── */}
+      {/* ── Lotes gerados (expandíveis) ───────────────────────────────────── */}
       {lotesGerados.length > 0 && (
         <div className="flex flex-col gap-2">
-          {lotesGerados.map((lote) => (
-            <div
-              key={lote.id}
-              className="flex items-center justify-between gap-4 px-4 py-3 rounded-xl border border-green-200 bg-green-50"
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <CheckCircle
-                  size={16}
-                  className="text-green-600 flex-shrink-0"
-                />
-                <div className="min-w-0">
-                  <p className="text-xs font-black text-green-800 truncate">
-                    Lote {lote.id} — {lote.ok}/{lote.total} NF-e
-                    {lote.tipo === "GERACAO_EMISSAO"
-                      ? " geradas e emitidas"
-                      : " geradas"}
-                  </p>
-                  <p className="text-[10px] text-green-600 truncate">
-                    {new Date(lote.data).toLocaleString("pt-BR")}
-                    {lote.fail > 0 && (
-                      <span className="text-orange-600 ml-2">
-                        {lote.fail} com falha
-                      </span>
-                    )}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <span className="text-[10px] text-green-700 bg-green-100 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
-                  <ArrowRight size={10} /> Ver na aba NF-e
-                </span>
-                <button
+          {lotesGerados.map((lote) => {
+            const isExpanded = expandedLoteId === lote.id;
+            return (
+              <div
+                key={lote.id}
+                className="rounded-xl border border-green-200 bg-green-50 overflow-hidden"
+              >
+                {/* Header clicável */}
+                <div
+                  className="flex items-center justify-between gap-4 px-4 py-3 cursor-pointer hover:bg-green-100 transition-colors"
                   onClick={() =>
-                    setLotesGerados((prev) =>
-                      prev.filter((l) => l.id !== lote.id)
+                    setExpandedLoteId((prev) =>
+                      prev === lote.id ? null : lote.id
                     )
                   }
-                  className="text-slate-400 hover:text-slate-600"
                 >
-                  <X size={12} />
-                </button>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <CheckCircle
+                      size={16}
+                      className="text-green-600 flex-shrink-0"
+                    />
+                    <div className="min-w-0">
+                      <p className="text-xs font-black text-green-800 truncate">
+                        {lote.id} — {lote.ok}/{lote.total} NF-e
+                        {lote.tipo === "GERACAO_EMISSAO"
+                          ? " geradas e emitidas"
+                          : " geradas"}
+                      </p>
+                      <p className="text-[10px] text-green-600 flex items-center gap-2">
+                        {new Date(lote.data).toLocaleString("pt-BR")}
+                        {lote.fail > 0 && (
+                          <span className="text-orange-600">
+                            {lote.fail} com falha
+                          </span>
+                        )}
+                        <span className="text-green-500 flex items-center gap-0.5">
+                          <ArrowRight size={9} /> Ver na aba NF-e
+                        </span>
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadLote(lote);
+                      }}
+                      title="Baixar relatório .txt"
+                      className="text-green-600 hover:text-green-800 p-1 rounded"
+                    >
+                      <Download size={14} />
+                    </button>
+                    {isExpanded ? (
+                      <ChevronUp size={14} className="text-green-600" />
+                    ) : (
+                      <ChevronDown size={14} className="text-green-600" />
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setLotesGerados((prev) =>
+                          prev.filter((l) => l.id !== lote.id)
+                        );
+                        if (expandedLoteId === lote.id) setExpandedLoteId(null);
+                      }}
+                      className="text-slate-400 hover:text-slate-600"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Detalhes expandidos */}
+                {isExpanded && (
+                  <div className="border-t border-green-200 bg-white px-4 py-3 flex flex-col gap-3">
+                    {/* Sucessos */}
+                    {lote.nfes.length > 0 && (
+                      <div>
+                        <p className="text-[10px] font-black text-green-700 uppercase tracking-widest mb-1.5">
+                          ✅ Sucesso ({lote.nfes.length})
+                        </p>
+                        <div className="divide-y divide-slate-100 border border-slate-100 rounded-lg overflow-hidden">
+                          {lote.nfes.map((item) => (
+                            <div
+                              key={item.pedidoVendaId}
+                              className="flex items-center gap-3 px-3 py-1.5 text-[11px]"
+                            >
+                              <span className="text-slate-500 w-28 truncate">
+                                Pedido{" "}
+                                <span className="font-bold text-slate-700">
+                                  {item.pedidoNumero || item.pedidoVendaId}
+                                </span>
+                              </span>
+                              <span className="text-slate-400">·</span>
+                              <span className="text-slate-500">
+                                NF-e{" "}
+                                <span className="font-bold text-emerald-700">
+                                  {item.nfeNumero || "-"}
+                                </span>
+                              </span>
+                              {item.nfeId && (
+                                <>
+                                  <span className="text-slate-400">·</span>
+                                  <span className="text-[10px] text-slate-400 font-mono">
+                                    {item.nfeId}
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Falhas */}
+                    {!!lote.falhas?.length && (
+                      <div>
+                        <p className="text-[10px] font-black text-red-600 uppercase tracking-widest mb-1.5">
+                          ❌ Falhas ({lote.falhas.length})
+                        </p>
+                        <div className="divide-y divide-red-50 border border-red-100 rounded-lg overflow-hidden">
+                          {lote.falhas.map((f) => (
+                            <div
+                              key={f.pedidoVendaId}
+                              className="flex items-start gap-3 px-3 py-1.5 text-[11px] bg-red-50"
+                            >
+                              <span className="text-slate-600 w-28 flex-shrink-0">
+                                Pedido{" "}
+                                <span className="font-bold">
+                                  {f.pedidoNumero || f.pedidoVendaId}
+                                </span>
+                              </span>
+                              <span className="text-red-600 break-all">
+                                {f.error}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -667,17 +836,6 @@ export const AbaImportacaoPedidosBling: React.FC<
             </select>
           </div>
 
-          {/* Com etiqueta */}
-          <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600 cursor-pointer pb-1">
-            <input
-              type="checkbox"
-              checked={apenasComEtiqueta}
-              onChange={(e) => setApenasComEtiqueta(e.target.checked)}
-              className="w-3.5 h-3.5 rounded accent-blue-600"
-            />
-            Apenas com etiqueta
-          </label>
-
           {/* Botão buscar */}
           <button
             onClick={buscarPedidos}
@@ -724,6 +882,33 @@ export const AbaImportacaoPedidosBling: React.FC<
               </button>
             ))}
           </div>
+
+          {/* Filtro lateral: Etiqueta ML (só aparece quando há pedidos ML carregados) */}
+          {pedidos.some((p) => p.origem === "MERCADO_LIVRE") && (
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-black text-yellow-700 uppercase tracking-wider bg-yellow-100 px-2 py-0.5 rounded border border-yellow-200">
+                <Truck size={9} className="inline mr-1" />
+                ML Etiqueta
+              </span>
+              {(["todos", "com", "sem"] as const).map((opt) => (
+                <button
+                  key={opt}
+                  onClick={() => setMlEtiquetaFiltro(opt)}
+                  className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition-all ${
+                    mlEtiquetaFiltro === opt
+                      ? "bg-yellow-500 text-white border-yellow-600"
+                      : "bg-white text-slate-600 border-slate-200 hover:border-yellow-400"
+                  }`}
+                >
+                  {opt === "todos"
+                    ? "Todos"
+                    : opt === "com"
+                      ? "Com rastreio"
+                      : "Sem rastreio"}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Busca + SKU */}
           <div className="flex gap-2">
