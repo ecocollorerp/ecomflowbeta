@@ -9,7 +9,8 @@ import {
   StockItem,
   SkuLink,
   ZplIncludeMode,
-  LoteNfe
+  LoteNfe,
+  LoteNfeItem
 } from "../types";
 import {
   fetchBlingOrders,
@@ -179,6 +180,44 @@ const getSevenDaysAgo = () => {
   const d = new Date();
   d.setDate(d.getDate() - 7); // Default window for auto-sync and manual fetch
   return d.toISOString().split("T")[0];
+};
+
+const normalizeKey = (value: unknown) =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase();
+
+const nfeMatchesLoteItem = (nfe: NfeSaida, item: LoteNfeItem): boolean => {
+  const loteKeys = [
+    item.pedidoVendaId,
+    item.pedidoNumero,
+    item.nfeId,
+    item.nfeNumero
+  ]
+    .map(normalizeKey)
+    .filter(Boolean);
+
+  if (loteKeys.length === 0) return false;
+
+  const nfeKeys = [
+    nfe.id,
+    nfe.numero,
+    nfe.numeroVenda,
+    nfe.numeroLoja,
+    (nfe as any).idPedidoVenda,
+    (nfe as any).idVenda
+  ]
+    .map(normalizeKey)
+    .filter(Boolean);
+
+  return loteKeys.some((key) => nfeKeys.includes(key));
+};
+
+const isNfePendente = (nfe: NfeSaida): boolean => {
+  const situacao = Number(nfe.situacao || 0);
+  // No fluxo do Bling, notas ainda nao finalizadas podem ficar em Pendente (1),
+  // Aguardando Recibo (3) ou Autorizada sem DANFE (5 sem link).
+  return situacao === 1 || situacao === 3 || (situacao === 5 && !nfe.linkDanfe);
 };
 
 type Tab = "importacao" | "nfe" | "catalogo" | "etiquetas";
@@ -1456,6 +1495,9 @@ const BlingPage: React.FC<BlingPageProps> = ({
       return [];
     }
   });
+  const [activeImportacaoLoteId, setActiveImportacaoLoteId] = useState<
+    string | null
+  >(null);
 
   // Pedidos completos vindos do endpoint de sync (com itens aninhados)
   const [syncedOrders, setSyncedOrders] = useState<any[]>(() => {
@@ -1521,21 +1563,30 @@ const BlingPage: React.FC<BlingPageProps> = ({
     try {
       const cached = localStorage.getItem(zplLotesStorageKey);
       if (cached) return JSON.parse(cached) as ZplLoteItem[];
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     return [];
   });
-  const setZplLotes = (update: ZplLoteItem[] | ((prev: ZplLoteItem[]) => ZplLoteItem[])) => {
+  const setZplLotes = (
+    update: ZplLoteItem[] | ((prev: ZplLoteItem[]) => ZplLoteItem[])
+  ) => {
     setZplLotesRaw((prev) => {
-      const next = typeof update === 'function' ? update(prev) : update;
+      const next = typeof update === "function" ? update(prev) : update;
       try {
-        localStorage.setItem(zplLotesStorageKey, JSON.stringify(next.slice(0, 50)));
+        localStorage.setItem(
+          zplLotesStorageKey,
+          JSON.stringify(next.slice(0, 50))
+        );
         // Limpa chaves de dias anteriores
         for (let i = localStorage.length - 1; i >= 0; i--) {
           const k = localStorage.key(i);
-          if (k && k.startsWith('zplLotes_') && k !== zplLotesStorageKey)
+          if (k && k.startsWith("zplLotes_") && k !== zplLotesStorageKey)
             localStorage.removeItem(k);
         }
-      } catch { /* quota */ }
+      } catch {
+        /* quota */
+      }
       return next;
     });
   };
@@ -1626,7 +1677,10 @@ const BlingPage: React.FC<BlingPageProps> = ({
   // Download DANFE em lote
   const [isDownloadingDanfe, setIsDownloadingDanfe] = useState(false);
   const [isEnrichingNfe, setIsEnrichingNfe] = useState(false);
-  const [enrichProgress, setEnrichProgress] = useState<{ current: number; total: number } | null>(null);
+  const [enrichProgress, setEnrichProgress] = useState<{
+    current: number;
+    total: number;
+  } | null>(null);
   const [danfeDownloadProgress, setDanfeDownloadProgress] = useState<{
     current: number;
     total: number;
@@ -1812,16 +1866,14 @@ const BlingPage: React.FC<BlingPageProps> = ({
     if (nfeSaidaFiltro !== "todas") {
       list = list.filter((n) => {
         const situacao = n.situacao;
-        if (nfeSaidaFiltro === "pendentes") return situacao === 1;
+        if (nfeSaidaFiltro === "pendentes") return isNfePendente(n);
         if (nfeSaidaFiltro === "canceladas") return situacao === 2;
         if (nfeSaidaFiltro === "aguardando_recibo") return situacao === 3;
         if (nfeSaidaFiltro === "rejeitadas") return situacao === 4;
-        if (nfeSaidaFiltro === "autorizadas")
-          return situacao === 5;
+        if (nfeSaidaFiltro === "autorizadas") return situacao === 5;
         if (nfeSaidaFiltro === "autorizadas_sem_danfe")
           return situacao === 5 && !n.linkDanfe;
-        if (nfeSaidaFiltro === "emitidas")
-          return situacao === 6;
+        if (nfeSaidaFiltro === "emitidas") return situacao === 6;
         if (nfeSaidaFiltro === "emitida_danfe")
           return situacao === 6 || (situacao === 5 && !!n.linkDanfe);
         if (nfeSaidaFiltro === "denegadas") return situacao === 7;
@@ -1977,6 +2029,45 @@ const BlingPage: React.FC<BlingPageProps> = ({
   ]);
   const [products, setProducts] = useState<BlingProduct[]>([]);
   const [productSearch, setProductSearch] = useState("");
+
+  const getMatchedNfesForLote = (lote: LoteNfe): NfeSaida[] =>
+    nfeSaida.filter((nfe) =>
+      lote.nfes.some((item) => nfeMatchesLoteItem(nfe, item))
+    );
+
+  const getMatchedNfeByLoteItem = (
+    loteItem: LoteNfeItem,
+    baseNfes: NfeSaida[]
+  ): NfeSaida | undefined =>
+    baseNfes.find((nfe) => nfeMatchesLoteItem(nfe, loteItem));
+
+  const handleSelectImportacaoLote = (lote: LoteNfe) => {
+    if (activeImportacaoLoteId === lote.id) {
+      setActiveImportacaoLoteId(null);
+      setSelectedNfeSaidaIds(new Set());
+      addToast("Seleção do lote removida.", "info");
+      return;
+    }
+
+    setActiveImportacaoLoteId(lote.id);
+    setNfeSaidaFiltro("todas");
+
+    const matchedNfes = getMatchedNfesForLote(lote);
+    setSelectedNfeSaidaIds(new Set(matchedNfes.map((nfe) => nfe.id)));
+
+    if (matchedNfes.length === 0) {
+      addToast(
+        "Nenhuma NF-e do lote foi encontrada na lista atual. Atualize a busca de NF-e para sincronizar.",
+        "warning"
+      );
+      return;
+    }
+
+    addToast(
+      `${matchedNfes.length} NF-e do lote ${lote.id} selecionada(s). Veja numeros/trackings no painel do lote.`,
+      "success"
+    );
+  };
 
   /**
    * Função Central de Verificação de Token
@@ -2893,12 +2984,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
       const token = await getValidToken();
       if (!token) throw new Error("Token inválido.");
 
-      const situacaoBusca =
-        status !== undefined
-          ? String(status)
-          : nfeSaidaFiltro === "pendentes"
-            ? "1"
-            : "";
+      const situacaoBusca = status !== undefined ? String(status) : "";
 
       const isDynamicStore = !["TODOS", "ML", "SHOPEE", "SITE"].includes(
         nfeSaidaLojaFilter
@@ -3173,7 +3259,8 @@ const BlingPage: React.FC<BlingPageProps> = ({
           }
 
           if (xmlContent && !xmlContent.startsWith("http")) {
-            const { gerarDanfeSimplificadaPDF } = await import("../lib/danfeSimplificada");
+            const { gerarDanfeSimplificadaPDF } =
+              await import("../lib/danfeSimplificada");
             const pdfBlob = gerarDanfeSimplificadaPDF(xmlContent);
             const url = URL.createObjectURL(pdfBlob);
             const a = document.createElement("a");
@@ -3187,11 +3274,17 @@ const BlingPage: React.FC<BlingPageProps> = ({
             return;
           }
 
-          addToast("XML da NF-e não disponível para gerar DANFE Simplificada.", "warning");
+          addToast(
+            "XML da NF-e não disponível para gerar DANFE Simplificada.",
+            "warning"
+          );
           return;
         } catch (xmlErr: any) {
           console.error("[DANFE Simplificada] Erro:", xmlErr);
-          addToast(`Erro ao gerar DANFE Simplificada: ${xmlErr.message}`, "error");
+          addToast(
+            `Erro ao gerar DANFE Simplificada: ${xmlErr.message}`,
+            "error"
+          );
           return;
         }
       }
@@ -3199,7 +3292,8 @@ const BlingPage: React.FC<BlingPageProps> = ({
       // ── DANFE NORMAL: busca linkDanfe via backend ──
       if (type === "normal") {
         const params = new URLSearchParams({ type: "normal" });
-        if (nfe.numeroLoja) params.set("numeroPedidoLoja", String(nfe.numeroLoja));
+        if (nfe.numeroLoja)
+          params.set("numeroPedidoLoja", String(nfe.numeroLoja));
         if (nfe.idVenda) params.set("idVenda", String(nfe.idVenda));
 
         const resp = await fetch(
@@ -3240,7 +3334,8 @@ const BlingPage: React.FC<BlingPageProps> = ({
 
       // ── ETIQUETA / COMBINED: via backend (objetos-postagem) ──
       const params = new URLSearchParams({ type });
-      if (nfe.numeroLoja) params.set("numeroPedidoLoja", String(nfe.numeroLoja));
+      if (nfe.numeroLoja)
+        params.set("numeroPedidoLoja", String(nfe.numeroLoja));
       if (nfe.idVenda) params.set("idVenda", String(nfe.idVenda));
 
       const resp = await fetch(
@@ -3379,13 +3474,19 @@ const BlingPage: React.FC<BlingPageProps> = ({
 
       // 1. Marketplace (Shopee/ML): etiqueta do pedido de venda
       if (idVenda && (nfe.canal === "SHOPEE" || nfe.canal === "ML")) {
-        try { zpl = await fetchEtiquetaZplForPedido(token, String(idVenda)); } catch (_) {}
+        try {
+          zpl = await fetchEtiquetaZplForPedido(token, String(idVenda));
+        } catch (_) {}
       }
 
       // 2. Via objetos-postagem → logisticas/etiquetas/zpl
       if (!zpl && (numLoja || idVenda)) {
         try {
-          const objetos = await fetchObjetosPostagem(token, numLoja || "", idVenda);
+          const objetos = await fetchObjetosPostagem(
+            token,
+            numLoja || "",
+            idVenda
+          );
           const idObjeto = objetos?.[0]?.id;
           if (idObjeto) {
             const resp = await fetch(
@@ -3399,7 +3500,10 @@ const BlingPage: React.FC<BlingPageProps> = ({
       }
 
       if (!zpl) {
-        addToast("Etiqueta de envio não disponível. Verifique se o objeto postal foi gerado no Bling.", "warning");
+        addToast(
+          "Etiqueta de envio não disponível. Verifique se o objeto postal foi gerado no Bling.",
+          "warning"
+        );
         return;
       }
 
@@ -3430,16 +3534,27 @@ const BlingPage: React.FC<BlingPageProps> = ({
       const numLoja = nfe.numeroPedidoLoja || nfe.numeroLoja;
 
       // 1. ZPL do documento NF-e (DANFE formato ZPL do Bling)
-      const nfeDocZpl = await fetchNfeEtiquetaZpl(token, nfe.id, nfe.canal, numLoja);
+      const nfeDocZpl = await fetchNfeEtiquetaZpl(
+        token,
+        nfe.id,
+        nfe.canal,
+        numLoja
+      );
 
       // 2. ZPL da etiqueta de envio da transportadora
       let shippingZpl: string | null = null;
       if (idVenda && (nfe.canal === "SHOPEE" || nfe.canal === "ML")) {
-        try { shippingZpl = await fetchEtiquetaZplForPedido(token, String(idVenda)); } catch (_) {}
+        try {
+          shippingZpl = await fetchEtiquetaZplForPedido(token, String(idVenda));
+        } catch (_) {}
       }
       if (!shippingZpl && (numLoja || idVenda)) {
         try {
-          const objetos = await fetchObjetosPostagem(token, numLoja || "", idVenda);
+          const objetos = await fetchObjetosPostagem(
+            token,
+            numLoja || "",
+            idVenda
+          );
           const idObjeto = objetos?.[0]?.id;
           if (idObjeto) {
             const resp = await fetch(
@@ -3469,7 +3584,11 @@ const BlingPage: React.FC<BlingPageProps> = ({
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       const label =
-        parts.length === 2 ? "DANFE + Etiqueta" : nfeDocZpl ? "DANFE" : "Etiqueta";
+        parts.length === 2
+          ? "DANFE + Etiqueta"
+          : nfeDocZpl
+            ? "DANFE"
+            : "Etiqueta";
       addToast(`✅ ZPL combinado baixado (${label})!`, "success");
     } catch (err: any) {
       addToast(`Erro ao gerar ZPL combinado: ${err.message}`, "error");
@@ -3538,10 +3657,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
               return updated;
             });
             if (enriched.rastreamento) {
-              addToast(
-                `Rastreio obtido: ${enriched.rastreamento}`,
-                "success"
-              );
+              addToast(`Rastreio obtido: ${enriched.rastreamento}`, "success");
             }
           }
         } catch (e) {
@@ -3635,7 +3751,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
   const nfeCounts = useMemo(
     () => ({
       todas: nfeSaida.length,
-      pendentes: nfeSaida.filter((n) => n.situacao === 1).length,
+      pendentes: nfeSaida.filter((n) => isNfePendente(n)).length,
       canceladas: nfeSaida.filter((n) => n.situacao === 2).length,
       aguardando_recibo: nfeSaida.filter((n) => n.situacao === 3).length,
       rejeitadas: nfeSaida.filter((n) => n.situacao === 4).length,
@@ -3882,7 +3998,8 @@ const BlingPage: React.FC<BlingPageProps> = ({
               }
 
               if (xmlContent && !xmlContent.startsWith("http")) {
-                const { gerarDanfeSimplificadaPDF } = await import("../lib/danfeSimplificada");
+                const { gerarDanfeSimplificadaPDF } =
+                  await import("../lib/danfeSimplificada");
                 const pdfBlob = gerarDanfeSimplificadaPDF(xmlContent);
                 const url = URL.createObjectURL(pdfBlob);
                 const a = document.createElement("a");
@@ -3898,7 +4015,8 @@ const BlingPage: React.FC<BlingPageProps> = ({
               // DANFE Normal: via backend proxy
               const params = new URLSearchParams();
               params.set("type", "normal");
-              if (nfe.numeroLoja) params.set("numeroPedidoLoja", String(nfe.numeroLoja));
+              if (nfe.numeroLoja)
+                params.set("numeroPedidoLoja", String(nfe.numeroLoja));
               if (nfe.idVenda) params.set("idVenda", String(nfe.idVenda));
 
               const resp = await fetch(
@@ -4044,7 +4162,8 @@ const BlingPage: React.FC<BlingPageProps> = ({
             transporte.objeto?.codigoRastreamento ||
             transporte.volumes?.[0]?.codigoRastreamento;
           const chaveAcesso = detalheCompleto.chaveAcesso;
-          const linkDanfe = detalheCompleto.linkDanfe || detalheCompleto.linkPDF;
+          const linkDanfe =
+            detalheCompleto.linkDanfe || detalheCompleto.linkPDF;
           const linkXml = detalheCompleto.linkXml || detalheCompleto.xml;
 
           if (rastreamentoDet || chaveAcesso || linkDanfe || linkXml) {
@@ -4107,7 +4226,12 @@ const BlingPage: React.FC<BlingPageProps> = ({
             );
 
             // Enriquecer o item principal com dados do pedido de venda
-            if (!nfe.canal || nfe.loja === "Bling" || !nfe.numeroVenda || !nfe.idVenda) {
+            if (
+              !nfe.canal ||
+              nfe.loja === "Bling" ||
+              !nfe.numeroVenda ||
+              !nfe.idVenda
+            ) {
               setNfeSaida((prev) =>
                 prev.map((item) =>
                   item.id === nfe.id
@@ -4155,8 +4279,10 @@ const BlingPage: React.FC<BlingPageProps> = ({
                   ...prev.data,
                   numero: d.numero ?? prev.data.numero,
                   serie: d.serie ?? prev.data.serie,
-                  naturezaOperacao: d.naturezaOperacao ?? prev.data.naturezaOperacao,
-                  dataOperacao: d.dataOperacao ?? d.dataEmissao ?? prev.data.dataEmissao,
+                  naturezaOperacao:
+                    d.naturezaOperacao ?? prev.data.naturezaOperacao,
+                  dataOperacao:
+                    d.dataOperacao ?? d.dataEmissao ?? prev.data.dataEmissao,
                   contato: d.contato ?? prev.data.contato,
                   observacoes: d.observacoes ?? prev.data.observacoes,
                   frete: d.transporte?.frete ?? d.frete ?? prev.data.frete,
@@ -4167,7 +4293,10 @@ const BlingPage: React.FC<BlingPageProps> = ({
         );
       }
     } catch (_) {
-      addToast("Aviso: não foi possível carregar todos os dados da nota.", "warning");
+      addToast(
+        "Aviso: não foi possível carregar todos os dados da nota.",
+        "warning"
+      );
     } finally {
       setIsLoadingEditNfe(false);
     }
@@ -4192,14 +4321,19 @@ const BlingPage: React.FC<BlingPageProps> = ({
         payload.contato = {
           ...rawContato,
           nome: d.contato.nome ?? rawContato.nome,
-          numeroDocumento: d.contato.numeroDocumento ?? rawContato.numeroDocumento
+          numeroDocumento:
+            d.contato.numeroDocumento ?? rawContato.numeroDocumento
         };
       }
       if (d.observacoes !== undefined) payload.observacoes = d.observacoes;
-      if (d.frete !== undefined && d.frete !== null) payload.frete = Number(d.frete);
+      if (d.frete !== undefined && d.frete !== null)
+        payload.frete = Number(d.frete);
 
       await atualizarNfe(token, editNfeModal.id, payload);
-      addToast(`✅ NF-e ${d.numero || editNfeModal.id} atualizada com sucesso!`, "success");
+      addToast(
+        `✅ NF-e ${d.numero || editNfeModal.id} atualizada com sucesso!`,
+        "success"
+      );
 
       setNfeSaida((prev) =>
         prev.map((n) =>
@@ -4209,7 +4343,13 @@ const BlingPage: React.FC<BlingPageProps> = ({
                 numero: d.numero ?? n.numero,
                 serie: d.serie ?? n.serie,
                 naturezaOperacao: d.naturezaOperacao ?? n.naturezaOperacao,
-                contato: d.contato ? { ...n.contato, nome: d.contato.nome, numeroDocumento: d.contato.numeroDocumento } : n.contato,
+                contato: d.contato
+                  ? {
+                      ...n.contato,
+                      nome: d.contato.nome,
+                      numeroDocumento: d.contato.numeroDocumento
+                    }
+                  : n.contato,
                 frete: d.frete ?? n.frete
               }
             : n
@@ -4418,11 +4558,19 @@ const BlingPage: React.FC<BlingPageProps> = ({
 
           // Se não achou, tenta via /objetos-postagem (API correta do Bling)
           if (!idObj) {
-            const numLoja = d?.intermediador?.numeroPedido || d?.numeroPedidoLoja ||
-              nfe.numeroPedidoLoja || nfe.numeroLoja;
-            const idVenda = nfe.idVenda || d?.vendas?.[0]?.id || d?.pedidoVenda?.id;
+            const numLoja =
+              d?.intermediador?.numeroPedido ||
+              d?.numeroPedidoLoja ||
+              nfe.numeroPedidoLoja ||
+              nfe.numeroLoja;
+            const idVenda =
+              nfe.idVenda || d?.vendas?.[0]?.id || d?.pedidoVenda?.id;
             if (numLoja || idVenda) {
-              const objetos = await fetchObjetosPostagem(token, numLoja || "", idVenda);
+              const objetos = await fetchObjetosPostagem(
+                token,
+                numLoja || "",
+                idVenda
+              );
               if (objetos.length > 0 && objetos[0].id) {
                 idObj = objetos[0].id;
               }
@@ -4431,13 +4579,20 @@ const BlingPage: React.FC<BlingPageProps> = ({
 
           // Fallback: busca via pedido de venda
           if (!idObj) {
-            const pedidoId = nfe.idVenda || d?.vendas?.[0]?.id || d?.pedidoVenda?.id;
+            const pedidoId =
+              nfe.idVenda || d?.vendas?.[0]?.id || d?.pedidoVenda?.id;
             if (pedidoId) {
               try {
-                const pedidoDetalhe = await fetchPedidoVendaDetalhe(token, pedidoId);
-                idObj = pedidoDetalhe?.data?.transporte?.objeto?.id ||
+                const pedidoDetalhe = await fetchPedidoVendaDetalhe(
+                  token,
+                  pedidoId
+                );
+                idObj =
+                  pedidoDetalhe?.data?.transporte?.objeto?.id ||
                   pedidoDetalhe?.data?.transporte?.objetoLogistico?.id;
-              } catch (_) { /* skip */ }
+              } catch (_) {
+                /* skip */
+              }
             }
           }
 
@@ -4465,7 +4620,10 @@ const BlingPage: React.FC<BlingPageProps> = ({
       }
 
       if (erros.length > 0) {
-        addToast(`${erros.length} nota(s) sem etiqueta: ${erros.slice(0, 3).join(", ")}${erros.length > 3 ? "..." : ""}`, "info");
+        addToast(
+          `${erros.length} nota(s) sem etiqueta: ${erros.slice(0, 3).join(", ")}${erros.length > 3 ? "..." : ""}`,
+          "info"
+        );
       }
 
       addToast(`Gerando PDF para ${idsObjetos.length} etiquetas...`, "info");
@@ -5553,9 +5711,21 @@ const BlingPage: React.FC<BlingPageProps> = ({
                 {importacaoLotes.slice(0, 5).map((lote) => (
                   <div
                     key={lote.id}
-                    className="flex items-center justify-between gap-3 px-3 py-2 bg-indigo-50 rounded-xl border border-indigo-100"
+                    onClick={() => handleSelectImportacaoLote(lote)}
+                    className={`flex items-center justify-between gap-3 px-3 py-2 rounded-xl border cursor-pointer transition-all ${activeImportacaoLoteId === lote.id ? "bg-indigo-100 border-indigo-300 shadow-sm" : "bg-indigo-50 border-indigo-100 hover:bg-indigo-100/70"}`}
                   >
                     <div className="flex items-center gap-2 min-w-0">
+                      {activeImportacaoLoteId === lote.id ? (
+                        <CheckSquare
+                          size={13}
+                          className="text-indigo-700 flex-shrink-0"
+                        />
+                      ) : (
+                        <Square
+                          size={13}
+                          className="text-indigo-400 flex-shrink-0"
+                        />
+                      )}
                       <CheckCircle
                         size={13}
                         className="text-indigo-500 flex-shrink-0"
@@ -5571,19 +5741,47 @@ const BlingPage: React.FC<BlingPageProps> = ({
                             ? " geradas+emitidas"
                             : " geradas"}
                         </p>
+                        <p
+                          className="text-[10px] text-indigo-700 truncate"
+                          title={lote.nfes
+                            .map((n) => n.nfeNumero || n.nfeId || "-")
+                            .join(", ")}
+                        >
+                          NF-e:{" "}
+                          {lote.nfes
+                            .slice(0, 4)
+                            .map((n) => n.nfeNumero || n.nfeId || "-")
+                            .join(", ")}
+                          {lote.nfes.length > 4 ? "..." : ""}
+                        </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="text-[9px] text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full font-bold">
+                        {getMatchedNfesForLote(lote).length} NF-e na lista
+                      </span>
                       <span className="text-[9px] text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded-full font-bold">
                         {lote.nfes.length} pedido
                         {lote.nfes.length !== 1 ? "s" : ""}
                       </span>
                       <button
-                        onClick={() =>
-                          setImportacaoLotes((prev) =>
-                            prev.filter((l) => l.id !== lote.id)
-                          )
-                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setImportacaoLotes((prev) => {
+                            const next = prev.filter((l) => l.id !== lote.id);
+                            try {
+                              localStorage.setItem(
+                                "importacaoLotes",
+                                JSON.stringify(next.slice(0, 50))
+                              );
+                            } catch {}
+                            return next;
+                          });
+                          if (activeImportacaoLoteId === lote.id) {
+                            setActiveImportacaoLoteId(null);
+                            setSelectedNfeSaidaIds(new Set());
+                          }
+                        }}
                         className="text-indigo-300 hover:text-indigo-500"
                         title="Remover da lista"
                       >
@@ -5592,6 +5790,57 @@ const BlingPage: React.FC<BlingPageProps> = ({
                     </div>
                   </div>
                 ))}
+                {activeImportacaoLoteId &&
+                  (() => {
+                    const loteAtivo = importacaoLotes.find(
+                      (l) => l.id === activeImportacaoLoteId
+                    );
+                    if (!loteAtivo) return null;
+
+                    return (
+                      <div className="mt-2 p-3 rounded-xl border border-indigo-200 bg-indigo-50/70">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-indigo-700 mb-2">
+                          Pedidos do lote selecionado (referencia pedido x NF-e)
+                        </p>
+                        <div className="max-h-40 overflow-y-auto space-y-1.5">
+                          {loteAtivo.nfes.map((item) => {
+                            const matchedNfe = getMatchedNfeByLoteItem(
+                              item,
+                              nfeSaida
+                            );
+                            const linked = !!matchedNfe;
+                            const logisticaNumero =
+                              matchedNfe?.rastreamento || "sem tracking";
+                            return (
+                              <div
+                                key={`${loteAtivo.id}-${item.pedidoVendaId}-${item.nfeId || item.nfeNumero || "sem-nfe"}`}
+                                className="grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] items-center gap-2 text-[11px]"
+                              >
+                                <span className="font-mono text-slate-700">
+                                  Pedido{" "}
+                                  {item.pedidoNumero || item.pedidoVendaId}
+                                </span>
+                                <span className="font-mono text-indigo-700">
+                                  NF-e {item.nfeNumero || item.nfeId || "-"}
+                                </span>
+                                <span
+                                  className="font-mono text-teal-700"
+                                  title="Numero da logistica/rastreio do pedido no Bling"
+                                >
+                                  Logistica {logisticaNumero}
+                                </span>
+                                <span
+                                  className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${linked ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}
+                                >
+                                  {linked ? "encontrada" : "nao localizada"}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 {importacaoLotes.length > 5 && (
                   <p className="text-[10px] text-slate-400 text-center">
                     +{importacaoLotes.length - 5} lotes anteriores
@@ -6318,7 +6567,8 @@ const BlingPage: React.FC<BlingPageProps> = ({
               <div className="mb-4 bg-purple-50 border border-purple-200 rounded-2xl p-4">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-black text-purple-700 flex items-center gap-2">
-                    <Loader2 size={12} className="animate-spin" /> Enriquecendo dados (rastreios, chaves, lojas)...
+                    <Loader2 size={12} className="animate-spin" /> Enriquecendo
+                    dados (rastreios, chaves, lojas)...
                   </span>
                   <span className="text-xs font-bold text-purple-600">
                     {enrichProgress.current}/{enrichProgress.total}
@@ -6408,7 +6658,9 @@ const BlingPage: React.FC<BlingPageProps> = ({
                           nfe.situacao === 5 || nfe.situacao === 6;
                         const hasEmitError = !!nfeBatchErrors[nfe.id];
                         const isErro =
-                          nfe.situacao === 4 || nfe.situacao === 7 || hasEmitError;
+                          nfe.situacao === 4 ||
+                          nfe.situacao === 7 ||
+                          hasEmitError;
                         const isLoading = emitindoNfeId === nfe.id;
                         const isExpanded = expandedNfeItemsId === nfe.id;
                         const nfeItems = nfeItemsCache[nfe.id] || [];
@@ -6628,7 +6880,15 @@ const BlingPage: React.FC<BlingPageProps> = ({
                                       title="Enviar NF-e para SEFAZ"
                                       className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-yellow-100 text-yellow-800 px-2.5 py-1.5 rounded-lg hover:bg-yellow-200 border border-yellow-200 disabled:opacity-50 transition-all"
                                     >
-                                      {isLoading ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Emitir
+                                      {isLoading ? (
+                                        <Loader2
+                                          size={11}
+                                          className="animate-spin"
+                                        />
+                                      ) : (
+                                        <Send size={11} />
+                                      )}{" "}
+                                      Emitir
                                     </button>
                                   )}
                                   {/* Re-emitir — para notas com erro de emissão */}
@@ -6639,23 +6899,40 @@ const BlingPage: React.FC<BlingPageProps> = ({
                                       title={`Erro: ${nfeBatchErrors[nfe.id]} — Clique para tentar emitir novamente`}
                                       className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-red-100 text-red-700 px-2.5 py-1.5 rounded-lg hover:bg-red-200 border border-red-200 transition-all"
                                     >
-                                      {isLoading ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />} Reenviar
+                                      {isLoading ? (
+                                        <Loader2
+                                          size={11}
+                                          className="animate-spin"
+                                        />
+                                      ) : (
+                                        <RefreshCw size={11} />
+                                      )}{" "}
+                                      Reenviar
                                     </button>
                                   )}
                                   {/* Corrigir no Bling — para rejeitadas/denegadas */}
-                                  {(nfe.situacao === 4 || nfe.situacao === 7) && (
+                                  {(nfe.situacao === 4 ||
+                                    nfe.situacao === 7) && (
                                     <button
-                                      onClick={() => window.open(`https://www.bling.com.br/notas.fiscais.php#edit/${nfe.id}`, "_blank")}
+                                      onClick={() =>
+                                        window.open(
+                                          `https://www.bling.com.br/notas.fiscais.php#edit/${nfe.id}`,
+                                          "_blank"
+                                        )
+                                      }
                                       title={`NF-e ${nfe.situacao === 4 ? "Rejeitada" : "Denegada"} — Abrir no Bling para corrigir`}
                                       className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-red-100 text-red-700 px-2.5 py-1.5 rounded-lg hover:bg-red-200 border border-red-200 transition-all"
                                     >
-                                      <AlertTriangle size={11} /> Corrigir no Bling
+                                      <AlertTriangle size={11} /> Corrigir no
+                                      Bling
                                     </button>
                                   )}
                                   {/* DANFE rápido — para autorizadas/emitidas */}
                                   {(isEmitidaDanfe || isAutorizadaSemDanfe) && (
                                     <button
-                                      onClick={() => handleDownloadDanfe(nfe, "normal")}
+                                      onClick={() =>
+                                        handleDownloadDanfe(nfe, "normal")
+                                      }
                                       title="Abrir DANFE"
                                       className="flex items-center gap-1 text-[9px] font-black uppercase tracking-widest bg-orange-50 text-orange-700 px-2 py-1.5 rounded-lg hover:bg-orange-100 border border-orange-100 transition-all"
                                     >
@@ -6665,7 +6942,13 @@ const BlingPage: React.FC<BlingPageProps> = ({
                                   {/* Menu de contexto ⋯ — todas as NF-e */}
                                   <div className="relative">
                                     <button
-                                      onClick={() => setNfeContextMenuId(nfeContextMenuId === nfe.id ? null : nfe.id)}
+                                      onClick={() =>
+                                        setNfeContextMenuId(
+                                          nfeContextMenuId === nfe.id
+                                            ? null
+                                            : nfe.id
+                                        )
+                                      }
                                       className="flex items-center justify-center w-7 h-7 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 hover:text-slate-700 transition-all"
                                       title="Mais ações"
                                     >
@@ -6673,50 +6956,171 @@ const BlingPage: React.FC<BlingPageProps> = ({
                                     </button>
                                     {nfeContextMenuId === nfe.id && (
                                       <>
-                                        <div className="fixed inset-0 z-40" onClick={() => setNfeContextMenuId(null)} />
+                                        <div
+                                          className="fixed inset-0 z-40"
+                                          onClick={() =>
+                                            setNfeContextMenuId(null)
+                                          }
+                                        />
                                         <div className="absolute right-0 top-full mt-1 z-50 w-52 bg-white border border-slate-200 rounded-xl shadow-xl py-1 text-[11px] font-bold text-slate-700">
                                           {isPendente && (
                                             <>
-                                              <button onClick={() => { handleEmitirNfe(nfe); setNfeContextMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-yellow-50 flex items-center gap-2">
-                                                <Send size={12} className="text-yellow-600" /> Emitir NF-e
+                                              <button
+                                                onClick={() => {
+                                                  handleEmitirNfe(nfe);
+                                                  setNfeContextMenuId(null);
+                                                }}
+                                                className="w-full text-left px-3 py-2 hover:bg-yellow-50 flex items-center gap-2"
+                                              >
+                                                <Send
+                                                  size={12}
+                                                  className="text-yellow-600"
+                                                />{" "}
+                                                Emitir NF-e
                                               </button>
-                                              <button onClick={() => { handleAbrirEditNfe(nfe); setNfeContextMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-amber-50 flex items-center gap-2">
-                                                <Settings size={12} className="text-amber-600" /> Editar NF-e
+                                              <button
+                                                onClick={() => {
+                                                  handleAbrirEditNfe(nfe);
+                                                  setNfeContextMenuId(null);
+                                                }}
+                                                className="w-full text-left px-3 py-2 hover:bg-amber-50 flex items-center gap-2"
+                                              >
+                                                <Settings
+                                                  size={12}
+                                                  className="text-amber-600"
+                                                />{" "}
+                                                Editar NF-e
                                               </button>
                                               <div className="border-t border-slate-100 my-1" />
                                             </>
                                           )}
-                                          <button onClick={() => { handleDownloadDanfe(nfe, "normal"); setNfeContextMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-orange-50 flex items-center gap-2">
-                                            <Download size={12} className="text-orange-600" /> DANFE Normal
+                                          <button
+                                            onClick={() => {
+                                              handleDownloadDanfe(
+                                                nfe,
+                                                "normal"
+                                              );
+                                              setNfeContextMenuId(null);
+                                            }}
+                                            className="w-full text-left px-3 py-2 hover:bg-orange-50 flex items-center gap-2"
+                                          >
+                                            <Download
+                                              size={12}
+                                              className="text-orange-600"
+                                            />{" "}
+                                            DANFE Normal
                                           </button>
-                                          <button onClick={() => { handleDownloadDanfe(nfe, "simplified"); setNfeContextMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-orange-50 flex items-center gap-2">
-                                            <Zap size={12} className="text-orange-500" /> DANFE Simplificada
+                                          <button
+                                            onClick={() => {
+                                              handleDownloadDanfe(
+                                                nfe,
+                                                "simplified"
+                                              );
+                                              setNfeContextMenuId(null);
+                                            }}
+                                            className="w-full text-left px-3 py-2 hover:bg-orange-50 flex items-center gap-2"
+                                          >
+                                            <Zap
+                                              size={12}
+                                              className="text-orange-500"
+                                            />{" "}
+                                            DANFE Simplificada
                                           </button>
-                                          <button onClick={() => { handleDownloadEnvioZpl(nfe); setNfeContextMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-orange-50 flex items-center gap-2">
-                                            <Printer size={12} className="text-orange-500" /> Etiqueta Envio (ZPL)
+                                          <button
+                                            onClick={() => {
+                                              handleDownloadEnvioZpl(nfe);
+                                              setNfeContextMenuId(null);
+                                            }}
+                                            className="w-full text-left px-3 py-2 hover:bg-orange-50 flex items-center gap-2"
+                                          >
+                                            <Printer
+                                              size={12}
+                                              className="text-orange-500"
+                                            />{" "}
+                                            Etiqueta Envio (ZPL)
                                           </button>
-                                          <button onClick={() => { handleDownloadCombinedZpl(nfe); setNfeContextMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-orange-50 flex items-center gap-2">
-                                            <Files size={12} className="text-orange-600" /> DANFE + Etiqueta (ZPL)
+                                          <button
+                                            onClick={() => {
+                                              handleDownloadCombinedZpl(nfe);
+                                              setNfeContextMenuId(null);
+                                            }}
+                                            className="w-full text-left px-3 py-2 hover:bg-orange-50 flex items-center gap-2"
+                                          >
+                                            <Files
+                                              size={12}
+                                              className="text-orange-600"
+                                            />{" "}
+                                            DANFE + Etiqueta (ZPL)
                                           </button>
                                           <div className="border-t border-slate-100 my-1" />
-                                          <button onClick={() => { handleDownloadZpl(nfe); setNfeContextMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-amber-50 flex items-center gap-2">
-                                            <Printer size={12} className="text-amber-600" /> ZPL
+                                          <button
+                                            onClick={() => {
+                                              handleDownloadZpl(nfe);
+                                              setNfeContextMenuId(null);
+                                            }}
+                                            className="w-full text-left px-3 py-2 hover:bg-amber-50 flex items-center gap-2"
+                                          >
+                                            <Printer
+                                              size={12}
+                                              className="text-amber-600"
+                                            />{" "}
+                                            ZPL
                                           </button>
-                                          <button onClick={() => { handleDownloadXml(nfe); setNfeContextMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-blue-50 flex items-center gap-2">
-                                            <FileCode size={12} className="text-blue-600" /> XML
+                                          <button
+                                            onClick={() => {
+                                              handleDownloadXml(nfe);
+                                              setNfeContextMenuId(null);
+                                            }}
+                                            className="w-full text-left px-3 py-2 hover:bg-blue-50 flex items-center gap-2"
+                                          >
+                                            <FileCode
+                                              size={12}
+                                              className="text-blue-600"
+                                            />{" "}
+                                            XML
                                           </button>
-                                          <button onClick={() => { handleCopiarChave(nfe); setNfeContextMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center gap-2">
-                                            <Copy size={12} className="text-slate-500" /> Copiar Chave
+                                          <button
+                                            onClick={() => {
+                                              handleCopiarChave(nfe);
+                                              setNfeContextMenuId(null);
+                                            }}
+                                            className="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center gap-2"
+                                          >
+                                            <Copy
+                                              size={12}
+                                              className="text-slate-500"
+                                            />{" "}
+                                            Copiar Chave
                                           </button>
                                           <div className="border-t border-slate-100 my-1" />
-                                          <button onClick={() => { window.open(`https://www.bling.com.br/notas.fiscais.php#edit/${nfe.id}`, "_blank"); setNfeContextMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-emerald-50 flex items-center gap-2">
-                                            <ExternalLink size={12} className="text-emerald-600" /> Abrir no Bling
+                                          <button
+                                            onClick={() => {
+                                              window.open(
+                                                `https://www.bling.com.br/notas.fiscais.php#edit/${nfe.id}`,
+                                                "_blank"
+                                              );
+                                              setNfeContextMenuId(null);
+                                            }}
+                                            className="w-full text-left px-3 py-2 hover:bg-emerald-50 flex items-center gap-2"
+                                          >
+                                            <ExternalLink
+                                              size={12}
+                                              className="text-emerald-600"
+                                            />{" "}
+                                            Abrir no Bling
                                           </button>
                                           {nfeBatchErrors[nfe.id] && (
                                             <>
                                               <div className="border-t border-slate-100 my-1" />
-                                              <button onClick={() => { handleClearNfeError(nfe.id); setNfeContextMenuId(null); }} className="w-full text-left px-3 py-2 hover:bg-red-50 flex items-center gap-2 text-red-600">
-                                                <XCircle size={12} /> Limpar Erro
+                                              <button
+                                                onClick={() => {
+                                                  handleClearNfeError(nfe.id);
+                                                  setNfeContextMenuId(null);
+                                                }}
+                                                className="w-full text-left px-3 py-2 hover:bg-red-50 flex items-center gap-2 text-red-600"
+                                              >
+                                                <XCircle size={12} /> Limpar
+                                                Erro
                                               </button>
                                             </>
                                           )}
@@ -6733,28 +7137,51 @@ const BlingPage: React.FC<BlingPageProps> = ({
                                 <td colSpan={15} className="p-2.5 px-6">
                                   <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-2 text-[11px] font-bold text-red-700">
-                                      <AlertTriangle size={14} className="text-red-500 flex-shrink-0" />
+                                      <AlertTriangle
+                                        size={14}
+                                        className="text-red-500 flex-shrink-0"
+                                      />
                                       <div>
-                                        <span className="block">Erro na emissão SEFAZ</span>
-                                        <span className="text-[10px] font-normal text-red-500 block mt-0.5">{nfeBatchErrors[nfe.id]}</span>
+                                        <span className="block">
+                                          Erro na emissão SEFAZ
+                                        </span>
+                                        <span className="text-[10px] font-normal text-red-500 block mt-0.5">
+                                          {nfeBatchErrors[nfe.id]}
+                                        </span>
                                       </div>
                                     </div>
                                     <div className="flex items-center gap-2">
                                       <button
-                                        onClick={() => window.open(`https://www.bling.com.br/notas.fiscais.php#edit/${nfe.id}`, "_blank")}
+                                        onClick={() =>
+                                          window.open(
+                                            `https://www.bling.com.br/notas.fiscais.php#edit/${nfe.id}`,
+                                            "_blank"
+                                          )
+                                        }
                                         className="flex items-center gap-1 text-[9px] font-bold bg-white text-red-600 px-2.5 py-1 rounded border border-red-200 hover:bg-red-50 transition-all"
                                       >
-                                        <ExternalLink size={10} /> Editar no Bling
+                                        <ExternalLink size={10} /> Editar no
+                                        Bling
                                       </button>
                                       <button
                                         onClick={() => handleEmitirNfe(nfe)}
                                         disabled={emitindoNfeId === nfe.id}
                                         className="flex items-center gap-1 text-[9px] font-bold bg-red-600 text-white px-2.5 py-1 rounded hover:bg-red-700 disabled:opacity-50 transition-all"
                                       >
-                                        {emitindoNfeId === nfe.id ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />} Reemitir
+                                        {emitindoNfeId === nfe.id ? (
+                                          <Loader2
+                                            size={10}
+                                            className="animate-spin"
+                                          />
+                                        ) : (
+                                          <RefreshCw size={10} />
+                                        )}{" "}
+                                        Reemitir
                                       </button>
                                       <button
-                                        onClick={() => handleClearNfeError(nfe.id)}
+                                        onClick={() =>
+                                          handleClearNfeError(nfe.id)
+                                        }
                                         className="flex items-center gap-1 text-[9px] font-bold text-red-400 px-1.5 py-1 rounded hover:bg-red-100 transition-all"
                                         title="Limpar erro"
                                       >
@@ -6948,43 +7375,69 @@ const BlingPage: React.FC<BlingPageProps> = ({
                                       {/* Rastreio & Transportadora */}
                                       <div className="bg-white border border-teal-200 rounded-xl p-3 shadow-sm">
                                         <p className="text-[9px] font-black text-teal-600 uppercase tracking-widest mb-2 flex items-center gap-1">
-                                          <Truck size={10} /> Rastreio & Logística
+                                          <Truck size={10} /> Rastreio &
+                                          Logística
                                         </p>
                                         <div className="space-y-1.5">
                                           <div className="flex justify-between text-[10px]">
-                                            <span className="text-slate-500">Rastreio:</span>
+                                            <span className="text-slate-500">
+                                              Rastreio:
+                                            </span>
                                             {nfe.rastreamento ? (
                                               <span
                                                 className="font-bold text-teal-700 cursor-pointer hover:underline"
                                                 onClick={() => {
-                                                  navigator.clipboard.writeText(nfe.rastreamento!);
-                                                  addToast("Código de rastreio copiado!", "success");
+                                                  navigator.clipboard.writeText(
+                                                    nfe.rastreamento!
+                                                  );
+                                                  addToast(
+                                                    "Código de rastreio copiado!",
+                                                    "success"
+                                                  );
                                                 }}
                                                 title="Clique para copiar"
                                               >
                                                 {nfe.rastreamento}
                                               </span>
                                             ) : (
-                                              <span className="text-slate-300 italic">Não disponível</span>
+                                              <span className="text-slate-300 italic">
+                                                Não disponível
+                                              </span>
                                             )}
                                           </div>
                                           {nfe.idTransportador && (
                                             <div className="flex justify-between text-[10px]">
-                                              <span className="text-slate-500">Transportadora:</span>
-                                              <span className="font-bold text-slate-700">ID {nfe.idTransportador}</span>
+                                              <span className="text-slate-500">
+                                                Transportadora:
+                                              </span>
+                                              <span className="font-bold text-slate-700">
+                                                ID {nfe.idTransportador}
+                                              </span>
                                             </div>
                                           )}
                                           <div className="flex justify-between text-[10px]">
-                                            <span className="text-slate-500">ID Venda (Bling):</span>
-                                            <span className="font-bold text-blue-600">{nfe.idVenda || "-"}</span>
+                                            <span className="text-slate-500">
+                                              ID Venda (Bling):
+                                            </span>
+                                            <span className="font-bold text-blue-600">
+                                              {nfe.idVenda || "-"}
+                                            </span>
                                           </div>
                                           <div className="flex justify-between text-[10px]">
-                                            <span className="text-slate-500">Pedido Loja:</span>
-                                            <span className="font-bold text-slate-700">{nfe.numeroLoja || "-"}</span>
+                                            <span className="text-slate-500">
+                                              Pedido Loja:
+                                            </span>
+                                            <span className="font-bold text-slate-700">
+                                              {nfe.numeroLoja || "-"}
+                                            </span>
                                           </div>
                                           <div className="flex justify-between text-[10px]">
-                                            <span className="text-slate-500">Pedido Bling:</span>
-                                            <span className="font-bold text-blue-600">{nfe.numeroVenda || "-"}</span>
+                                            <span className="text-slate-500">
+                                              Pedido Bling:
+                                            </span>
+                                            <span className="font-bold text-blue-600">
+                                              {nfe.numeroVenda || "-"}
+                                            </span>
                                           </div>
                                         </div>
                                       </div>
@@ -6996,32 +7449,51 @@ const BlingPage: React.FC<BlingPageProps> = ({
                                         </p>
                                         <div className="space-y-1.5">
                                           <div className="flex justify-between text-[10px]">
-                                            <span className="text-slate-500">Chave de Acesso:</span>
+                                            <span className="text-slate-500">
+                                              Chave de Acesso:
+                                            </span>
                                             {nfe.chaveAcesso ? (
                                               <span
                                                 className="font-mono text-[9px] font-bold text-slate-600 cursor-pointer hover:underline max-w-[200px] truncate"
                                                 onClick={() => {
-                                                  navigator.clipboard.writeText(nfe.chaveAcesso!);
-                                                  addToast("Chave de acesso copiada!", "success");
+                                                  navigator.clipboard.writeText(
+                                                    nfe.chaveAcesso!
+                                                  );
+                                                  addToast(
+                                                    "Chave de acesso copiada!",
+                                                    "success"
+                                                  );
                                                 }}
                                                 title={`${nfe.chaveAcesso} — Clique para copiar`}
                                               >
-                                                {nfe.chaveAcesso.slice(0, 12)}...{nfe.chaveAcesso.slice(-8)}
+                                                {nfe.chaveAcesso.slice(0, 12)}
+                                                ...{nfe.chaveAcesso.slice(-8)}
                                               </span>
                                             ) : (
-                                              <span className="text-slate-300 italic">Não disponível</span>
+                                              <span className="text-slate-300 italic">
+                                                Não disponível
+                                              </span>
                                             )}
                                           </div>
                                           <div className="flex justify-between text-[10px]">
-                                            <span className="text-slate-500">Situação:</span>
-                                            <span className={`font-black ${nfe.situacao === 4 || nfe.situacao === 7 ? "text-red-600" : nfe.situacao === 6 ? "text-green-600" : "text-slate-700"}`}>
+                                            <span className="text-slate-500">
+                                              Situação:
+                                            </span>
+                                            <span
+                                              className={`font-black ${nfe.situacao === 4 || nfe.situacao === 7 ? "text-red-600" : nfe.situacao === 6 ? "text-green-600" : "text-slate-700"}`}
+                                            >
                                               {getNfeSituacaoLabel(nfe)}
                                             </span>
                                           </div>
                                           <div className="flex gap-2 mt-2 flex-wrap">
                                             {nfe.linkDanfe && (
                                               <button
-                                                onClick={() => window.open(nfe.linkDanfe!, "_blank")}
+                                                onClick={() =>
+                                                  window.open(
+                                                    nfe.linkDanfe!,
+                                                    "_blank"
+                                                  )
+                                                }
                                                 className="flex items-center gap-1 text-[9px] font-bold bg-orange-50 text-orange-700 px-2 py-1 rounded hover:bg-orange-100 border border-orange-200"
                                               >
                                                 <Download size={9} /> DANFE
@@ -7029,20 +7501,35 @@ const BlingPage: React.FC<BlingPageProps> = ({
                                             )}
                                             {nfe.linkXml && (
                                               <button
-                                                onClick={() => window.open(nfe.linkXml!, "_blank")}
+                                                onClick={() =>
+                                                  window.open(
+                                                    nfe.linkXml!,
+                                                    "_blank"
+                                                  )
+                                                }
                                                 className="flex items-center gap-1 text-[9px] font-bold bg-blue-50 text-blue-700 px-2 py-1 rounded hover:bg-blue-100 border border-blue-200"
                                               >
                                                 <FileCode size={9} /> XML
                                               </button>
                                             )}
                                             <button
-                                              onClick={() => handleDownloadDanfe(nfe, "simplified")}
+                                              onClick={() =>
+                                                handleDownloadDanfe(
+                                                  nfe,
+                                                  "simplified"
+                                                )
+                                              }
                                               className="flex items-center gap-1 text-[9px] font-bold bg-teal-50 text-teal-700 px-2 py-1 rounded hover:bg-teal-100 border border-teal-200"
                                             >
                                               <Download size={9} /> Simplificada
                                             </button>
                                             <button
-                                              onClick={() => handleDownloadDanfe(nfe, "transport_label")}
+                                              onClick={() =>
+                                                handleDownloadDanfe(
+                                                  nfe,
+                                                  "transport_label"
+                                                )
+                                              }
                                               className="flex items-center gap-1 text-[9px] font-bold bg-purple-50 text-purple-700 px-2 py-1 rounded hover:bg-purple-100 border border-purple-200"
                                             >
                                               <Tag size={9} /> Etiqueta
@@ -8229,7 +8716,10 @@ const BlingPage: React.FC<BlingPageProps> = ({
                 </div>
                 Editar NF-e #{editNfeModal.data.numero || editNfeModal.id}
               </h2>
-              <button onClick={() => setEditNfeModal(null)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
+              <button
+                onClick={() => setEditNfeModal(null)}
+                className="p-2 hover:bg-slate-100 rounded-full transition-colors"
+              >
                 <X size={20} className="text-slate-400" />
               </button>
             </div>
@@ -8237,19 +8727,25 @@ const BlingPage: React.FC<BlingPageProps> = ({
             {isLoadingEditNfe ? (
               <div className="flex flex-col items-center justify-center py-16 gap-4">
                 <Loader2 size={36} className="animate-spin text-amber-400" />
-                <p className="text-sm font-bold text-slate-400">Carregando dados completos da nota...</p>
+                <p className="text-sm font-bold text-slate-400">
+                  Carregando dados completos da nota...
+                </p>
               </div>
             ) : (
               <>
                 <div className="space-y-5 max-h-[62vh] overflow-y-auto pr-2 custom-scrollbar">
-
                   {/* Banner de aviso */}
                   <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex items-start gap-3">
-                    <Info size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />
+                    <Info
+                      size={16}
+                      className="text-amber-500 mt-0.5 flex-shrink-0"
+                    />
                     <p className="text-[11px] text-amber-700 leading-relaxed">
-                      Alterações são enviadas ao <strong>Bling via API (PUT)</strong>.
-                      Apenas notas <strong>Pendentes</strong> podem ser editadas antes da emissão.
-                      Campos fiscais como Natureza de Operação afetam o cálculo de impostos.
+                      Alterações são enviadas ao{" "}
+                      <strong>Bling via API (PUT)</strong>. Apenas notas{" "}
+                      <strong>Pendentes</strong> podem ser editadas antes da
+                      emissão. Campos fiscais como Natureza de Operação afetam o
+                      cálculo de impostos.
                     </p>
                   </div>
 
@@ -8260,29 +8756,69 @@ const BlingPage: React.FC<BlingPageProps> = ({
                     </p>
                     <div className="grid grid-cols-3 gap-3">
                       <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Número</label>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">
+                          Número
+                        </label>
                         <input
                           type="text"
                           value={editNfeModal.data.numero || ""}
-                          onChange={(e) => setEditNfeModal((p) => p ? { ...p, data: { ...p.data, numero: e.target.value } } : null)}
+                          onChange={(e) =>
+                            setEditNfeModal((p) =>
+                              p
+                                ? {
+                                    ...p,
+                                    data: { ...p.data, numero: e.target.value }
+                                  }
+                                : null
+                            )
+                          }
                           className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-amber-400 transition-colors"
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Série</label>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">
+                          Série
+                        </label>
                         <input
                           type="text"
                           value={editNfeModal.data.serie || ""}
-                          onChange={(e) => setEditNfeModal((p) => p ? { ...p, data: { ...p.data, serie: e.target.value } } : null)}
+                          onChange={(e) =>
+                            setEditNfeModal((p) =>
+                              p
+                                ? {
+                                    ...p,
+                                    data: { ...p.data, serie: e.target.value }
+                                  }
+                                : null
+                            )
+                          }
                           className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-amber-400 transition-colors"
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Data Operação</label>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">
+                          Data Operação
+                        </label>
                         <input
                           type="date"
-                          value={editNfeModal.data.dataOperacao?.split("T")[0] || editNfeModal.data.dataEmissao?.split("T")[0] || ""}
-                          onChange={(e) => setEditNfeModal((p) => p ? { ...p, data: { ...p.data, dataOperacao: e.target.value } } : null)}
+                          value={
+                            editNfeModal.data.dataOperacao?.split("T")[0] ||
+                            editNfeModal.data.dataEmissao?.split("T")[0] ||
+                            ""
+                          }
+                          onChange={(e) =>
+                            setEditNfeModal((p) =>
+                              p
+                                ? {
+                                    ...p,
+                                    data: {
+                                      ...p.data,
+                                      dataOperacao: e.target.value
+                                    }
+                                  }
+                                : null
+                            )
+                          }
                           className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-amber-400 transition-colors"
                         />
                       </div>
@@ -8291,11 +8827,25 @@ const BlingPage: React.FC<BlingPageProps> = ({
 
                   {/* Natureza de Operação */}
                   <div>
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Natureza de Operação</label>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">
+                      Natureza de Operação
+                    </label>
                     <input
                       type="text"
                       value={editNfeModal.data.naturezaOperacao || ""}
-                      onChange={(e) => setEditNfeModal((p) => p ? { ...p, data: { ...p.data, naturezaOperacao: e.target.value } } : null)}
+                      onChange={(e) =>
+                        setEditNfeModal((p) =>
+                          p
+                            ? {
+                                ...p,
+                                data: {
+                                  ...p.data,
+                                  naturezaOperacao: e.target.value
+                                }
+                              }
+                            : null
+                        )
+                      }
                       className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-amber-400 transition-colors"
                       placeholder="Ex: VENDA DE MERCADORIA"
                     />
@@ -8308,20 +8858,56 @@ const BlingPage: React.FC<BlingPageProps> = ({
                     </p>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Nome / Razão Social</label>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">
+                          Nome / Razão Social
+                        </label>
                         <input
                           type="text"
                           value={editNfeModal.data.contato?.nome || ""}
-                          onChange={(e) => setEditNfeModal((p) => p ? { ...p, data: { ...p.data, contato: { ...p.data.contato, nome: e.target.value } } } : null)}
+                          onChange={(e) =>
+                            setEditNfeModal((p) =>
+                              p
+                                ? {
+                                    ...p,
+                                    data: {
+                                      ...p.data,
+                                      contato: {
+                                        ...p.data.contato,
+                                        nome: e.target.value
+                                      }
+                                    }
+                                  }
+                                : null
+                            )
+                          }
                           className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-amber-400 transition-colors"
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">CPF / CNPJ</label>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">
+                          CPF / CNPJ
+                        </label>
                         <input
                           type="text"
-                          value={editNfeModal.data.contato?.numeroDocumento || ""}
-                          onChange={(e) => setEditNfeModal((p) => p ? { ...p, data: { ...p.data, contato: { ...p.data.contato, numeroDocumento: e.target.value } } } : null)}
+                          value={
+                            editNfeModal.data.contato?.numeroDocumento || ""
+                          }
+                          onChange={(e) =>
+                            setEditNfeModal((p) =>
+                              p
+                                ? {
+                                    ...p,
+                                    data: {
+                                      ...p.data,
+                                      contato: {
+                                        ...p.data.contato,
+                                        numeroDocumento: e.target.value
+                                      }
+                                    }
+                                  }
+                                : null
+                            )
+                          }
                           className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-amber-400 transition-colors"
                           placeholder="000.000.000-00"
                         />
@@ -8336,13 +8922,27 @@ const BlingPage: React.FC<BlingPageProps> = ({
                     </p>
                     <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Valor do Frete (R$)</label>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">
+                          Valor do Frete (R$)
+                        </label>
                         <input
                           type="number"
                           step="0.01"
                           min="0"
                           value={editNfeModal.data.frete ?? ""}
-                          onChange={(e) => setEditNfeModal((p) => p ? { ...p, data: { ...p.data, frete: parseFloat(e.target.value) || 0 } } : null)}
+                          onChange={(e) =>
+                            setEditNfeModal((p) =>
+                              p
+                                ? {
+                                    ...p,
+                                    data: {
+                                      ...p.data,
+                                      frete: parseFloat(e.target.value) || 0
+                                    }
+                                  }
+                                : null
+                            )
+                          }
                           className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-amber-400 transition-colors"
                           placeholder="0.00"
                         />
@@ -8352,16 +8952,26 @@ const BlingPage: React.FC<BlingPageProps> = ({
 
                   {/* Observações */}
                   <div>
-                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Observações / Informações Adicionais</label>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">
+                      Observações / Informações Adicionais
+                    </label>
                     <textarea
                       rows={3}
                       value={editNfeModal.data.observacoes || ""}
-                      onChange={(e) => setEditNfeModal((p) => p ? { ...p, data: { ...p.data, observacoes: e.target.value } } : null)}
+                      onChange={(e) =>
+                        setEditNfeModal((p) =>
+                          p
+                            ? {
+                                ...p,
+                                data: { ...p.data, observacoes: e.target.value }
+                              }
+                            : null
+                        )
+                      }
                       className="w-full p-2.5 border-2 border-slate-100 rounded-xl bg-slate-50 font-bold text-sm outline-none focus:border-amber-400 resize-none transition-colors"
                       placeholder="Informações complementares para a SEFAZ..."
                     />
                   </div>
-
                 </div>
 
                 {/* Footer */}
@@ -8377,7 +8987,11 @@ const BlingPage: React.FC<BlingPageProps> = ({
                     disabled={isSavingNfe}
                     className="flex-[2] flex items-center justify-center gap-2 text-xs font-black uppercase tracking-widest py-3.5 rounded-xl bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-50 transition-all shadow-lg shadow-amber-100"
                   >
-                    {isSavingNfe ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                    {isSavingNfe ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Save size={16} />
+                    )}
                     Salvar no Bling
                   </button>
                 </div>

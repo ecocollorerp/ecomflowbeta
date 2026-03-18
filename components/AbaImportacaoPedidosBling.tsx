@@ -383,6 +383,10 @@ export const AbaImportacaoPedidosBling: React.FC<
 
     const ok = resultados.filter((r) => r.success).length;
     const fail = resultados.length - ok;
+    const numerosGerados = resultados
+      .filter((r) => r.success)
+      .map((r) => String(r.nfe?.numero || r.nfe?.id || ""))
+      .filter(Boolean);
 
     if (ok > 0) {
       const lote: LoteNfe = {
@@ -413,7 +417,7 @@ export const AbaImportacaoPedidosBling: React.FC<
       setLotesGerados((prev) => [lote, ...prev]);
       onLoteGerado?.(lote);
       addToast?.(
-        `${ok}/${resultados.length} NF-e${emitir ? " geradas e emitidas" : " geradas"} — Lote ${lote.id}`,
+        `${ok}/${resultados.length} NF-e${emitir ? " geradas e emitidas" : " geradas"} — Lote ${lote.id}${numerosGerados.length > 0 ? ` | Notas: ${numerosGerados.slice(0, 6).join(", ")}${numerosGerados.length > 6 ? "..." : ""}` : ""}`,
         fail > 0 ? "warning" : "success"
       );
     } else {
@@ -461,7 +465,7 @@ export const AbaImportacaoPedidosBling: React.FC<
         setLotesGerados((prev) => [lote, ...prev]);
         onLoteGerado?.(lote);
         addToast?.(
-          `NF-e gerada para pedido #${pedido.numero} — Lote ${lote.id}`,
+          `NF-e ${data.nfe?.numero || data.nfe?.id || ""} gerada para pedido #${pedido.numero} — Lote ${lote.id}`,
           "success"
         );
       } else {
