@@ -128,7 +128,7 @@ async function startServer() {
   app.get("/api/erp/nfe/synced-ids", async (req, res) => {
     try {
       const { data, error } = await supabase
-        .from("nfe")
+        .from("nfes")
         .select("numero, chave_acesso, id"); // Adicionado id
 
       if (error) {
@@ -4106,6 +4106,77 @@ async function startServer() {
     }
   });
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Proxy: GET /api/bling/logisticas → Bling v3 /logisticas (transportadoras)
+  // ─────────────────────────────────────────────────────────────────────────
+  app.get("/api/bling/logisticas", async (req, res) => {
+    try {
+      const token = normalizeBearerToken(
+        (req.headers["authorization"] as string) || ""
+      );
+      if (!token) return res.status(401).json({ error: "Token obrigatório" });
+
+      const query = new URLSearchParams(req.query as any).toString();
+      const url = `https://www.bling.com.br/Api/v3/logisticas${query ? `?${query}` : ""}`;
+      console.log(`🚚 [LOGISTICAS] GET ${url}`);
+      const response = await blingFetchRetry(url, {
+        headers: { Authorization: token, Accept: "application/json" }
+      });
+      const data = await response.json().catch(() => ({}));
+      res.status(response.status).json(data);
+    } catch (error: any) {
+      console.error("❌ [LOGISTICAS ERROR]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Proxy: GET /api/bling/logisticas/objetos → Bling v3 /logisticas/objetos
+  // ─────────────────────────────────────────────────────────────────────────
+  app.get("/api/bling/logisticas/objetos", async (req, res) => {
+    try {
+      const token = normalizeBearerToken(
+        (req.headers["authorization"] as string) || ""
+      );
+      if (!token) return res.status(401).json({ error: "Token obrigatório" });
+
+      const query = new URLSearchParams(req.query as any).toString();
+      const url = `https://www.bling.com.br/Api/v3/logisticas/objetos${query ? `?${query}` : ""}`;
+      console.log(`📦 [LOGISTICAS OBJETOS] GET ${url}`);
+      const response = await blingFetchRetry(url, {
+        headers: { Authorization: token, Accept: "application/json" }
+      });
+      const data = await response.json().catch(() => ({}));
+      res.status(response.status).json(data);
+    } catch (error: any) {
+      console.error("❌ [LOGISTICAS OBJETOS ERROR]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Proxy: GET /api/bling/contatos/:id → Bling v3 /contatos/:id
+  // ─────────────────────────────────────────────────────────────────────────
+  app.get("/api/bling/contatos/:id", async (req, res) => {
+    try {
+      const token = normalizeBearerToken(
+        (req.headers["authorization"] as string) || ""
+      );
+      if (!token) return res.status(401).json({ error: "Token obrigatório" });
+
+      const url = `https://www.bling.com.br/Api/v3/contatos/${req.params.id}`;
+      console.log(`👤 [CONTATO] GET ${url}`);
+      const response = await blingFetchRetry(url, {
+        headers: { Authorization: token, Accept: "application/json" }
+      });
+      const data = await response.json().catch(() => ({}));
+      res.status(response.status).json(data);
+    } catch (error: any) {
+      console.error("❌ [CONTATO ERROR]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Proxy para Objetos de Postagem (Bling v3)
   app.get("/api/bling/objetos-postagem", async (req, res) => {
     try {
@@ -4127,6 +4198,98 @@ async function startServer() {
     } catch (error: any) {
       console.error("❌ [LOGISTICA ERROR]:", error);
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // OBJETOS POSTAGEM — LOCAL DB (Supabase) CRUD
+  // Armazena localmente, permite exclusão sem afetar o Bling
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // GET - lista objetos salvos localmente
+  app.get("/api/objetos-postagem", async (_req, res) => {
+    try {
+      const { data, error } = await supabase
+        .from("objetos_postagem")
+        .select("*")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      res.json({ success: true, data: data || [] });
+    } catch (err: any) {
+      console.error("❌ [OBJETOS LOCAL GET]:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // POST - salva/atualiza objetos em lote (upsert por bling_id)
+  app.post("/api/objetos-postagem/sync", async (req, res) => {
+    try {
+      const objetos = req.body?.objetos;
+      if (!Array.isArray(objetos) || objetos.length === 0) {
+        return res.status(400).json({ success: false, error: "Nenhum objeto enviado." });
+      }
+      const { data, error } = await supabase
+        .from("objetos_postagem")
+        .upsert(
+          objetos.map((o: any) => ({
+            bling_id: String(o.bling_id || o.id || `${o.nfe_id}_${o.numero_pedido_loja}`),
+            nfe_id: o.nfe_id,
+            nfe_numero: o.nfe_numero,
+            numero_pedido_loja: o.numero_pedido_loja,
+            destinatario: o.destinatario,
+            rastreio: o.rastreio,
+            servico: o.servico,
+            transportadora: o.transportadora,
+            situacao: o.situacao,
+            valor_nota: o.valor_nota,
+            data_criacao: o.data_criacao,
+            prazo_entrega: o.prazo_entrega,
+            dimensoes: o.dimensoes || {},
+            dados_bling: o.dados_bling || {},
+            updated_at: new Date().toISOString(),
+          })),
+          { onConflict: "bling_id" }
+        )
+        .select();
+      if (error) throw error;
+      res.json({ success: true, count: data?.length || 0 });
+    } catch (err: any) {
+      console.error("❌ [OBJETOS LOCAL SYNC]:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // DELETE - remove objeto apenas do banco local (NÃO do Bling)
+  app.delete("/api/objetos-postagem/:id", async (req, res) => {
+    try {
+      const { error } = await supabase
+        .from("objetos_postagem")
+        .delete()
+        .eq("id", req.params.id);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (err: any) {
+      console.error("❌ [OBJETOS LOCAL DELETE]:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // DELETE - remove múltiplos objetos do banco local
+  app.post("/api/objetos-postagem/delete-batch", async (req, res) => {
+    try {
+      const ids = req.body?.ids;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ success: false, error: "Nenhum ID enviado." });
+      }
+      const { error } = await supabase
+        .from("objetos_postagem")
+        .delete()
+        .in("id", ids);
+      if (error) throw error;
+      res.json({ success: true, deleted: ids.length });
+    } catch (err: any) {
+      console.error("❌ [OBJETOS LOCAL DELETE BATCH]:", err);
+      res.status(500).json({ success: false, error: err.message });
     }
   });
 
@@ -4193,7 +4356,9 @@ async function startServer() {
       req.path.match(/^\/api\/bling\/nfe\/\d+\/enviar/) ||
       req.path === "/api/bling/canais-venda" ||
       req.path.startsWith("/api/bling/pedido-venda") ||
-      req.path.startsWith("/api/bling/vendas")
+      req.path.startsWith("/api/bling/vendas") ||
+      req.path.startsWith("/api/bling/logisticas") ||
+      req.path.startsWith("/api/bling/contatos")
     )
       return next();
 
@@ -5035,6 +5200,234 @@ async function startServer() {
     } catch (err: any) {
       console.error("❌ [WEBHOOK NFE] Erro:", err.message);
       res.status(200).json({ success: false, error: err.message });
+    }
+  });
+
+  // ── WEBHOOK 3: Logística (Objetos de Postagem / Rastreamento) ──
+  app.post("/api/bling/webhook/logistica", async (req, res) => {
+    try {
+      const payload = req.body;
+      console.log(
+        "🔔 [BLING WEBHOOK LOGISTICA] Payload:",
+        JSON.stringify(payload).substring(0, 800)
+      );
+
+      const obj = payload?.data || payload;
+      if (obj?.id) {
+        const rastreio = obj.rastreamento?.codigo || obj.codigoRastreamento || "";
+        const situacao = obj.rastreamento?.situacao ?? obj.situacao ?? "";
+        const nfeId = obj.notaFiscal?.id || obj.nfe?.id || "";
+        const pedidoVendaId = obj.pedidoVenda?.id || obj.pedido?.id || "";
+        const servicoNome = obj.servico?.nome || obj.servico?.codigo || "";
+        const servicoId = obj.servico?.id || "";
+
+        // Upsert na tabela objetos_postagem
+        const { error } = await supabase.from("objetos_postagem").upsert(
+          {
+            bling_id: String(obj.id),
+            nfe_id: nfeId ? Number(nfeId) : null,
+            nfe_numero: String(obj.notaFiscal?.numero || ""),
+            numero_pedido_loja: String(pedidoVendaId),
+            destinatario: obj.destinatario?.nome || obj.contato?.nome || "",
+            rastreio,
+            servico: servicoNome,
+            transportadora: obj.logistica?.descricao || obj.logistica?.nome || "",
+            situacao: String(
+              typeof situacao === "number"
+                ? (
+                    { 1: "Criado", 2: "Coletado", 3: "Em trânsito", 4: "Saiu para entrega", 5: "Entregue", 6: "Cancelado", 7: "Devolvido", 8: "Postado" } as any
+                  )[situacao] || situacao
+                : situacao || "Pendente"
+            ),
+            valor_nota: obj.valorDeclarado || 0,
+            data_criacao: obj.dataSaida || obj.dataCriacao || new Date().toISOString(),
+            prazo_entrega: obj.prazoEntregaPrevisto ? String(obj.prazoEntregaPrevisto) : "",
+            dimensoes: obj.dimensoes || obj.dimensao || {},
+            dados_bling: obj,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "bling_id" }
+        );
+
+        if (error) console.error("❌ [WEBHOOK LOGISTICA] Erro DB:", error);
+        else console.log(`✅ [WEBHOOK LOGISTICA] Objeto ${obj.id} salvo.`);
+      }
+
+      res
+        .status(200)
+        .json({ success: true, message: "Webhook logística processado" });
+    } catch (err: any) {
+      console.error("❌ [WEBHOOK LOGISTICA] Erro:", err.message);
+      res.status(200).json({ success: false, error: err.message });
+    }
+  });
+
+  // ── Criar Objeto Logístico no Bling (POST /logisticas/objetos) ──
+  app.post("/api/bling/logisticas/objetos", async (req, res) => {
+    try {
+      const token = normalizeBearerToken(
+        (req.headers["authorization"] as string) || ""
+      );
+      if (!token) return res.status(401).json({ error: "Token obrigatório" });
+
+      const url = "https://www.bling.com.br/Api/v3/logisticas/objetos";
+      console.log("📦 [CRIAR OBJETO LOGÍSTICO] POST", url);
+      const response = await blingFetchRetry(url, {
+        method: "POST",
+        headers: {
+          Authorization: token,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(req.body),
+      });
+      const data = await response.json().catch(() => ({}));
+
+      // Se criou com sucesso, salva localmente também
+      if (response.status === 201 && data?.data?.id) {
+        const body = req.body;
+        await supabase.from("objetos_postagem").upsert(
+          {
+            bling_id: String(data.data.id),
+            nfe_id: body.notaFiscal?.id || null,
+            numero_pedido_loja: String(body.pedidoVenda?.id || ""),
+            rastreio: body.rastreamento?.codigo || "",
+            servico: body.servico?.id ? String(body.servico.id) : "",
+            situacao: "Criado",
+            valor_nota: body.valorDeclarado || 0,
+            data_criacao: body.dataSaida || new Date().toISOString(),
+            prazo_entrega: body.prazoEntregaPrevisto ? String(body.prazoEntregaPrevisto) : "",
+            dimensoes: body.dimensoes || {},
+            dados_bling: data.data,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "bling_id" }
+        );
+      }
+
+      res.status(response.status).json(data);
+    } catch (error: any) {
+      console.error("❌ [CRIAR OBJETO LOGÍSTICO ERROR]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ── Atualizar Objeto Logístico (PUT /logisticas/objetos/:id) ──
+  app.put("/api/bling/logisticas/objetos/:idObjeto", async (req, res) => {
+    try {
+      const token = normalizeBearerToken(
+        (req.headers["authorization"] as string) || ""
+      );
+      if (!token) return res.status(401).json({ error: "Token obrigatório" });
+
+      const url = `https://www.bling.com.br/Api/v3/logisticas/objetos/${req.params.idObjeto}`;
+      console.log("📦 [ATUALIZAR OBJETO LOGÍSTICO] PUT", url);
+      const response = await blingFetchRetry(url, {
+        method: "PUT",
+        headers: {
+          Authorization: token,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(req.body),
+      });
+      const data = await response.json().catch(() => ({}));
+      res.status(response.status).json(data);
+    } catch (error: any) {
+      console.error("❌ [ATUALIZAR OBJETO LOGÍSTICO ERROR]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ── Criar Remessa de Postagem (para emitir etiqueta) ──
+  app.post("/api/bling/logisticas/remessas", async (req, res) => {
+    try {
+      const token = normalizeBearerToken(
+        (req.headers["authorization"] as string) || ""
+      );
+      if (!token) return res.status(401).json({ error: "Token obrigatório" });
+
+      const url = "https://www.bling.com.br/Api/v3/logisticas/remessas";
+      console.log("📮 [CRIAR REMESSA] POST", url);
+      const response = await blingFetchRetry(url, {
+        method: "POST",
+        headers: {
+          Authorization: token,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(req.body),
+      });
+      const data = await response.json().catch(() => ({}));
+      res.status(response.status).json(data);
+    } catch (error: any) {
+      console.error("❌ [CRIAR REMESSA ERROR]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ── Buscar Remessa por ID (etiqueta) ──
+  // ── Listar todas as remessas (com paginação/filtros) ──
+  app.get("/api/bling/logisticas/remessas", async (req, res) => {
+    try {
+      const token = normalizeBearerToken(
+        (req.headers["authorization"] as string) || ""
+      );
+      if (!token) return res.status(401).json({ error: "Token obrigatório" });
+
+      const rawQs = req.originalUrl.split("?")[1] || "";
+      const url = `https://www.bling.com.br/Api/v3/logisticas/remessas${rawQs ? `?${rawQs}` : ""}`;
+      console.log("📮 [REMESSAS LIST] GET", url);
+      const response = await blingFetchRetry(url, {
+        headers: { Authorization: token, Accept: "application/json" },
+      });
+      const data = await response.json().catch(() => ({}));
+      res.status(response.status).json(data);
+    } catch (error: any) {
+      console.error("❌ [REMESSAS LIST ERROR]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/bling/logisticas/remessas/:idRemessa", async (req, res) => {
+    try {
+      const token = normalizeBearerToken(
+        (req.headers["authorization"] as string) || ""
+      );
+      if (!token) return res.status(401).json({ error: "Token obrigatório" });
+
+      const url = `https://www.bling.com.br/Api/v3/logisticas/remessas/${req.params.idRemessa}`;
+      console.log("📮 [REMESSA DETALHE] GET", url);
+      const response = await blingFetchRetry(url, {
+        headers: { Authorization: token, Accept: "application/json" },
+      });
+      const data = await response.json().catch(() => ({}));
+      res.status(response.status).json(data);
+    } catch (error: any) {
+      console.error("❌ [REMESSA DETALHE ERROR]:", error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ── Remessas de uma logística ──
+  app.get("/api/bling/logisticas/:idLogistica/remessas", async (req, res) => {
+    try {
+      const token = normalizeBearerToken(
+        (req.headers["authorization"] as string) || ""
+      );
+      if (!token) return res.status(401).json({ error: "Token obrigatório" });
+
+      const rawQs = req.originalUrl.split("?")[1] || "";
+      const url = `https://www.bling.com.br/Api/v3/logisticas/${req.params.idLogistica}/remessas${rawQs ? `?${rawQs}` : ""}`;
+      console.log("📮 [REMESSAS LOGÍSTICA] GET", url);
+      const response = await blingFetchRetry(url, {
+        headers: { Authorization: token, Accept: "application/json" },
+      });
+      const data = await response.json().catch(() => ({}));
+      res.status(response.status).json(data);
+    } catch (error: any) {
+      console.error("❌ [REMESSAS LOGÍSTICA ERROR]:", error);
+      res.status(500).json({ error: error.message });
     }
   });
 

@@ -815,7 +815,7 @@ export async function enrichNfeSaida(
       vData?.canal || nfe.numeroLoja || numeroLoja
     );
 
-    return {
+    const enriched: NfeSaida = {
       ...nfe,
       idVenda: idVenda ? Number(idVenda) : nfe.idVenda,
       numeroVenda:
@@ -868,6 +868,26 @@ export async function enrichNfeSaida(
       linkDanfe: d.linkDanfe || d.linkPDF || nfe.linkDanfe,
       linkXml: d.linkXml || d.xml || nfe.linkXml
     };
+
+    // Fallback final: tenta via /objetos-postagem se rastreamento ainda ausente
+    const rastreamentoFinal =
+      rastreamento ||
+      vData?.transporte?.codigoRastreamento ||
+      vData?.rastreamento;
+    if (!rastreamentoFinal) {
+      const numLoja = numeroLoja || nfe.numeroLoja || nfe.numeroPedidoLoja;
+      if (numLoja) {
+        try {
+          const objetos = await fetchObjetosPostagem(token, numLoja);
+          const obj = objetos[0];
+          if (obj?.codigoRastreamento) {
+            return { ...enriched, rastreamento: obj.codigoRastreamento };
+          }
+        } catch (_) { /* skip */ }
+      }
+    }
+
+    return enriched;
   } catch (err) {
     console.error(`Erro ao enriquecer NF-e ${nfe.id}:`, err);
     return nfe;
@@ -2178,7 +2198,8 @@ export async function fetchObjetosPostagem(
   idVenda?: string | number
 ): Promise<any[]> {
   const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
-  const buscas = [numeroPedidoLoja, idVenda ? String(idVenda) : ""].filter(Boolean);
+  // Usa apenas numeroPedidoLoja — idVenda é um ID interno do Bling e não funciona como numeroPedidoLoja
+  const buscas = [numeroPedidoLoja].filter(Boolean);
   for (const id of buscas) {
     try {
       const resp = await fetchWithRetry(
@@ -2200,4 +2221,174 @@ export async function fetchObjetosPostagem(
     }
   }
   return [];
+}
+
+/**
+ * Busca transportadoras/logísticas ativas do Bling.
+ * GET /logisticas?situacao=H (Habilitado)
+ */
+export async function fetchLogisticas(
+  apiKey: string,
+  situacao: string = "H"
+): Promise<any[]> {
+  const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
+  try {
+    const resp = await fetchWithRetry(
+      `/api/bling/logisticas?situacao=${encodeURIComponent(situacao)}`,
+      { headers: { Authorization: authH, Accept: "application/json" } }
+    );
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return data?.data || [];
+  } catch (e) {
+    console.warn("[fetchLogisticas] Erro:", e);
+    return [];
+  }
+}
+
+/**
+ * Busca objetos de logística (objetos de postagem) com paginação.
+ * GET /logisticas/objetos?idTransportador=X&pagina=Y&limite=Z&dataInicial=A&dataFinal=B
+ */
+export async function fetchLogisticasObjetos(
+  apiKey: string,
+  opts: {
+    idTransportador?: string | number;
+    pagina?: number;
+    limite?: number;
+    dataInicial?: string;
+    dataFinal?: string;
+  } = {}
+): Promise<{ data: any[]; hasMore: boolean }> {
+  const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
+  const params = new URLSearchParams();
+  if (opts.idTransportador) params.set("idTransportador", String(opts.idTransportador));
+  if (opts.pagina) params.set("pagina", String(opts.pagina));
+  if (opts.limite) params.set("limite", String(opts.limite || 100));
+  if (opts.dataInicial) params.set("dataInicial", opts.dataInicial);
+  if (opts.dataFinal) params.set("dataFinal", opts.dataFinal);
+  try {
+    const resp = await fetchWithRetry(
+      `/api/bling/logisticas/objetos?${params.toString()}`,
+      { headers: { Authorization: authH, Accept: "application/json" } }
+    );
+    if (!resp.ok) return { data: [], hasMore: false };
+    const json = await resp.json();
+    const data = json?.data || [];
+    return { data, hasMore: data.length >= (opts.limite || 100) };
+  } catch (e) {
+    console.warn("[fetchLogisticasObjetos] Erro:", e);
+    return { data: [], hasMore: false };
+  }
+}
+
+/**
+ * Busca detalhes de um contato pelo ID.
+ * GET /contatos/:id
+ */
+export async function fetchContato(
+  apiKey: string,
+  contatoId: number | string
+): Promise<any> {
+  const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
+  try {
+    const resp = await fetchWithRetry(
+      `/api/bling/contatos/${contatoId}`,
+      { headers: { Authorization: authH, Accept: "application/json" } }
+    );
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    return json?.data || null;
+  } catch (e) {
+    console.warn("[fetchContato] Erro:", e);
+    return null;
+  }
+}
+
+/**
+ * Cria um objeto logístico no Bling.
+ * POST /logisticas/objetos
+ */
+export async function createObjetoLogistico(
+  apiKey: string,
+  body: Record<string, unknown>
+): Promise<{ id?: number; [key: string]: unknown } | null> {
+  const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
+  try {
+    const resp = await fetch("/api/bling/logisticas/objetos", {
+      method: "POST",
+      headers: {
+        Authorization: authH,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      console.warn("[createObjetoLogistico] HTTP", resp.status);
+      return null;
+    }
+    const json = await resp.json();
+    return json?.data || json || null;
+  } catch (e) {
+    console.warn("[createObjetoLogistico] Erro:", e);
+    return null;
+  }
+}
+
+/**
+ * Cria uma remessa logística no Bling (até 50 objetos por remessa, por transportadora).
+ * POST /logisticas/remessas
+ */
+export async function criarRemessa(
+  apiKey: string,
+  idLogistica: number | null,
+  objetoIds: number[]
+): Promise<{ id?: number; [key: string]: unknown } | null> {
+  const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
+  try {
+    const body: Record<string, unknown> = { objetos: objetoIds.map(id => ({ id })) };
+    if (idLogistica) body.logistica = { id: idLogistica };
+    const resp = await fetch("/api/bling/logisticas/remessas", {
+      method: "POST",
+      headers: {
+        Authorization: authH,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      console.warn("[criarRemessa] HTTP", resp.status);
+      return null;
+    }
+    const json = await resp.json();
+    return json?.data || json || null;
+  } catch (e) {
+    console.warn("[criarRemessa] Erro:", e);
+    return null;
+  }
+}
+
+/**
+ * Busca etiquetas ZPL de um ou mais objetos logísticos.
+ * GET /logisticas/etiquetas/zpl?idsObjetos[]=...
+ */
+export async function fetchEtiquetaZplByObjetos(
+  apiKey: string,
+  ids: number[]
+): Promise<{ id: number; zpl: string }[]> {
+  const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
+  try {
+    const qs = ids.map(id => `idsObjetos[]=${id}`).join("&");
+    const resp = await fetch(`/api/bling/logisticas/etiquetas/zpl?${qs}`, {
+      headers: { Authorization: authH, Accept: "application/json" },
+    });
+    if (!resp.ok) return [];
+    const json = await resp.json();
+    return json?.data || [];
+  } catch (e) {
+    console.warn("[fetchEtiquetaZplByObjetos] Erro:", e);
+    return [];
+  }
 }

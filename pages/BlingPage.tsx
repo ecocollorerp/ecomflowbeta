@@ -41,6 +41,7 @@ import type { NfeSaida } from "../lib/blingApi";
 import { addPendingZplItem } from "../utils/pendingZpl";
 import { BlingSync } from "../components/BlingSync";
 import { AbaImportacaoPedidosBling } from "../components/AbaImportacaoPedidosBling";
+import { AbaLogistica } from "../components/AbaLogistica";
 // NFeManager integrado diretamente no BlingPage
 import {
   Cloud,
@@ -220,7 +221,7 @@ const isNfePendente = (nfe: NfeSaida): boolean => {
   return situacao === 1 || situacao === 3 || (situacao === 5 && !nfe.linkDanfe);
 };
 
-type Tab = "importacao" | "nfe" | "catalogo" | "etiquetas";
+type Tab = "importacao" | "nfe" | "catalogo" | "etiquetas" | "logistica";
 
 const DEFAULT_BLING_SCOPE: BlingScopeSettings = {
   importarProdutos: true,
@@ -1695,6 +1696,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
   );
   const [nfeItemsCache, setNfeItemsCache] = useState<Record<number, any[]>>({});
   const [isLoadingNfeItems, setIsLoadingNfeItems] = useState(false);
+  const [refreshingRastreioId, setRefreshingRastreioId] = useState<number | null>(null);
   // Confirmação antes de salvar NF-e buscadas
   const [pendingNfeSaida, setPendingNfeSaida] = useState<NfeSaida[] | null>(
     () => {
@@ -1743,6 +1745,21 @@ const BlingPage: React.FC<BlingPageProps> = ({
     loteId: string;
     descricao?: string;
   } | null>(null);
+
+  // DANFE Simplificada ZPL config
+  const [danfeZplConfig, setDanfeZplConfig] = useState<{
+    offsetTop: number;
+    offsetLeft: number;
+    showLogo: boolean;
+  }>(() => {
+    try {
+      const saved = localStorage.getItem("danfeZplConfig");
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return { offsetTop: 0, offsetLeft: 0, showLogo: true };
+  });
+  const [showDanfeZplConfigModal, setShowDanfeZplConfigModal] = useState(false);
+
   // Estoque
   const [stockItems, setStockItems] = useState<any[]>([]);
   const [isLoadingStock, setIsLoadingStock] = useState(false);
@@ -3031,17 +3048,22 @@ const BlingPage: React.FC<BlingPageProps> = ({
         console.warn("Não foi possível carregar NFes locais:", err);
       }
 
-      // Não salva automaticamente — exibe modal de confirmação
-      setPendingNfeSaida(notas);
-      setShowNfeSaveConfirm(true);
+      // Auto-save e auto-enrich: salva diretamente e inicia enriquecimento
+      setNfeSaida(notas);
+      persistNfeSaida(notas);
       setSelectedNfeSaidaIds(new Set());
       if (targetPage !== undefined) setNfePage(targetPage);
       if (status === 1) setNfeSaidaFiltro("pendentes");
 
       addToast(
-        `${notas.length} nota(s) encontrada(s) na página ${pageToFetch}.`,
+        `${notas.length} nota(s) carregada(s). Iniciando enriquecimento automático...`,
         notas.length > 0 ? "info" : "info"
       );
+
+      // Inicia enriquecimento em background automaticamente
+      if (notas.length > 0) {
+        handleEnrichNfeList(notas);
+      }
     } catch (err: any) {
       addToast(`Erro ao buscar NF-e de saída: ${err.message}`, "error");
     } finally {
@@ -3227,7 +3249,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
 
   const handleDownloadDanfe = async (
     nfe: NfeSaida,
-    type: "normal" | "simplified" | "combined" | "transport_label" = "normal"
+    type: "normal" | "simplified_zpl" | "transport_label" = "normal"
   ) => {
     try {
       const token = await getValidToken();
@@ -3237,86 +3259,42 @@ const BlingPage: React.FC<BlingPageProps> = ({
       const label =
         type === "normal"
           ? "DANFE"
-          : type === "simplified"
-            ? "DANFE Simplificada"
-            : type === "combined"
-              ? "DANFE + Etiqueta"
-              : "Etiqueta de Transporte";
+          : type === "simplified_zpl"
+            ? "DANFE Simplificada ZPL"
+            : "Etiqueta de Transporte";
 
       addToast(`Buscando ${label}...`, "info");
 
-      // ── DANFE SIMPLIFICADA: gera localmente a partir do XML da NF-e ──
-      if (type === "simplified") {
+      // ── DANFE SIMPLIFICADA ZPL: gera a partir dos dados JSON da NF-e ──
+      if (type === "simplified_zpl") {
         try {
           const detalhe = await fetchNfeDetalhe(token, nfe.id);
-          const d = detalhe?.data || detalhe;
-          let xmlContent = d?.xml || d?.linkXml || nfe.linkXml;
+          const { nfeJsonToDanfeZplData, gerarDanfeSimplificadaZPL } =
+            await import("../lib/danfeSimplificadaZpl");
+          const zplData = nfeJsonToDanfeZplData(detalhe, nfe);
+          const zplContent = gerarDanfeSimplificadaZPL(zplData, danfeZplConfig);
 
-          if (xmlContent && xmlContent.startsWith("http")) {
-            const xmlResp = await fetch(xmlContent);
-            if (xmlResp.ok) xmlContent = await xmlResp.text();
-            else xmlContent = null;
-          }
+          addToast("DANFE Simplificada ZPL gerada com sucesso!", "success");
 
-          if (xmlContent && !xmlContent.startsWith("http")) {
-            const { gerarDanfeSimplificadaPDF } =
-              await import("../lib/danfeSimplificada");
-            const pdfBlob = gerarDanfeSimplificadaPDF(xmlContent);
-            const url = URL.createObjectURL(pdfBlob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `DANFE_Simplificada_${nfe.numero || nfe.id}.pdf`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-            addToast("DANFE Simplificada gerada com sucesso!", "success");
-            return;
-          }
-
-          addToast(
-            "XML da NF-e não disponível para gerar DANFE Simplificada.",
-            "warning"
-          );
-          return;
-        } catch (xmlErr: any) {
-          console.error("[DANFE Simplificada] Erro:", xmlErr);
-          addToast(
-            `Erro ao gerar DANFE Simplificada: ${xmlErr.message}`,
-            "error"
-          );
-          return;
-        }
-      }
-
-      // ── DANFE NORMAL: busca linkDanfe via backend ──
-      if (type === "normal") {
-        const params = new URLSearchParams({ type: "normal" });
-        if (nfe.numeroLoja)
-          params.set("numeroPedidoLoja", String(nfe.numeroLoja));
-        if (nfe.idVenda) params.set("idVenda", String(nfe.idVenda));
-
-        const resp = await fetch(
-          `/api/bling/download/pdf/${nfe.id}?${params.toString()}`,
-          { headers: { Authorization: authH } }
-        );
-        const contentType = resp.headers.get("Content-Type") || "";
-
-        if (resp.ok && contentType.includes("application/pdf")) {
-          const blob = await resp.blob();
+          const blob = new Blob([zplContent], { type: "text/plain" });
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
-          a.download = `DANFE_${nfe.numero || nfe.id}.pdf`;
+          a.download = `DANFE_${nfe.numero || nfe.id}.txt`;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
-          addToast("DANFE baixada com sucesso!", "success");
+          return;
+        } catch (err: any) {
+          console.error("[ZPL DANFE] Erro:", err);
+          addToast(`Erro ao gerar ZPL: ${err.message}`, "error");
           return;
         }
+      }
 
-        // Fallback: linkDanfe direto
+      // ── DANFE NORMAL: abre linkDanfe em nova aba ──
+      if (type === "normal") {
         let linkDanfe = nfe.linkDanfe;
         if (!linkDanfe) {
           const detalhe = await fetchNfeDetalhe(token, nfe.id);
@@ -3332,7 +3310,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
         return;
       }
 
-      // ── ETIQUETA / COMBINED: via backend (objetos-postagem) ──
+      // ── ETIQUETA: via backend (objetos-postagem) ──
       const params = new URLSearchParams({ type });
       if (nfe.numeroLoja)
         params.set("numeroPedidoLoja", String(nfe.numeroLoja));
@@ -3446,7 +3424,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `ETIQUETA_${nfe.canal || "NFE"}_${nfe.numero || nfe.id}.zpl`;
+        a.download = `ETIQUETA_${nfe.canal || "NFE"}_${nfe.numero || nfe.id}.txt`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -3511,7 +3489,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Etiqueta_Envio_${nfe.numero || nfe.id}.zpl`;
+      a.download = `Etiqueta_Envio_${nfe.numero || nfe.id}.txt`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -3519,79 +3497,6 @@ const BlingPage: React.FC<BlingPageProps> = ({
       addToast("✅ Etiqueta de envio (ZPL) baixada!", "success");
     } catch (err: any) {
       addToast(`Erro na etiqueta de envio: ${err.message}`, "error");
-    }
-  };
-
-  /** Combina ZPL da NF-e (documento fiscal) + ZPL da etiqueta de envio */
-  const handleDownloadCombinedZpl = async (nfe: NfeSaida) => {
-    try {
-      const token = await getValidToken();
-      if (!token) throw new Error("Token inválido.");
-      const authH = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
-      addToast("Gerando DANFE + Etiqueta de envio (ZPL combinado)...", "info");
-
-      const idVenda = nfe.idVenda;
-      const numLoja = nfe.numeroPedidoLoja || nfe.numeroLoja;
-
-      // 1. ZPL do documento NF-e (DANFE formato ZPL do Bling)
-      const nfeDocZpl = await fetchNfeEtiquetaZpl(
-        token,
-        nfe.id,
-        nfe.canal,
-        numLoja
-      );
-
-      // 2. ZPL da etiqueta de envio da transportadora
-      let shippingZpl: string | null = null;
-      if (idVenda && (nfe.canal === "SHOPEE" || nfe.canal === "ML")) {
-        try {
-          shippingZpl = await fetchEtiquetaZplForPedido(token, String(idVenda));
-        } catch (_) {}
-      }
-      if (!shippingZpl && (numLoja || idVenda)) {
-        try {
-          const objetos = await fetchObjetosPostagem(
-            token,
-            numLoja || "",
-            idVenda
-          );
-          const idObjeto = objetos?.[0]?.id;
-          if (idObjeto) {
-            const resp = await fetch(
-              `/api/bling/logisticas/etiquetas/zpl?idsObjetos[]=${idObjeto}`,
-              { headers: { Authorization: authH } }
-            );
-            const data = await resp.json();
-            shippingZpl = data?.data?.[0]?.zpl || data?.[0]?.zpl || null;
-          }
-        } catch (_) {}
-      }
-
-      const parts = [nfeDocZpl, shippingZpl].filter(Boolean) as string[];
-      if (parts.length === 0) {
-        addToast("Nenhum conteúdo ZPL disponível para esta nota.", "warning");
-        return;
-      }
-
-      const combined = parts.join("\n");
-      const blob = new Blob([combined], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `DANFE_Etiqueta_${nfe.numero || nfe.id}.zpl`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      const label =
-        parts.length === 2
-          ? "DANFE + Etiqueta"
-          : nfeDocZpl
-            ? "DANFE"
-            : "Etiqueta";
-      addToast(`✅ ZPL combinado baixado (${label})!`, "success");
-    } catch (err: any) {
-      addToast(`Erro ao gerar ZPL combinado: ${err.message}`, "error");
     }
   };
 
@@ -3883,6 +3788,79 @@ const BlingPage: React.FC<BlingPageProps> = ({
     }
   };
 
+  // ── Batch DANFE Simplificada ZPL (selecionadas) ───────────────────────────
+  const handleBaixarDanfeZplSelecionados = async () => {
+    const notas = nfeSaida.filter(
+      (n) =>
+        selectedNfeSaidaIds.has(n.id) &&
+        (n.situacao === 5 || n.situacao === 6 || n.situacao === 8)
+    );
+    if (notas.length === 0) {
+      addToast("Nenhuma nota selecionada com DANFE ZPL disponível.", "warning");
+      return;
+    }
+    setIsDownloadingDanfe(true);
+    try {
+      const token = await getValidToken();
+      if (!token) throw new Error("Token inválido.");
+      const { nfeJsonToDanfeZplData, gerarDanfeSimplificadaZPL } =
+        await import("../lib/danfeSimplificadaZpl");
+      let baixados = 0;
+      for (let i = 0; i < notas.length; i++) {
+        const nfe = notas[i];
+        try {
+          const detalhe = await fetchNfeDetalhe(token, nfe.id);
+          const zplData = nfeJsonToDanfeZplData(detalhe, nfe);
+          const zpl = gerarDanfeSimplificadaZPL(zplData, danfeZplConfig);
+          const blob = new Blob([zpl], { type: "text/plain" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `DANFE_${nfe.numero || nfe.id}.txt`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          baixados++;
+        } catch (err) {
+          console.error(`[Batch ZPL DANFE] Erro nota ${nfe.id}:`, err);
+        }
+        if (i < notas.length - 1)
+          await new Promise((r) => setTimeout(r, 400));
+      }
+      addToast(`${baixados} DANFE Simplificada ZPL baixada(s)!`, baixados > 0 ? "success" : "warning");
+    } catch (err: any) {
+      addToast(`Erro: ${err.message}`, "error");
+    } finally {
+      setIsDownloadingDanfe(false);
+    }
+  };
+
+  // ── Batch Etiqueta Envio ZPL (selecionadas) ─────────────────────────────
+  const handleBaixarEnvioZplSelecionados = async () => {
+    const notas = nfeSaida.filter(
+      (n) =>
+        selectedNfeSaidaIds.has(n.id) &&
+        (n.situacao === 5 || n.situacao === 6)
+    );
+    if (notas.length === 0) {
+      addToast("Nenhuma nota selecionada para etiqueta de envio.", "warning");
+      return;
+    }
+    setIsDownloadingDanfe(true);
+    try {
+      for (const nfe of notas) {
+        await handleDownloadEnvioZpl(nfe);
+        await new Promise((r) => setTimeout(r, 400));
+      }
+      addToast("Etiquetas de envio ZPL baixadas!", "success");
+    } catch (err: any) {
+      addToast(`Erro: ${err.message}`, "error");
+    } finally {
+      setIsDownloadingDanfe(false);
+    }
+  };
+
   // ── Download XML apenas para NF-es selecionadas ──────────────────────────
   const handleBaixarXmlSelecionados = async () => {
     const notasComXml = nfeSaida.filter(
@@ -3968,108 +3946,50 @@ const BlingPage: React.FC<BlingPageProps> = ({
     }
   };
 
-  // ── Helper interno: baixa DANFEs de uma lista de NF-es ───────────────────
+  // ── Helper interno: abre DANFEs (linkDanfe) na mesma aba sequencialmente ──────────────
   const baixarDanfesLista = async (
     notasList: NfeSaida[],
-    nomeArquivo: (i: number) => string,
-    type: "normal" | "simplified" = "normal"
+    nomeArquivo: (i: number) => string
   ) => {
     setIsDownloadingDanfe(true);
     setDanfeDownloadProgress({ current: 0, total: notasList.length });
     try {
       const token = await getValidToken();
       if (!token) throw new Error("Token inválido.");
-      let baixados = 0;
+      let abertos = 0;
+      // Coleta todos os links primeiro
+      const links: string[] = [];
       for (let i = 0; i < notasList.length; i++) {
         const nfe = notasList[i];
         setDanfeDownloadProgress({ current: i + 1, total: notasList.length });
         if (nfe.id) {
           try {
-            // DANFE Simplificada: gera localmente do XML
-            if (type === "simplified") {
+            let linkDanfe = nfe.linkDanfe;
+            if (!linkDanfe) {
               const detalhe = await fetchNfeDetalhe(token, nfe.id);
               const d = detalhe?.data || detalhe;
-              let xmlContent = d?.xml || d?.linkXml || nfe.linkXml;
-
-              if (xmlContent && xmlContent.startsWith("http")) {
-                const xmlResp = await fetch(xmlContent);
-                if (xmlResp.ok) xmlContent = await xmlResp.text();
-                else xmlContent = null;
-              }
-
-              if (xmlContent && !xmlContent.startsWith("http")) {
-                const { gerarDanfeSimplificadaPDF } =
-                  await import("../lib/danfeSimplificada");
-                const pdfBlob = gerarDanfeSimplificadaPDF(xmlContent);
-                const url = URL.createObjectURL(pdfBlob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = nomeArquivo(i);
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-                baixados++;
-              }
-            } else {
-              // DANFE Normal: via backend proxy
-              const params = new URLSearchParams();
-              params.set("type", "normal");
-              if (nfe.numeroLoja)
-                params.set("numeroPedidoLoja", String(nfe.numeroLoja));
-              if (nfe.idVenda) params.set("idVenda", String(nfe.idVenda));
-
-              const resp = await fetch(
-                `/api/bling/download/pdf/${nfe.id}?${params.toString()}`,
-                { headers: { Authorization: token } }
-              );
-
-              if (resp.ok) {
-                const contentType = resp.headers.get("Content-Type") || "";
-                if (contentType.includes("application/json")) {
-                  const json = await resp.json();
-                  if (json.link) {
-                    window.open(json.link, "_blank");
-                    baixados++;
-                  }
-                } else {
-                  const blob = await resp.blob();
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = nomeArquivo(i);
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                  URL.revokeObjectURL(url);
-                  baixados++;
-                }
-              } else if (nfe.linkDanfe) {
-                window.open(nfe.linkDanfe, "_blank");
-                baixados++;
-              }
+              linkDanfe = d?.linkDanfe || d?.linkPDF;
             }
+            if (linkDanfe) links.push(linkDanfe);
           } catch (err) {
-            console.error("Erro no download:", err);
-            if (type === "normal" && nfe.linkDanfe) {
-              window.open(nfe.linkDanfe, "_blank");
-              baixados++;
-            }
+            if (nfe.linkDanfe) links.push(nfe.linkDanfe);
           }
         }
-        if (i < notasList.length - 1)
-          await new Promise((r) => setTimeout(r, 600));
       }
-      if (baixados === 0) {
-        addToast("Nenhum DANFE disponível para download.", "warning");
+      // Abre todos na mesma aba nomeada (reusa a aba "danfe_view" ao invés de abrir N abas)
+      for (let i = 0; i < links.length; i++) {
+        window.open(links[i], "danfe_view");
+        abertos++;
+        if (i < links.length - 1)
+          await new Promise((r) => setTimeout(r, 800));
+      }
+      if (abertos === 0) {
+        addToast("Nenhum DANFE disponível.", "warning");
       } else {
-        addToast(
-          `${baixados} DANFE(s) (${type === "simplified" ? "Simplificado" : "Normal"}) baixado(s)!`,
-          "success"
-        );
+        addToast(`${abertos} DANFE(s) aberto(s)!`, "success");
       }
     } catch (err: any) {
-      addToast(`Erro ao baixar DANFEs: ${err.message}`, "error");
+      addToast(`Erro ao abrir DANFEs: ${err.message}`, "error");
     } finally {
       setIsDownloadingDanfe(false);
       setDanfeDownloadProgress(null);
@@ -4077,9 +3997,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
   };
 
   // ── Download DANFE do período (todas as autorizadas/emitidas filtradas) ──
-  const handleBaixarDanfeLote = async (
-    type: "normal" | "simplified" = "normal"
-  ) => {
+  const handleBaixarDanfeLote = async () => {
     const notas = filteredNfeSaida.filter(
       (n) =>
         n.situacao === 5 ||
@@ -4095,15 +4013,12 @@ const BlingPage: React.FC<BlingPageProps> = ({
     await baixarDanfesLista(
       notas,
       (i) =>
-        `DANFE_${type === "simplified" ? "SIMPLIF_" : ""}${notas[i].numero || notas[i].id}.pdf`,
-      type
+        `DANFE_${notas[i].numero || notas[i].id}.pdf`
     );
   };
 
   // ── Download DANFE apenas para NF-es selecionadas ────────────────────────
-  const handleBaixarDanfeSelecionados = async (
-    type: "normal" | "simplified" = "normal"
-  ) => {
+  const handleBaixarDanfeSelecionados = async () => {
     const notas = nfeSaida.filter(
       (n) =>
         selectedNfeSaidaIds.has(n.id) &&
@@ -4120,9 +4035,55 @@ const BlingPage: React.FC<BlingPageProps> = ({
     await baixarDanfesLista(
       notas,
       (i) =>
-        `DANFE_${type === "simplified" ? "SIMPLIF_" : ""}${notas[i].numero || notas[i].id}.pdf`,
-      type
+        `DANFE_${notas[i].numero || notas[i].id}.pdf`
     );
+  };
+
+  // ── Busca manual de rastreio para uma NF-e ─────────────────────────────
+  const handleBuscarRastreioNfe = async (nfe: NfeSaida) => {
+    const token = await getValidToken();
+    if (!token) return;
+    setRefreshingRastreioId(nfe.id);
+    try {
+      // Tenta via enriquecimento completo (detalhe NF-e + pedido + objetos-postagem)
+      const enriched = await enrichNfeSaida(token, nfe);
+      if (enriched.rastreamento) {
+        setNfeSaida((prev) =>
+          prev.map((item) =>
+            item.id === nfe.id
+              ? { ...item, rastreamento: enriched.rastreamento }
+              : item
+          )
+        );
+        addToast(`Rastreio encontrado: ${enriched.rastreamento}`, "success");
+        // Copiar para clipboard automaticamente
+        navigator.clipboard.writeText(enriched.rastreamento).catch(() => {});
+        return;
+      }
+      // Tenta direto via objetos-postagem
+      const numLoja = nfe.numeroLoja || nfe.numeroPedidoLoja;
+      if (numLoja) {
+        const objetos = await fetchObjetosPostagem(token, numLoja);
+        const obj = objetos[0];
+        if (obj?.codigoRastreamento) {
+          setNfeSaida((prev) =>
+            prev.map((item) =>
+              item.id === nfe.id
+                ? { ...item, rastreamento: obj.codigoRastreamento }
+                : item
+            )
+          );
+          addToast(`Rastreio encontrado: ${obj.codigoRastreamento}`, "success");
+          navigator.clipboard.writeText(obj.codigoRastreamento).catch(() => {});
+          return;
+        }
+      }
+      addToast("Rastreio não disponível ainda no Bling para este pedido.", "warning");
+    } catch (e: any) {
+      addToast(`Erro ao buscar rastreio: ${e.message}`, "error");
+    } finally {
+      setRefreshingRastreioId(null);
+    }
   };
 
   // ── Buscar itens/produtos de uma NF-e (para vincular ao estoque) ────────
@@ -4149,6 +4110,10 @@ const BlingPage: React.FC<BlingPageProps> = ({
       let itens = nfeItemsCache[nfe.id] || [];
       let detalheCompleto: any = null;
 
+      // Variáveis locais para rastrear tracking encontrado nas etapas 1 e 2
+      let rastreioEncontrado: string | undefined = nfe.rastreamento;
+      let numLojaEncontrado: string | undefined = nfe.numeroPedidoLoja || nfe.numeroLoja;
+
       if (!nfeItemsCache[nfe.id]) {
         const detalhe = await fetchNfeDetalhe(token, nfe.id);
         detalheCompleto = detalhe?.data || detalhe;
@@ -4158,47 +4123,48 @@ const BlingPage: React.FC<BlingPageProps> = ({
         // Atualiza dados da NF-e no state (rastreio, chave, links, etc.)
         if (detalheCompleto) {
           const transporte = detalheCompleto.transporte || {};
+          // Buscas de rastreio em múltiplos locais do detalhe da NF-e
           const rastreamentoDet =
             transporte.objeto?.codigoRastreamento ||
-            transporte.volumes?.[0]?.codigoRastreamento;
+            transporte.volumes?.[0]?.codigoRastreamento ||
+            transporte.codigoRastreamento ||
+            detalheCompleto?.pedido?.transporte?.codigoRastreamento;
           const chaveAcesso = detalheCompleto.chaveAcesso;
           const linkDanfe =
             detalheCompleto.linkDanfe || detalheCompleto.linkPDF;
           const linkXml = detalheCompleto.linkXml || detalheCompleto.xml;
+          const idVendaDet =
+            detalheCompleto?.vendas?.[0]?.id ||
+            detalheCompleto?.pedidoVenda?.id ||
+            detalheCompleto?.pedido?.id;
+          const numeroPedidoLojaDet =
+            detalheCompleto?.intermediador?.numeroPedido ||
+            detalheCompleto?.numeroPedidoLoja;
 
-          if (rastreamentoDet || chaveAcesso || linkDanfe || linkXml) {
-            setNfeSaida((prev) => {
-              const updated = prev.map((item) =>
-                item.id === nfe.id
-                  ? {
-                      ...item,
-                      rastreamento: rastreamentoDet || item.rastreamento,
-                      chaveAcesso: chaveAcesso || item.chaveAcesso,
-                      linkDanfe: linkDanfe || item.linkDanfe,
-                      linkXml: linkXml || item.linkXml,
-                      idTransportador: transporte.contato?.id
-                        ? Number(transporte.contato.id)
-                        : item.idTransportador,
-                      idVenda:
-                        detalheCompleto?.vendas?.[0]?.id ||
-                        detalheCompleto?.pedidoVenda?.id ||
-                        detalheCompleto?.pedido?.id ||
-                        item.idVenda,
-                      numeroPedidoLoja:
-                        detalheCompleto?.intermediador?.numeroPedido ||
-                        detalheCompleto?.numeroPedidoLoja ||
-                        item.numeroPedidoLoja,
-                      numeroLoja:
-                        detalheCompleto?.intermediador?.numeroPedido ||
-                        detalheCompleto?.numeroPedidoLoja ||
-                        item.numeroLoja
-                    }
-                  : item
-              );
-              persistNfeSaida(updated);
-              return updated;
-            });
-          }
+          if (rastreamentoDet) rastreioEncontrado = rastreamentoDet;
+          if (numeroPedidoLojaDet) numLojaEncontrado = numeroPedidoLojaDet;
+
+          setNfeSaida((prev) => {
+            const updated = prev.map((item) =>
+              item.id === nfe.id
+                ? {
+                    ...item,
+                    rastreamento: rastreamentoDet || item.rastreamento,
+                    chaveAcesso: chaveAcesso || item.chaveAcesso,
+                    linkDanfe: linkDanfe || item.linkDanfe,
+                    linkXml: linkXml || item.linkXml,
+                    idTransportador: transporte.contato?.id
+                      ? Number(transporte.contato.id)
+                      : item.idTransportador,
+                    idVenda: idVendaDet || item.idVenda,
+                    numeroPedidoLoja: numeroPedidoLojaDet || item.numeroPedidoLoja,
+                    numeroLoja: numeroPedidoLojaDet || item.numeroLoja
+                  }
+                : item
+            );
+            persistNfeSaida(updated);
+            return updated;
+          });
         }
       }
 
@@ -4225,32 +4191,51 @@ const BlingPage: React.FC<BlingPageProps> = ({
               `[handleExpandNfeItems] Order Data carregada para NF-e ${nfe.id}`
             );
 
+            // Rastreio direto do pedido de venda
+            const rastreamentoPedido =
+              d.transporte?.codigoRastreamento ||
+              d.transporte?.objeto?.codigoRastreamento ||
+              d.transporte?.volumes?.[0]?.codigoRastreamento;
+
+            if (rastreamentoPedido) rastreioEncontrado = rastreioEncontrado || rastreamentoPedido;
+            if (d.numeroLoja) numLojaEncontrado = numLojaEncontrado || d.numeroLoja;
+
             // Enriquecer o item principal com dados do pedido de venda
-            if (
-              !nfe.canal ||
-              nfe.loja === "Bling" ||
-              !nfe.numeroVenda ||
-              !nfe.idVenda
-            ) {
-              setNfeSaida((prev) =>
-                prev.map((item) =>
-                  item.id === nfe.id
-                    ? {
-                        ...item,
-                        idVenda: idVenda || item.idVenda,
-                        canal: d.canal || item.canal,
-                        loja: d.loja?.nome || d.loja?.descricao || item.loja,
-                        numeroVenda: d.numero || item.numeroVenda,
-                        numeroLoja: d.numeroLoja || item.numeroLoja
-                      }
-                    : item
-                )
-              );
-            }
+            setNfeSaida((prev) =>
+              prev.map((item) => {
+                if (item.id !== nfe.id) return item;
+                return {
+                  ...item,
+                  idVenda: idVenda || item.idVenda,
+                  canal: d.canal || item.canal,
+                  loja: d.loja?.nome || d.loja?.descricao || item.loja,
+                  numeroVenda: d.numero || item.numeroVenda,
+                  numeroLoja: d.numeroLoja || item.numeroLoja,
+                  rastreamento: item.rastreamento || rastreamentoPedido || undefined
+                };
+              })
+            );
           }
         } catch (pe) {
           console.warn("Erro ao buscar order info para NF-e:", pe);
         }
+      }
+
+      // 3. Fallback final rastreio via objetos-postagem (usa variáveis locais, sem stale closure)
+      if (!rastreioEncontrado && numLojaEncontrado) {
+        try {
+          const objetos = await fetchObjetosPostagem(token, numLojaEncontrado);
+          const obj = objetos[0];
+          if (obj?.codigoRastreamento) {
+            setNfeSaida((prev) =>
+              prev.map((item) =>
+                item.id === nfe.id
+                  ? { ...item, rastreamento: obj.codigoRastreamento }
+                  : item
+              )
+            );
+          }
+        } catch (_) { /* skip */ }
       }
     } catch (err: any) {
       addToast(`Erro ao carregar detalhes: ${err.message}`, "error");
@@ -4364,80 +4349,6 @@ const BlingPage: React.FC<BlingPageProps> = ({
     }
   };
 
-  // ── Gerar etiqueta + DANFE simplificada em lote ─────────────────────────
-  const handleBatchEtiquetaDanfe = async () => {
-    const notasSel = nfeSaida.filter(
-      (n) =>
-        selectedNfeSaidaIds.has(n.id) && (n.situacao === 5 || n.situacao === 6)
-    );
-    if (notasSel.length === 0) {
-      addToast(
-        "Selecione notas autorizadas/emitidas para gerar etiqueta+DANFE.",
-        "warning"
-      );
-      return;
-    }
-    setIsBatchEmitindo(true);
-    try {
-      const token = await getValidToken();
-      if (!token) throw new Error("Token inválido.");
-
-      const ids = notasSel.map((n) => n.id);
-      const response = await fetch("/api/bling/lotes/gerar-zpl", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ ids, createdBy: "Usuário" })
-      });
-
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || "Erro ao gerar lote de etiquetas");
-      }
-
-      const result = await response.json();
-      const combinedZpl = result.zpl;
-
-      if (combinedZpl) {
-        const loteId = `ETIQ-DANFE-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`;
-
-        // Atualiza o histórico local (opcional, como o backend já salva no banco)
-        const newLote: ZplLoteItem = {
-          id: loteId,
-          timestamp: new Date().toISOString(),
-          total: ids.length,
-          success: result.count,
-          successIds: ids.filter(
-            (id) => !result.failures?.some((f: any) => f.id === id)
-          ),
-          failed: result.failures || [],
-          zplContent: combinedZpl
-        };
-        setZplLotes((prev) => [newLote, ...prev]);
-        setLastCompletedLote(newLote);
-
-        setZplModeModal({
-          zpl: combinedZpl,
-          loteId,
-          descricao: `${result.count} etiqueta(s) + DANFE`
-        });
-        addToast(
-          `${result.count} etiqueta(s) gerada(s)!${result.failures?.length > 0 ? ` ${result.failures.length} falha(s).` : ""}`,
-          result.count > 0 ? "success" : "warning"
-        );
-      } else {
-        addToast("Nenhum ZPL retornado pelo servidor.", "warning");
-      }
-    } catch (err: any) {
-      addToast(`Erro: ${err.message}`, "error");
-    } finally {
-      setIsBatchEmitindo(false);
-      setSelectedNfeSaidaIds(new Set());
-    }
-  };
-
   const handleBatchEmitirNfe = async () => {
     const notasPendentes = nfeSaida.filter(
       (n) =>
@@ -4506,7 +4417,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
 
         // Delay entre emissões para rate limit
         if (i < notasPendentes.length - 1)
-          await new Promise((r) => setTimeout(r, 1000));
+          await new Promise((r) => setTimeout(r, 350));
       }
 
       addToast(
@@ -5430,42 +5341,29 @@ const BlingPage: React.FC<BlingPageProps> = ({
         >
           <Send size={12} /> EMITIR
         </button>
-        {/* DANFE Normal */}
+        {/* DANFE (abre link em nova aba) */}
         <button
-          onClick={() => handleBaixarDanfeSelecionados("normal")}
+          onClick={() => handleBaixarDanfeSelecionados()}
           disabled={isDownloadingDanfe}
           className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-orange-50 text-orange-600 hover:bg-orange-100 disabled:opacity-50 transition-all border border-orange-200"
         >
           <Download size={12} /> DANFE
         </button>
-        {/* DANFE Simplificada */}
+        {/* DANFE Simplificada ZPL (.txt) */}
         <button
-          onClick={() => handleBaixarDanfeSelecionados("simplified")}
+          onClick={handleBaixarDanfeZplSelecionados}
           disabled={isDownloadingDanfe}
           className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-orange-50 text-orange-500 hover:bg-orange-100 disabled:opacity-50 transition-all border border-orange-200"
         >
-          <Zap size={12} /> DANFE SIMP.
+          <Printer size={12} /> DANFE Simpl. ZPL
         </button>
-        {/* Etiqueta Transporte */}
+        {/* Etiqueta ZPL */}
         <button
-          onClick={handleBatchPdfEtiquetas}
-          className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-orange-50 text-orange-500 hover:bg-orange-100 transition-all border border-orange-200"
+          onClick={handleBaixarEnvioZplSelecionados}
+          disabled={isDownloadingDanfe}
+          className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-purple-50 text-purple-600 hover:bg-purple-100 disabled:opacity-50 transition-all border border-purple-200"
         >
-          <Printer size={12} /> ETIQUETA TRANSP.
-        </button>
-        {/* DANFE + Etiqueta */}
-        <button
-          onClick={handleBatchEtiquetaDanfe}
-          className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-orange-600 text-white hover:bg-orange-700 transition-all shadow shadow-orange-200"
-        >
-          <Files size={12} /> DANFE + ETIQUETA
-        </button>
-        {/* ZPL */}
-        <button
-          onClick={handleBatchPdfEtiquetas}
-          className="flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-amber-50 text-amber-700 hover:bg-amber-100 transition-all border border-amber-200"
-        >
-          <Printer size={12} /> ZPL
+          <Truck size={12} /> Etiqueta ZPL
         </button>
         {/* XML */}
         <button
@@ -5653,6 +5551,12 @@ const BlingPage: React.FC<BlingPageProps> = ({
             <Package size={16} /> Catálogo
           </button>
         )}
+        <button
+          onClick={() => setActiveTab("logistica")}
+          className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === "logistica" ? "border-orange-500 text-orange-700 bg-orange-50/50" : "border-transparent text-gray-400 hover:text-gray-600"}`}
+        >
+          <Truck size={16} /> Logística
+        </button>
       </div>
 
       {/* Content: Importação (Pedidos de Vendas do Bling) */}
@@ -7008,64 +6912,67 @@ const BlingPage: React.FC<BlingPageProps> = ({
                                               size={12}
                                               className="text-orange-600"
                                             />{" "}
-                                            DANFE Normal
+                                            DANFE
                                           </button>
-                                          <button
-                                            onClick={() => {
-                                              handleDownloadDanfe(
-                                                nfe,
-                                                "simplified"
-                                              );
-                                              setNfeContextMenuId(null);
-                                            }}
-                                            className="w-full text-left px-3 py-2 hover:bg-orange-50 flex items-center gap-2"
-                                          >
-                                            <Zap
-                                              size={12}
-                                              className="text-orange-500"
-                                            />{" "}
-                                            DANFE Simplificada
-                                          </button>
+                                          {/* DANFE Simplificada ZPL */}
+                                          <div className="flex items-center w-full">
+                                            <button
+                                              onClick={() => {
+                                                handleDownloadDanfe(
+                                                  nfe,
+                                                  "simplified_zpl"
+                                                );
+                                                setNfeContextMenuId(null);
+                                              }}
+                                              className="flex-1 text-left px-3 py-2 hover:bg-orange-50 flex items-center gap-2"
+                                            >
+                                              <Printer
+                                                size={12}
+                                                className="text-orange-500"
+                                              />{" "}
+                                              DANFE Simplificada ZPL
+                                            </button>
+                                            <button
+                                              onClick={() => {
+                                                setShowDanfeZplConfigModal(true);
+                                                setNfeContextMenuId(null);
+                                              }}
+                                              className="px-2 py-2 hover:bg-slate-100 rounded-lg"
+                                              title="Configurar DANFE ZPL"
+                                            >
+                                              <Settings size={11} className="text-slate-400" />
+                                            </button>
+                                          </div>
+                                          {/* Etiqueta ZPL */}
                                           <button
                                             onClick={() => {
                                               handleDownloadEnvioZpl(nfe);
                                               setNfeContextMenuId(null);
                                             }}
-                                            className="w-full text-left px-3 py-2 hover:bg-orange-50 flex items-center gap-2"
+                                            className="w-full text-left px-3 py-2 hover:bg-purple-50 flex items-center gap-2"
                                           >
-                                            <Printer
+                                            <Truck
                                               size={12}
-                                              className="text-orange-500"
+                                              className="text-purple-500"
                                             />{" "}
-                                            Etiqueta Envio (ZPL)
+                                            Etiqueta ZPL
                                           </button>
+                                          {/* DANFE Simplificada + Etiqueta ZPL */}
                                           <button
-                                            onClick={() => {
-                                              handleDownloadCombinedZpl(nfe);
+                                            onClick={async () => {
                                               setNfeContextMenuId(null);
+                                              await handleDownloadDanfe(nfe, "simplified_zpl");
+                                              await handleDownloadEnvioZpl(nfe);
                                             }}
-                                            className="w-full text-left px-3 py-2 hover:bg-orange-50 flex items-center gap-2"
+                                            className="w-full text-left px-3 py-2 hover:bg-indigo-50 flex items-center gap-2"
                                           >
-                                            <Files
+                                            <Package
                                               size={12}
-                                              className="text-orange-600"
+                                              className="text-indigo-500"
                                             />{" "}
-                                            DANFE + Etiqueta (ZPL)
+                                            DANFE Simpl. + Etiqueta ZPL
                                           </button>
                                           <div className="border-t border-slate-100 my-1" />
-                                          <button
-                                            onClick={() => {
-                                              handleDownloadZpl(nfe);
-                                              setNfeContextMenuId(null);
-                                            }}
-                                            className="w-full text-left px-3 py-2 hover:bg-amber-50 flex items-center gap-2"
-                                          >
-                                            <Printer
-                                              size={12}
-                                              className="text-amber-600"
-                                            />{" "}
-                                            ZPL
-                                          </button>
                                           <button
                                             onClick={() => {
                                               handleDownloadXml(nfe);
@@ -7400,8 +7307,20 @@ const BlingPage: React.FC<BlingPageProps> = ({
                                                 {nfe.rastreamento}
                                               </span>
                                             ) : (
-                                              <span className="text-slate-300 italic">
-                                                Não disponível
+                                              <span className="flex items-center gap-1">
+                                                <span className="text-slate-300 italic text-[10px]">
+                                                  Não disponível
+                                                </span>
+                                                <button
+                                                  onClick={() => handleBuscarRastreioNfe(nfe)}
+                                                  disabled={refreshingRastreioId === nfe.id}
+                                                  title="Buscar rastreio no Bling"
+                                                  className="ml-1 p-0.5 rounded text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                                                >
+                                                  {refreshingRastreioId === nfe.id
+                                                    ? <Loader2 size={10} className="animate-spin" />
+                                                    : <RefreshCw size={10} />}
+                                                </button>
                                               </span>
                                             )}
                                           </div>
@@ -7516,23 +7435,12 @@ const BlingPage: React.FC<BlingPageProps> = ({
                                               onClick={() =>
                                                 handleDownloadDanfe(
                                                   nfe,
-                                                  "simplified"
+                                                  "simplified_zpl"
                                                 )
                                               }
                                               className="flex items-center gap-1 text-[9px] font-bold bg-teal-50 text-teal-700 px-2 py-1 rounded hover:bg-teal-100 border border-teal-200"
                                             >
-                                              <Download size={9} /> Simplificada
-                                            </button>
-                                            <button
-                                              onClick={() =>
-                                                handleDownloadDanfe(
-                                                  nfe,
-                                                  "transport_label"
-                                                )
-                                              }
-                                              className="flex items-center gap-1 text-[9px] font-bold bg-purple-50 text-purple-700 px-2 py-1 rounded hover:bg-purple-100 border border-purple-200"
-                                            >
-                                              <Tag size={9} /> Etiqueta
+                                              <Printer size={9} /> ZPL
                                             </button>
                                           </div>
                                         </div>
@@ -7869,6 +7777,20 @@ const BlingPage: React.FC<BlingPageProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Content: Logística — Objetos de Postagem */}
+      {activeTab === "logistica" && (
+        <div className="animate-in fade-in slide-in-from-bottom-4">
+          <AbaLogistica
+            token={settings?.apiKey}
+            addToast={(msg, tipo) => addToast(msg, tipo as any)}
+            startDate={filters.startDate}
+            endDate={filters.endDate}
+            nfeSaida={nfeSaida}
+            onAddLote={(lote) => setZplLotes((prev) => [lote, ...prev])}
+          />
         </div>
       )}
 
@@ -8271,6 +8193,85 @@ const BlingPage: React.FC<BlingPageProps> = ({
                 Cancelar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal Config DANFE Simplificada ZPL ────────────────────────── */}
+      {showDanfeZplConfigModal && (
+        <div
+          className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
+          onClick={() => setShowDanfeZplConfigModal(false)}
+        >
+          <div
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">
+                Config DANFE ZPL
+              </h3>
+              <button
+                onClick={() => setShowDanfeZplConfigModal(false)}
+                className="text-slate-400 hover:text-slate-700"
+              >
+                <XCircle size={18} />
+              </button>
+            </div>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
+                  Offset Topo (dots)
+                </label>
+                <input
+                  type="number"
+                  value={danfeZplConfig.offsetTop}
+                  onChange={(e) => {
+                    const val = { ...danfeZplConfig, offsetTop: Number(e.target.value) || 0 };
+                    setDanfeZplConfig(val);
+                    localStorage.setItem("danfeZplConfig", JSON.stringify(val));
+                  }}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1">
+                  Offset Esquerda (dots)
+                </label>
+                <input
+                  type="number"
+                  value={danfeZplConfig.offsetLeft}
+                  onChange={(e) => {
+                    const val = { ...danfeZplConfig, offsetLeft: Number(e.target.value) || 0 };
+                    setDanfeZplConfig(val);
+                    localStorage.setItem("danfeZplConfig", JSON.stringify(val));
+                  }}
+                  className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  id="showLogoCb"
+                  checked={danfeZplConfig.showLogo}
+                  onChange={(e) => {
+                    const val = { ...danfeZplConfig, showLogo: e.target.checked };
+                    setDanfeZplConfig(val);
+                    localStorage.setItem("danfeZplConfig", JSON.stringify(val));
+                  }}
+                  className="w-4 h-4 accent-orange-600"
+                />
+                <label htmlFor="showLogoCb" className="text-xs font-bold text-slate-700">
+                  Exibir logo ECOCOLLOR
+                </label>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowDanfeZplConfigModal(false)}
+              className="mt-5 w-full py-2 rounded-xl bg-orange-600 text-white text-xs font-black uppercase tracking-widest hover:bg-orange-700 transition-all"
+            >
+              SALVAR
+            </button>
           </div>
         </div>
       )}

@@ -176,6 +176,7 @@ export const AbaImportacaoPedidosBling: React.FC<
   const [mlEtiquetaFiltro, setMlEtiquetaFiltro] = useState<
     "todos" | "com" | "sem"
   >("todos");
+  const [apenasZerado, setApenasZerado] = useState(false);
   const [quantidadeDesejada, setQuantidadeDesejada] = useState(200);
   const [pagina, setPagina] = useState(1);
   const [ordenacao, setOrdenacao] = useState<"asc" | "desc">("desc");
@@ -239,7 +240,9 @@ export const AbaImportacaoPedidosBling: React.FC<
         p.origem !== "MERCADO_LIVRE" ||
         (mlEtiquetaFiltro === "com" ? !!p.rastreamento : !p.rastreamento);
 
-      return passTexto && passSku && passLoja && passEtiqueta;
+      const passZerado = !apenasZerado || (p.total?.valor ?? p.valorTotal ?? 0) === 0;
+
+      return passTexto && passSku && passLoja && passEtiqueta && passZerado;
     });
   }, [
     pedidos,
@@ -247,7 +250,8 @@ export const AbaImportacaoPedidosBling: React.FC<
     filtroSku,
     lojaFiltroNome,
     canaisVenda,
-    mlEtiquetaFiltro
+    mlEtiquetaFiltro,
+    apenasZerado
   ]);
 
   // ── Lojas distintas (para as tabs de filtro) ──────────────────────────────
@@ -913,6 +917,26 @@ export const AbaImportacaoPedidosBling: React.FC<
               ))}
             </div>
           )}
+
+          {/* Filtro: Valor zerado */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setApenasZerado((v) => !v)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold rounded-lg border transition-all ${
+                apenasZerado
+                  ? "bg-orange-500 text-white border-orange-600"
+                  : "bg-white text-slate-600 border-slate-200 hover:border-orange-400"
+              }`}
+              title="Mostrar apenas pedidos com valor total zerado"
+            >
+              <span className="font-black">{apenasZerado ? "✔" : ""} NF valor zerado</span>
+            </button>
+            {apenasZerado && (
+              <span className="text-[9px] text-orange-600 font-bold bg-orange-50 px-2 py-0.5 rounded-full border border-orange-200">
+                Exibindo {pedidosFiltrados.length} pedido(s) zerado(s)
+              </span>
+            )}
+          </div>
 
           {/* Busca + SKU */}
           <div className="flex gap-2">
