@@ -269,7 +269,7 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
                 )}
 
                 <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                    <StatCardV2 title="Pedidos" icon={<ShoppingCart size={20} />} views={[{ id: 'total', label: 'Total', value: String(allOrders.filter(o => o.status !== 'ERRO').length), subValue: 'Pedidos ativos', color: 'blue' }]} activeIndex={0} onIndicatorClick={() => { }} />
+                    <StatCardV2 title="Pedidos" icon={<ShoppingCart size={20} />} views={[{ id: 'total', label: 'Total', value: String(productionSummary.main.total.totalPedidos), subValue: `${productionSummary.main.total.totalPacotes} itens`, color: 'blue' }]} activeIndex={0} onIndicatorClick={() => { }} />
                     <StatCardV2 title="Bipados" icon={<CheckCheck size={20} />} views={[{ id: 'total', label: 'Bipados', value: String(scanHistory.filter(s => s.status === 'OK' || s.synced).length), subValue: 'Sucessos hoje', color: 'blue' }]} activeIndex={0} onIndicatorClick={() => { }} />
                     <div className="bg-white p-5 rounded-2xl border shadow-sm flex flex-col justify-between">
                         <p className="text-gray-500 font-bold text-xs uppercase">Estoque Baixo</p>

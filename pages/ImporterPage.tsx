@@ -172,7 +172,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
             // para garantir que a coluna configurada (`dateShipping`) seja usada quando disponível.
             const { headers, sheetData } = extractHeadersAndData(buffer);
             console.debug('DEBUG: extracted headers =>', headers.slice(0, 50));
-            const normalizeHeaderLocal = (s: any) => String(s || '').trim().toUpperCase().normalize('NFD').replace(/[ -\u036f]/g, '').replace(/[^A-Z0-9\s]/g, '').replace(/\s+/g, ' ');
+            const normalizeHeaderLocal = (s: any) => String(s || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9\s]/g, '').replace(/\s+/g, ' ');
             const targetMatch = (desired: string | undefined) => {
                 if (!desired) return undefined;
                 const t = normalizeHeaderLocal(desired);
@@ -181,6 +181,18 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 mk = headers.find(h => normalizeHeaderLocal(h).includes(t));
                 if (mk) return mk;
                 mk = headers.find(h => t.includes(normalizeHeaderLocal(h)));
+                if (mk) return mk;
+                // Token matching com stopwords (ex: "Data de envio prevista" ↔ "Data prevista de envio")
+                const sw = new Set(['DE', 'DO', 'DA', 'E', 'PARA', 'POR', 'O', 'A', 'EM', 'NO', 'NA', 'DOS', 'DAS', 'AO', 'PELO', 'PELA']);
+                const tImp = t.split(' ').filter(Boolean).filter(w => !sw.has(w));
+                if (tImp.length > 0) {
+                    mk = headers.find(h => {
+                        const hImp = normalizeHeaderLocal(h).split(' ').filter(Boolean).filter(w => !sw.has(w));
+                        if (hImp.length === 0) return false;
+                        const [shorter, longer] = tImp.length <= hImp.length ? [tImp, hImp] : [hImp, tImp];
+                        return shorter.every(w => longer.includes(w));
+                    });
+                }
                 return mk;
             };
 
@@ -238,11 +250,18 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 const dateMap = new Map<string, number>();
                 const normalizeDateLocal = (raw: any) => {
                     if (!raw) return '';
-                    if (raw instanceof Date) return raw.toISOString().split('T')[0];
+                    if (raw instanceof Date) {
+                        const y = raw.getUTCFullYear(), m = String(raw.getUTCMonth()+1).padStart(2,'0'), d = String(raw.getUTCDate()).padStart(2,'0');
+                        return `${y}-${m}-${d}`;
+                    }
                     let s = String(raw).trim();
-                    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10); // Fix: handles 'YYYY-MM-DD HH:MM:SS' (space, not T)
+                    if (s.includes(' ')) s = s.split(' ')[0];
+                    s = s.replace(/[AP]M$/i, '').trim();
+                    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
                     const dmy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
                     if (dmy) return `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
+                    const shortY = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);
+                    if (shortY) { const yy = parseInt(shortY[3],10); return `${yy>=70?1900+yy:2000+yy}-${shortY[2].padStart(2,'0')}-${shortY[1].padStart(2,'0')}`; }
                     const parsed = new Date(s);
                     if (!isNaN(parsed.getTime())) return parsed.toISOString().split('T')[0];
                     return '';
@@ -364,7 +383,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                     for (const k of Object.keys(cfg)) {
                         const v = cfg[k];
                         if (typeof v === 'string' && v) {
-                            cfgChecks[canalKey][k] = { expected: v, presentInHeaders: headers.includes(v), normalizedHeaderMatch: headers.find(h => String(h).trim().toUpperCase().normalize('NFD').replace(/\u0300-\u036f/g, '') === String(v).trim().toUpperCase()) };
+                            cfgChecks[canalKey][k] = { expected: v, presentInHeaders: headers.includes(v), normalizedHeaderMatch: headers.find(h => String(h).trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') === String(v).trim().toUpperCase()) };
                         }
                     }
                 }
@@ -656,6 +675,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                             data={processedData}
                             blingLinkedIds={blingLinkedIds}
                             onLaunchSuccess={handleLaunch}
+                            onCancel={() => { setProcessedData(null); setSelectedFile(null); setImportAsHistory(false); }}
                             skuLinks={skuLinks}
                             products={products}
                             onLinkSku={async (sku, master) => await onLinkSku(sku.toUpperCase(), master.toUpperCase())}

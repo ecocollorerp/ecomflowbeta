@@ -77,51 +77,34 @@ export const PacotesProntosPage: React.FC<PacotesProntosPageProps> = ({ addToast
         localizacao: ''
     });
 
-    // Carregar pacotes prontos
+    // Carregar pacotes prontos do banco
     const loadPacotes = useCallback(async () => {
         try {
             setIsLoading(true);
-            // TODO: Implementar chamada ao backend/Supabase
-            // const { data } = await supabase.from('estoque_pronto').select('*');
+            const { dbClient } = await import('../lib/supabaseClient');
+            const { data, error } = await dbClient
+                .from('estoque_pronto')
+                .select('*')
+                .order('created_at', { ascending: false });
 
-            // Dados de exemplo
-            const mockPacotes: PacoteProto[] = [
-                {
-                    id: '1',
-                    nome: 'Kit Promocional Março',
-                    sku_primario: 'KIT-PROMO-01',
-                    quantidade_total: 50,
-                    quantidade_disponivel: 45,
-                    quantidade_reservada: 5,
-                    localizacao: 'A1-P1',
-                    status: 'PRONTO',
-                    data_preparacao: Date.now() - 86400000,
-                    data_disponibilidade: Date.now() + 259200000,
-                    operador: 'João Silva',
-                    observacoes: 'Preparado para expedição rápida',
-                    produtos: [
-                        { sku: 'PROD-001', nome: 'Produto A', quantidade: 2 },
-                        { sku: 'PROD-002', nome: 'Produto B', quantidade: 3 },
-                    ]
-                },
-                {
-                    id: '2',
-                    nome: 'Lote Especial B',
-                    sku_primario: 'LOTE-ESP-02',
-                    quantidade_total: 100,
-                    quantidade_disponivel: 100,
-                    quantidade_reservada: 0,
-                    localizacao: 'B2-P3',
-                    status: 'PRONTO',
-                    data_preparacao: Date.now() - 172800000,
-                    data_disponibilidade: Date.now() + 604800000,
-                    operador: 'Maria Santos',
-                    produtos: [
-                        { sku: 'PROD-003', nome: 'Produto C', quantidade: 5 },
-                    ]
-                }
-            ];
-            setPacotes(mockPacotes);
+            if (error) throw error;
+
+            const mapped: PacoteProto[] = (data || []).map((row: any) => ({
+                id: row.id,
+                nome: row.batch_id || '',
+                sku_primario: row.stock_item_id || '',
+                quantidade_total: Number(row.quantidade_total || 0),
+                quantidade_disponivel: Number(row.quantidade_disponivel || 0),
+                quantidade_reservada: Number(row.quantidade_total || 0) - Number(row.quantidade_disponivel || 0),
+                localizacao: row.localizacao || '',
+                status: row.status || 'PRONTO',
+                data_preparacao: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+                data_disponibilidade: row.updated_at ? new Date(row.updated_at).getTime() : Date.now(),
+                operador: row.created_by || '',
+                observacoes: row.observacoes || '',
+                produtos: Array.isArray(row.produtos) ? row.produtos : [],
+            }));
+            setPacotes(mapped);
         } catch (error) {
             console.error('Erro ao carregar pacotes:', error);
             addToast('Erro ao carregar pacotes prontos', 'error');

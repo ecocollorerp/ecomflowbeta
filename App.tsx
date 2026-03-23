@@ -1084,6 +1084,8 @@ const App: React.FC = () => {
                 itemToSave.min_qty = item.min_qty || 0;
                 itemToSave.ready_qty = item.ready_qty || 0;
                 if (item.color) itemToSave.color = item.color;
+                if (item.product_type) itemToSave.product_type = item.product_type;
+                if (item.base_type) itemToSave.base_type = item.base_type;
                 console.log(`📥 [handleAddNewItem] Preparando PRODUTO:`, itemToSave);
             }
 
@@ -1457,7 +1459,7 @@ const App: React.FC = () => {
             // Filtrar apenas os campos que existem na tabela alvo
             const validFields = targetTable === 'stock_items'
                 ? ['code', 'name', 'description', 'kind', 'current_qty', 'reserved_qty', 'cost_price', 'sell_price', 'unit', 'category', 'status', 'min_qty', 'barcode', 'substitute_product_code', 'product_type']
-                : ['code', 'name', 'description', 'kind', 'current_qty', 'reserved_qty', 'ready_qty', 'is_ready', 'ready_location', 'ready_date', 'ready_batch_id', 'cost_price', 'sell_price', 'bling_id', 'bling_sku', 'unit', 'category', 'status', 'bom_composition', 'min_qty', 'is_volatile_infinite'];
+                : ['code', 'name', 'description', 'kind', 'current_qty', 'reserved_qty', 'ready_qty', 'is_ready', 'ready_location', 'ready_date', 'ready_batch_id', 'cost_price', 'sell_price', 'bling_id', 'bling_sku', 'unit', 'category', 'status', 'bom_composition', 'min_qty', 'is_volatile_infinite', 'product_type', 'base_type', 'color'];
 
             const filteredUpdates: any = {};
             validFields.forEach(field => {

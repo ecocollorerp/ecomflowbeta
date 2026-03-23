@@ -20,6 +20,7 @@ interface ImportResultsProps {
     isHistoryView?: boolean;
     users: User[];
     blingLinkedIds?: Set<string>;
+    onCancel?: () => void;
 }
 
 const ImportResults: React.FC<ImportResultsProps> = (props) => {
@@ -201,7 +202,12 @@ const ImportResults: React.FC<ImportResultsProps> = (props) => {
             <ProductionSummary data={enrichedState.summary} productTypeName={generalSettings.productTypeNames.papel_de_parede} miudosTypeName={generalSettings.productTypeNames.miudos} />
 
             {!isHistoryView && (
-                <div className="flex justify-end animate-in fade-in slide-in-from-top-2">
+                <div className="flex justify-end gap-3 animate-in fade-in slide-in-from-top-2">
+                    {props.onCancel && (
+                        <button onClick={props.onCancel} className="bg-gray-200 text-gray-700 px-8 py-3 rounded-xl font-black text-lg shadow hover:bg-gray-300 active:scale-95 transition-all flex items-center gap-3">
+                            CANCELAR
+                        </button>
+                    )}
                     <button onClick={() => onLaunchSuccess(data.lists.completa)} className="bg-green-600 text-white px-8 py-3 rounded-xl font-black text-lg shadow-lg hover:bg-green-700 active:scale-95 transition-all flex items-center gap-3">
                         <Database size={20} /> LANÇAR NO BANCO DE DADOS
                     </button>
@@ -468,7 +474,12 @@ const ImportResults: React.FC<ImportResultsProps> = (props) => {
                 </div>
 
                 {!isHistoryView && (
-                    <div className="p-6 bg-gray-50 border-t flex justify-end">
+                    <div className="p-6 bg-gray-50 border-t flex justify-end gap-3">
+                        {props.onCancel && (
+                            <button onClick={props.onCancel} className="bg-gray-200 text-gray-700 px-10 py-4 rounded-2xl font-black text-xl shadow hover:bg-gray-300 active:scale-95 transition-all flex items-center gap-3">
+                                CANCELAR
+                            </button>
+                        )}
                         <button onClick={() => onLaunchSuccess(data.lists.completa)} className="bg-green-600 text-white px-10 py-4 rounded-2xl font-black text-xl shadow-xl hover:scale-105 active:scale-95 transition-all flex items-center gap-3">
                             <Database size={24} /> LANÇAR NO BANCO DE DADOS
                         </button>

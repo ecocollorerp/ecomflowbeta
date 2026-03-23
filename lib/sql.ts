@@ -134,6 +134,17 @@ BEGIN
     ALTER TABLE public.product_boms ADD COLUMN items JSONB DEFAULT '[]'::jsonb;
   END IF;
 
+  -- Garantir colunas product_type, base_type, color em product_boms
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_boms' AND column_name='product_type') THEN
+    ALTER TABLE public.product_boms ADD COLUMN product_type TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_boms' AND column_name='base_type') THEN
+    ALTER TABLE public.product_boms ADD COLUMN base_type TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='product_boms' AND column_name='color') THEN
+    ALTER TABLE public.product_boms ADD COLUMN color TEXT;
+  END IF;
+
   -- Pedidos
   CREATE TABLE IF NOT EXISTS public.orders (
       id TEXT PRIMARY KEY,

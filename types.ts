@@ -1207,7 +1207,7 @@ export const defaultGeneralSettings: GeneralSettings = {
       qty: "Quantidade",
       tracking: "Código de rastreio",
       date: "Data de criação do pedido",
-      dateShipping: "Data de envio prevista",
+      dateShipping: "Data prevista de envio",
       priceGross: "Preço acordado",
       totalValue: "",
       shippingFee: "Desconto de Frete Aproximado",

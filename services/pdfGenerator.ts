@@ -39,7 +39,17 @@ export const renderZpl = async (
     const dpiValue = settings.dpi === 'Auto' ? 203 : parseInt(settings.dpi, 10);
     const dpmm = Math.round(dpiValue / 25.4);
     const widthInInches = settings.pageWidth / 25.4;
-    const heightInInches = settings.pageHeight / 25.4;
+
+    // Extract ^LL (label length in dots) from ZPL and use whichever is larger
+    let heightInInches = settings.pageHeight / 25.4;
+    const llMatch = zpl.match(/\^LL(\d+)/i);
+    if (llMatch) {
+        const llDots = parseInt(llMatch[1], 10);
+        const llInches = llDots / dpiValue;
+        if (llInches > heightInInches) {
+            heightInInches = llInches + 0.1; // small margin to avoid clipping
+        }
+    }
 
     const url = generalSettings.etiquetas.labelaryApiUrl
       .replace('{dpmm}', dpmm.toString())

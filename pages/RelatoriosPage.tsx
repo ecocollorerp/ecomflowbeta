@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { StockItem, StockMovement, OrderItem, ReportFilters, ReportPeriod, BipStatus, Canal, WeighingBatch, ScanLogItem, User, ProdutoCombinado, StockItemKind, AttendanceRecord, ReturnItem, OrderStatusValue, GeneralSettings, GrindingBatch } from '../types';
-import { BarChart3, Package, FileDown, Search, Calendar, ChevronDown, ShoppingCart, TrendingUp, AlertTriangle, Factory, Box, Weight, QrCode, Bug, Laptop2, Users, FileWarning, Undo, ChevronRight, Recycle } from 'lucide-react';
+import { BarChart3, Package, FileDown, Search, Calendar, ChevronDown, ShoppingCart, TrendingUp, AlertTriangle, Factory, Box, Weight, QrCode, Bug, Laptop2, Users, FileWarning, Undo, ChevronRight, Recycle, DollarSign } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -9,6 +9,9 @@ import * as XLSX from 'xlsx';
 // --- Helper Functions & Data ---
 const getReportTitle = (reportId: string) => {
     const titles: Record<string, string> = {
+        'financeiro/faturamento': 'Faturamento por Período',
+        'financeiro/ranking-sku': 'Ranking de SKUs por Receita',
+        'financeiro/por-canal': 'Comparativo por Canal',
         'estoque/posicao': 'Posição Atual de Estoque',
         'estoque/movimentos': 'Movimentações de Estoque',
         'estoque/alertas': 'Alertas de Estoque',
@@ -405,6 +408,85 @@ const ErrosBipSemPedidoReport: React.FC<{ scans: ScanLogItem[] }> = ({ scans }) 
     </ReportTable>
 );
 
+const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+const FaturamentoReport: React.FC<{ data: any }> = ({ data }) => {
+    if (!data) return <NoData isCard />;
+    return (
+        <div className="space-y-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="p-4 bg-blue-50 rounded-xl border border-blue-100"><p className="text-[10px] font-black uppercase text-blue-500">Faturamento Bruto</p><p className="text-xl font-black text-blue-700">{fmt(data.gross)}</p></div>
+                <div className="p-4 bg-red-50 rounded-xl border border-red-100"><p className="text-[10px] font-black uppercase text-red-500">Taxas Marketplace</p><p className="text-xl font-black text-red-700">-{fmt(data.fees)}</p></div>
+                <div className="p-4 bg-orange-50 rounded-xl border border-orange-100"><p className="text-[10px] font-black uppercase text-orange-500">Frete</p><p className="text-xl font-black text-orange-700">-{fmt(data.shipping)}</p></div>
+                <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-100"><p className="text-[10px] font-black uppercase text-emerald-500">Líquido</p><p className="text-xl font-black text-emerald-700">{fmt(data.net)}</p></div>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="p-3 bg-gray-50 rounded-lg border"><p className="text-[10px] font-bold text-gray-400 uppercase">Total Pedidos</p><p className="text-lg font-black">{data.totalPedidos}</p></div>
+                <div className="p-3 bg-gray-50 rounded-lg border"><p className="text-[10px] font-bold text-gray-400 uppercase">Total Itens</p><p className="text-lg font-black">{data.totalItens}</p></div>
+                <div className="p-3 bg-gray-50 rounded-lg border"><p className="text-[10px] font-bold text-gray-400 uppercase">Ticket Médio</p><p className="text-lg font-black">{fmt(data.ticketMedio)}</p></div>
+                <div className="p-3 bg-gray-50 rounded-lg border"><p className="text-[10px] font-bold text-gray-400 uppercase">Margem</p><p className="text-lg font-black">{data.margemPct.toFixed(1)}%</p></div>
+            </div>
+            {data.daily && data.daily.length > 0 && (
+                <div className="bg-white rounded-xl border p-4">
+                    <h4 className="text-sm font-black text-gray-600 mb-3 uppercase">Receita Diária</h4>
+                    <div className="space-y-1">
+                        {data.daily.map((d: any) => {
+                            const maxVal = Math.max(...data.daily.map((x: any) => x.value));
+                            const pct = maxVal > 0 ? (d.value / maxVal) * 100 : 0;
+                            return (
+                                <div key={d.date} className="flex items-center gap-3 text-xs">
+                                    <span className="w-24 text-gray-500 font-bold shrink-0">{new Date(d.date + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}</span>
+                                    <div className="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden"><div className="bg-blue-500 h-full rounded-full transition-all" style={{ width: `${pct}%` }} /></div>
+                                    <span className="w-28 text-right font-black text-gray-700">{fmt(d.value)}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+const RankingSkuReport: React.FC<{ data: any[] }> = ({ data }) => (
+    <ReportTable headers={['#', 'SKU', 'Receita', 'Quantidade', '% do Total']}>
+        {data && data.length > 0 ? (() => {
+            const totalRevenue = data.reduce((s, d) => s + d.revenue, 0);
+            return data.slice(0, 50).map((item, idx) => (
+                <tr key={item.code} className="hover:bg-gray-50">
+                    <td className="py-2 px-3 font-black text-gray-400">{idx + 1}</td>
+                    <td className="py-2 px-3 font-black">{item.code}</td>
+                    <td className="py-2 px-3 font-black text-blue-600">{fmt(item.revenue)}</td>
+                    <td className="py-2 px-3">{item.qty}</td>
+                    <td className="py-2 px-3">{totalRevenue > 0 ? ((item.revenue / totalRevenue) * 100).toFixed(1) : 0}%</td>
+                </tr>
+            ));
+        })() : <NoData />}
+    </ReportTable>
+);
+
+const ComparativoCanalReport: React.FC<{ data: any[] }> = ({ data }) => {
+    if (!data || data.length === 0) return <NoData isCard />;
+    const total = data.reduce((s, d) => s + d.value, 0);
+    const canalNames: Record<string, string> = { ML: 'Mercado Livre', SHOPEE: 'Shopee', SITE: 'TikTok Shop' };
+    const canalColors: Record<string, string> = { ML: 'bg-yellow-400', SHOPEE: 'bg-orange-500', SITE: 'bg-slate-800' };
+    return (
+        <div className="space-y-4">
+            {data.filter(d => d.value > 0).map(d => (
+                <div key={d.canal} className="p-4 bg-white rounded-xl border">
+                    <div className="flex justify-between items-center mb-2">
+                        <span className="font-black text-sm uppercase">{canalNames[d.canal] || d.canal}</span>
+                        <span className="font-black text-lg">{fmt(d.value)}</span>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-4 overflow-hidden">
+                        <div className={`${canalColors[d.canal] || 'bg-blue-500'} h-full rounded-full`} style={{ width: `${d.pct}%` }} />
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1 font-bold">{d.pct.toFixed(1)}% do total ({fmt(total)})</p>
+                </div>
+            ))}
+        </div>
+    );
+};
 
 // --- Main Page Component ---
 interface RelatoriosPageProps {
@@ -421,6 +503,13 @@ interface RelatoriosPageProps {
 }
 
 const reportCategories = [
+    {
+        id: 'financeiro', name: 'Financeiro', icon: <DollarSign size={18} />, reports: [
+            { id: 'financeiro/faturamento', name: 'Faturamento por Período' },
+            { id: 'financeiro/ranking-sku', name: 'Ranking de SKUs' },
+            { id: 'financeiro/por-canal', name: 'Comparativo por Canal' },
+        ]
+    },
     {
         id: 'estoque', name: 'Estoque', icon: <Package size={18} />, reports: [
             { id: 'estoque/posicao', name: 'Posição Atual' },
@@ -480,7 +569,7 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
     const { stockItems, stockMovements, orders, weighingBatches, scanHistory, produtosCombinados, users, returns, generalSettings, grindingBatches } = props;
     const [activeReport, setActiveReport] = useState('estoque/posicao');
     const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({
-        estoque: true, pedidos: true, producao: true, ensacamento: true, bipagem: true, erros: true, funcionarios: true, moagem: true,
+        financeiro: true, estoque: true, pedidos: true, producao: true, ensacamento: true, bipagem: true, erros: true, funcionarios: true, moagem: true,
     });
     const [filters, setFilters] = useState<ReportFilters>({
         period: 'last7days', search: '', canal: 'ALL', status: 'ALL', insumoCode: '', operatorId: 'ALL',
@@ -532,6 +621,45 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
 
 
         const data: { [key: string]: any } = {};
+
+        // --- FINANCEIRO ---
+        const finOrders = orders.filter(o => {
+            const orderDateStr = String(o.data || '').split('/').reverse().join('-');
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(orderDateStr)) return false;
+            return dateFilter(orderDateStr) && o.status !== 'ERRO' && o.status !== 'DEVOLVIDO' &&
+                (filters.canal === 'ALL' || o.canal === filters.canal);
+        });
+        const finGroups = new Map<string, OrderItem[]>();
+        finOrders.forEach(o => { const k = o.orderId || o.tracking; if (k) { if (!finGroups.has(k)) finGroups.set(k, []); finGroups.get(k)!.push(o); } });
+        let finGross = 0, finFees = 0, finShipping = 0, finNet = 0;
+        const finCanalMap: Record<string, number> = { ML: 0, SHOPEE: 0, SITE: 0 };
+        const finSkuMap = new Map<string, { code: string, revenue: number, qty: number }>();
+        const finDailyMap = new Map<string, number>();
+        finGroups.forEach(group => {
+            const first = group[0];
+            const gGross = Number(first.price_total || 0);
+            const gFees = Number(first.platform_fees || 0);
+            const gShip = Number(first.shipping_fee || 0);
+            finGross += gGross; finFees += gFees; finShipping += gShip;
+            finNet += (gGross - gFees - gShip);
+            finCanalMap[first.canal] = (finCanalMap[first.canal] || 0) + gGross;
+            group.forEach(o => {
+                const e = finSkuMap.get(o.sku) || { code: o.sku, revenue: 0, qty: 0 };
+                e.revenue += (o.price_gross || 0); e.qty += o.qty_final;
+                finSkuMap.set(o.sku, e);
+            });
+            const d = String(first.data || '').split('/').reverse().join('-');
+            if (/^\d{4}-\d{2}-\d{2}$/.test(d)) finDailyMap.set(d, (finDailyMap.get(d) || 0) + gGross);
+        });
+        data['financeiro/faturamento'] = {
+            gross: finGross, fees: finFees, shipping: finShipping, net: finNet,
+            totalPedidos: finGroups.size, totalItens: finOrders.reduce((s, o) => s + o.qty_final, 0),
+            ticketMedio: finGroups.size > 0 ? finGross / finGroups.size : 0,
+            margemPct: finGross > 0 ? (finNet / finGross) * 100 : 0,
+            daily: Array.from(finDailyMap.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, value })),
+        };
+        data['financeiro/ranking-sku'] = Array.from(finSkuMap.values()).sort((a, b) => b.revenue - a.revenue);
+        data['financeiro/por-canal'] = Object.entries(finCanalMap).map(([canal, value]) => ({ canal, value, pct: finGross > 0 ? (value / finGross) * 100 : 0 }));
 
         // --- ESTOQUE ---
         data['estoque/posicao'] = stockItems.filter(i =>
@@ -752,6 +880,9 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
             case 'funcionarios/pesagem': return <EnsacamentoPorFuncionarioReport data={data} />;
             case 'erros/bom-faltante': return <ErrosProdutoCombinadoFaltanteReport items={data} />;
             case 'erros/bip-sem-pedido': return <ErrosBipSemPedidoReport scans={data} />;
+            case 'financeiro/faturamento': return <FaturamentoReport data={data} />;
+            case 'financeiro/ranking-sku': return <RankingSkuReport data={data} />;
+            case 'financeiro/por-canal': return <ComparativoCanalReport data={data} />;
             default: return <div className="p-4 bg-gray-50 text-center text-gray-500">Relatório não implementado.</div>;
         }
     };

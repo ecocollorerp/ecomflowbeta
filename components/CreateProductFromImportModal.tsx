@@ -91,6 +91,7 @@ const CreateProductFromImportModal: React.FC<CreateProductFromImportModalProps> 
                                 <option value="miudos">{generalSettings.productTypeNames.miudos}</option>
                             </select>
                         </div>
+                        {productType !== 'miudos' && (
                         <div>
                             <label className="text-sm font-medium text-gray-700">Tipo de Base</label>
                             <select
@@ -103,6 +104,7 @@ const CreateProductFromImportModal: React.FC<CreateProductFromImportModalProps> 
                                 <option value="especial">🎨 Base Especial</option>
                             </select>
                         </div>
+                        )}
                     </div>
                     <div>
                         <label htmlFor="name" className="text-sm font-medium text-gray-700">Nome do Produto</label>

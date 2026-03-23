@@ -1,7 +1,7 @@
 
 import React, { useState, ReactNode, useMemo } from 'react';
 import { GeneralSettings, User, ToastMessage, StockItem, ExpeditionRule, UserRole, UserSetor, ColumnMapping } from '../types';
-import { ArrowLeft, Database, Save, AlertTriangle, RefreshCw, Truck, Download, Plus, Trash2, Settings2, FileSpreadsheet, DollarSign, Package, Users, UserPlus, Mail, KeyRound, Loader2, Edit3, UploadCloud, CheckSquare, Square, QrCode, Building, Terminal, History, Calendar, Filter, Info, Globe, Link as LinkIcon, CheckCircle } from 'lucide-react';
+import { ArrowLeft, Database, Save, AlertTriangle, RefreshCw, Truck, Download, Plus, Trash2, Settings2, FileSpreadsheet, DollarSign, Package, Users, UserPlus, Mail, KeyRound, Loader2, Edit3, UploadCloud, CheckSquare, Square, QrCode, Building, Terminal, History, Calendar, Filter, Info, Globe, Link as LinkIcon, CheckCircle, Eye, EyeOff, ChevronDown, ChevronRight } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { syncDatabase } from '../lib/supabaseClient';
 import ConfirmDbResetModal from '../components/ConfirmDbResetModal';
@@ -37,6 +37,18 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
     const [isClearHistoryModalOpen, setIsClearHistoryModalOpen] = useState(false);
     const [newSectorName, setNewSectorName] = useState('');
     const [isAddingSector, setIsAddingSector] = useState(false);
+    const [expandedPanels, setExpandedPanels] = useState<Set<string>>(new Set());
+
+    const togglePanel = (canal: string) => {
+        setExpandedPanels(prev => {
+            const next = new Set(prev);
+            if (next.has(canal)) next.delete(canal); else next.add(canal);
+            return next;
+        });
+    };
+    const showAllPanels = () => setExpandedPanels(new Set(['ml', 'shopee', 'site']));
+    const hideAllPanels = () => setExpandedPanels(new Set());
+    const allExpanded = expandedPanels.size === 3;
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -48,6 +60,7 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
             
             const isML = file.name.toLowerCase().includes('vendas') || file.name.toLowerCase().includes('mercado');
+            const isTikTok = file.name.toLowerCase().includes('tiktok') || file.name.toLowerCase().includes('tik_tok');
             const startRow = isML ? 5 : 0;
 
             const headers = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, range: startRow })[0] || [];
@@ -56,7 +69,11 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
             const data = XLSX.utils.sheet_to_json(sheet, { range: startRow });
             setSampleData(data.slice(0, 1000));
 
-            addToast(`${headers.length} colunas detectadas. Configure os filtros abaixo.`, 'info');
+            // Auto-expand o painel correspondente
+            const detectedCanal = isML ? 'ml' : isTikTok ? 'site' : 'shopee';
+            setExpandedPanels(new Set([detectedCanal]));
+
+            addToast(`${headers.length} colunas detectadas (${isML ? 'Mercado Livre' : isTikTok ? 'TikTok Shop' : 'Shopee'}). Configure os filtros abaixo.`, 'info');
         } catch (error) {
             addToast('Erro ao ler planilha.', 'error');
         }
@@ -226,18 +243,67 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                                 </div>
                             </label>
                         </div>
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <div className="p-4 bg-gray-50/50 rounded-2xl border">
-                                <h3 className="font-bold text-gray-700 mb-4">Mercado Livre</h3>
-                                <div className="space-y-4"><MapRow label="N.º da Venda" field="orderId" canal="ml" /><MapRow label="SKU" field="sku" canal="ml" /><MapRow label="Quantidade" field="qty" canal="ml" /><MapRow label="Rastreio" field="tracking" canal="ml" /><MapRow label="Data Venda" field="date" canal="ml" /><MapRow label="Receita Bruta" field="priceGross" canal="ml" /><MapRow label="Comprador" field="customerName" canal="ml" /></div>
-                                <FeeSelector canal="ml" />
-                                <StatusFilterSettings canal="ml" />
+
+                        <div className="flex justify-end mb-4">
+                            <button onClick={allExpanded ? hideAllPanels : showAllPanels} className="flex items-center gap-2 px-4 py-2 text-xs font-black uppercase tracking-wider rounded-xl border transition-all hover:shadow-md bg-white text-gray-600 border-gray-200 hover:border-blue-400 hover:text-blue-600">
+                                {allExpanded ? <EyeOff size={16}/> : <Eye size={16}/>}
+                                {allExpanded ? 'Recolher Todos' : 'Exibir Todos'}
+                            </button>
+                        </div>
+
+                        <div className={allExpanded ? 'grid grid-cols-1 lg:grid-cols-3 gap-6' : 'space-y-3'}>
+                            {/* --- MERCADO LIVRE --- */}
+                            <div className="bg-gray-50/50 rounded-2xl border overflow-hidden">
+                                <button onClick={() => togglePanel('ml')} className="w-full flex items-center justify-between p-4 hover:bg-gray-100 transition-colors">
+                                    <h3 className="font-bold text-gray-700 flex items-center gap-2">Mercado Livre</h3>
+                                    <div className="flex items-center gap-2 text-gray-400">
+                                        {expandedPanels.has('ml') ? <Eye size={18} className="text-blue-500"/> : <EyeOff size={18}/>}
+                                        {expandedPanels.has('ml') ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
+                                    </div>
+                                </button>
+                                {expandedPanels.has('ml') && (
+                                    <div className="p-4 pt-0 space-y-4 animate-in fade-in">
+                                        <div className="space-y-4"><MapRow label="N.º da Venda" field="orderId" canal="ml" /><MapRow label="SKU do Produto" field="sku" canal="ml" /><MapRow label="Quantidade" field="qty" canal="ml" /><MapRow label="Código de Rastreio" field="tracking" canal="ml" /><MapRow label="Data da Venda" field="date" canal="ml" /><MapRow label="Data de Envio Prev." field="dateShipping" canal="ml" /><MapRow label="Receita Bruta" field="priceGross" canal="ml" /><MapRow label="Nome do Comprador" field="customerName" canal="ml" /></div>
+                                        <FeeSelector canal="ml" />
+                                        <StatusFilterSettings canal="ml" />
+                                    </div>
+                                )}
                             </div>
-                            <div className="p-4 bg-gray-50/50 rounded-2xl border">
-                                <h3 className="font-bold text-gray-700 mb-4">Shopee</h3>
-                                <div className="space-y-4"><MapRow label="N.º do Pedido" field="orderId" canal="shopee" /><MapRow label="Referência SKU" field="sku" canal="shopee" /><MapRow label="Quantidade" field="qty" canal="shopee" /><MapRow label="Rastreio" field="tracking" canal="shopee" /><MapRow label="Data Venda" field="date" canal="shopee" /><MapRow label="Preço Acordado" field="priceGross" canal="shopee" /><MapRow label="Comprador" field="customerName" canal="shopee" /></div>
-                                <FeeSelector canal="shopee" />
-                                <StatusFilterSettings canal="shopee" />
+
+                            {/* --- SHOPEE --- */}
+                            <div className="bg-gray-50/50 rounded-2xl border overflow-hidden">
+                                <button onClick={() => togglePanel('shopee')} className="w-full flex items-center justify-between p-4 hover:bg-gray-100 transition-colors">
+                                    <h3 className="font-bold text-gray-700 flex items-center gap-2">Shopee</h3>
+                                    <div className="flex items-center gap-2 text-gray-400">
+                                        {expandedPanels.has('shopee') ? <Eye size={18} className="text-blue-500"/> : <EyeOff size={18}/>}
+                                        {expandedPanels.has('shopee') ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
+                                    </div>
+                                </button>
+                                {expandedPanels.has('shopee') && (
+                                    <div className="p-4 pt-0 space-y-4 animate-in fade-in">
+                                        <div className="space-y-4"><MapRow label="N.º do Pedido" field="orderId" canal="shopee" /><MapRow label="Referência SKU" field="sku" canal="shopee" /><MapRow label="Quantidade" field="qty" canal="shopee" /><MapRow label="Código de Rastreio" field="tracking" canal="shopee" /><MapRow label="Data da Venda" field="date" canal="shopee" /><MapRow label="Data de Envio Prev." field="dateShipping" canal="shopee" /><MapRow label="Preço Acordado" field="priceGross" canal="shopee" /><MapRow label="Nome do Comprador" field="customerName" canal="shopee" /></div>
+                                        <FeeSelector canal="shopee" />
+                                        <StatusFilterSettings canal="shopee" />
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* --- TIKTOKSHOP --- */}
+                            <div className="bg-gray-50/50 rounded-2xl border overflow-hidden">
+                                <button onClick={() => togglePanel('site')} className="w-full flex items-center justify-between p-4 hover:bg-gray-100 transition-colors">
+                                    <h3 className="font-bold text-gray-700 flex items-center gap-2">TikTokShop</h3>
+                                    <div className="flex items-center gap-2 text-gray-400">
+                                        {expandedPanels.has('site') ? <Eye size={18} className="text-blue-500"/> : <EyeOff size={18}/>}
+                                        {expandedPanels.has('site') ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
+                                    </div>
+                                </button>
+                                {expandedPanels.has('site') && (
+                                    <div className="p-4 pt-0 space-y-4 animate-in fade-in">
+                                        <div className="space-y-4"><MapRow label="Order ID" field="orderId" canal="site" /><MapRow label="Seller SKU" field="sku" canal="site" /><MapRow label="Quantity" field="qty" canal="site" /><MapRow label="Tracking ID" field="tracking" canal="site" /><MapRow label="Created Time" field="date" canal="site" /><MapRow label="Ship By Date" field="dateShipping" canal="site" /><MapRow label="SKU Subtotal" field="priceGross" canal="site" /><MapRow label="Order Amount" field="totalValue" canal="site" /><MapRow label="Recipient" field="customerName" canal="site" /><MapRow label="CPF Number" field="customerCpf" canal="site" /></div>
+                                        <FeeSelector canal="site" />
+                                        <StatusFilterSettings canal="site" />
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </Section>

@@ -22,6 +22,8 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
         category: '',
         color: '',
         barcode: '',
+        product_type: 'papel_de_parede' as 'papel_de_parede' | 'miudos',
+        base_type: 'branca' as 'branca' | 'preta' | 'especial',
     };
 
     const [newItem, setNewItem] = useState(initialState);
@@ -168,6 +170,7 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                                     <option value="miudos">Itens Menores (Miúdos)</option>
                                 </select>
                             </div>
+                            {newItem.product_type !== 'miudos' && (
                             <div>
                                 <label className="text-sm font-medium text-[var(--modal-text-secondary)] mb-1 block">Tipo de Base</label>
                                 <select
@@ -181,6 +184,7 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                                     <option value="especial">🎨 Base Especial</option>
                                 </select>
                             </div>
+                            )}
                         </div>
                     )}
 
