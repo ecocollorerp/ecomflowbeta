@@ -670,7 +670,12 @@ const App: React.FC = () => {
                 data_prevista_envio: o.data_prevista_envio,
                 vinculado_bling: o.vinculado_bling || false,
                 etiqueta_gerada: o.etiqueta_gerada || false,
-                lote_id: o.lote_id || ''
+                lote_id: o.lote_id || '',
+                blingId: o.id_bling || '',
+                venda_origem: o.venda_origem || '',
+                id_pedido_loja: o.id_pedido_loja || '',
+                price_total: Number(o.price_total) || 0,
+                plataforma_origem: o.plataforma_origem || ''
             })));
             setScanHistory(scanLogsData.map((s: any) => ({ id: s.id, time: safeNewDate(s.scanned_at), userId: s.user_id, user: s.user_name, device: s.device, displayKey: s.display_key, status: s.status, synced: s.synced, canal: s.canal })));
 
@@ -794,7 +799,7 @@ const App: React.FC = () => {
             }
 
             if (dataMap.shoppingList) setShoppingList(dataMap.shoppingList.map((i: any) => ({ id: i.id, name: i.name, quantity: i.quantity, unit: i.unit, is_purchased: i.is_purchased })));
-            if (dataMap.notices) setAdminNotices(dataMap.notices.map((n: any) => ({ id: n.id, text: n.text, level: n.level, type: n.type, created_by: n.created_at, created_at: n.created_at })));
+            if (dataMap.notices) setAdminNotices(dataMap.notices.map((n: any) => ({ id: n.id, text: n.text, level: n.level, type: n.type, created_by: n.created_by, created_at: n.created_at })));
             if (dataMap.importHistory) setImportHistory(dataMap.importHistory.map((h: any) => ({ id: h.id, fileName: h.file_name, processedAt: h.processed_at, user: h.user_name, itemCount: h.item_count, unlinkedCount: h.unlinked_count, processed_data: h.processed_data, canal: h.canal })));
             if (dataMap.etiquetasHistory) setEtiquetasHistory(dataMap.etiquetasHistory as EtiquetaHistoryItem[]);
             if (dataMap.biData) setBiData(dataMap.biData as BiDataItem[]);
@@ -1257,7 +1262,7 @@ const App: React.FC = () => {
     const handleExportDailyLog = useCallback(() => {
         const todayStr = new Date().toISOString().split('T')[0];
         const todayLogs = scanHistory.filter(log => {
-            const logDate = new Date(log.scanned_at || '').toISOString().split('T')[0];
+            const logDate = (log.time instanceof Date ? log.time : new Date(log.time)).toISOString().split('T')[0];
             return logDate === todayStr;
         });
 
@@ -1270,7 +1275,7 @@ const App: React.FC = () => {
         const logsPorSetor: Record<string, typeof todayLogs> = {};
 
         todayLogs.forEach(log => {
-            const user = users.find(u => u.name === log.user_name);
+            const user = users.find(u => u.name === log.user);
             const setor = user?.setor?.[0] || 'OUTROS';
             if (!logsPorSetor[setor]) logsPorSetor[setor] = [];
             logsPorSetor[setor].push(log);
@@ -1287,10 +1292,10 @@ const App: React.FC = () => {
             content += '-'.repeat(80) + '\n';
 
             logs.forEach(l => {
-                const time = new Date(l.scanned_at || '').toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                const user = (l.user_name || 'Sistema').substring(0, 15).padEnd(15);
+                const time = (l.time instanceof Date ? l.time : new Date()).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                const user = (l.user || 'Sistema').substring(0, 15).padEnd(15);
                 const status = (l.status || 'OK').padEnd(10);
-                const desc = l.notes || `Pedido ${l.order_id || l.display_key} (${l.sku || 'N/A'})`;
+                const desc = `Pedido ${l.displayKey || 'N/A'}`;
                 content += `${time.padEnd(10)} | ${user} | ${status} | ${desc}\n`;
             });
             content += '\n';
@@ -1446,7 +1451,7 @@ const App: React.FC = () => {
             }
 
             // Determinar a tabela baseada no kind do item
-            const targetTable = itemToEdit.kind === 'INSUMO' ? 'stock_items' : 'product_boms';
+            const targetTable = (itemToEdit.kind === 'INSUMO' || itemToEdit.kind === 'PROCESSADO') ? 'stock_items' : 'product_boms';
             console.log(`📝 [handleEditItem] Atualizando em ${targetTable}`);
 
             // Filtrar apenas os campos que existem na tabela alvo
@@ -1497,7 +1502,7 @@ const App: React.FC = () => {
             console.warn(`⚠️ [handleDeleteItem] DELETANDO item: ${itemToDelete.name} (${itemToDelete.code})`);
 
             // Determinar a tabela baseada no kind do item
-            const targetTable = itemToDelete.kind === 'INSUMO' ? 'stock_items' : 'product_boms';
+            const targetTable = (itemToDelete.kind === 'INSUMO' || itemToDelete.kind === 'PROCESSADO') ? 'stock_items' : 'product_boms';
 
             // Deletar sku_links se for produto
             if (itemToDelete.kind === 'PRODUTO') {
@@ -1536,7 +1541,7 @@ const App: React.FC = () => {
             itemIds.forEach(itemId => {
                 const item = stockItems.find(i => i.id === itemId);
                 if (item) {
-                    if (item.kind === 'INSUMO') {
+                    if (item.kind === 'INSUMO' || item.kind === 'PROCESSADO') {
                         stockItemIds.push(itemId);
                     } else {
                         productBomIds.push(itemId);

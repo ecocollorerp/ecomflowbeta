@@ -4,7 +4,7 @@
 // Etiqueta vem da Shopee → Bling → Vinculada ao SKU do ERP
 // ============================================================================
 
-import { supabaseClient } from '../lib/supabase';
+import { dbClient as supabaseClient } from '../lib/supabaseClient';
 import { importacaoControllerService, ImportacaoControllerService } from '../services/importacaoControllerService';
 
 export interface ItemPedidoComSKU {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabaseClient } from '../lib/supabase';
+import { dbClient as supabaseClient } from '../lib/supabaseClient';
 import { ArrowRight, Save, Trash2, Plus, Search } from 'lucide-react';
 
 interface ProdutoDanfe {

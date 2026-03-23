@@ -1,4 +1,4 @@
-
+﻿
 import React, { useState, useEffect } from 'react';
 import FileUploader from '../components/FileUploader';
 import ImportResults from '../components/ImportResults';
@@ -63,7 +63,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
     });
     const [importAsHistory, setImportAsHistory] = useState(false);
     const [selectedChannel, setSelectedChannel] = useState<Canal | 'AUTO'>('AUTO');
-
+    const [tiktokOrderType, setTiktokOrderType] = useState<'all' | 'normal' | 'pre-order'>('all');
     // Estados para o fluxo de datas
     const [availableShippingDates, setAvailableShippingDates] = useState<{ date: string, count: number, saved?: number }[]>([]);
     const [shippingDateKey, setShippingDateKey] = useState<string | null>(null);
@@ -184,8 +184,41 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 return mk;
             };
 
-            // Determina qual canal usar para buscar a configuração
-            const channelCandidates: (Canal | 'AUTO')[] = selectedChannel && selectedChannel !== 'AUTO' ? [selectedChannel] : ['SHOPEE', 'ML', 'SITE'];
+            // Determina canal efetivo por cabeçalho + nome de arquivo quando estiver em AUTO.
+            const detectChannelByConfig = (): Canal | 'AUTO' => {
+                const byName = selectedFile.name.toUpperCase();
+                if (byName.includes('TIKTOK')) return 'SITE';
+                if (byName.includes('MERCADO') || byName.includes('MELI') || byName.includes('ML_')) return 'ML';
+                if (byName.includes('SHOPEE') || byName.includes('TO_SHIP') || byName.includes('TOSHIP') || byName.includes('ORDER')) return 'SHOPEE';
+
+                let best: { canal: Canal | 'AUTO'; score: number } = { canal: 'AUTO', score: 0 };
+                const candidates: Canal[] = ['ML', 'SHOPEE', 'SITE'];
+                for (const canal of candidates) {
+                    const cfgKey = canal === 'SHOPEE' ? 'shopee' : canal === 'ML' ? 'ml' : 'site';
+                    // @ts-ignore
+                    const cfg = (generalSettings.importer || {})[cfgKey] || {};
+                    const keys = [cfg.orderId, cfg.sku, cfg.qty, cfg.tracking, cfg.date, cfg.dateShipping].filter(Boolean);
+                    const score = keys.reduce((acc: number, key: string) => acc + (targetMatch(key) ? 1 : 0), 0);
+                    if (score > best.score) best = { canal, score };
+                }
+                return best.score > 0 ? best.canal : 'AUTO';
+            };
+
+            const effectiveChannel: Canal | 'AUTO' = selectedChannel !== 'AUTO' ? selectedChannel : detectChannelByConfig();
+            if (selectedChannel === 'AUTO' && effectiveChannel !== 'AUTO') {
+                setSelectedChannel(effectiveChannel);
+            }
+
+            // Regra de negócio: seleção por datas só existe para Shopee.
+            if (effectiveChannel !== 'SHOPEE') {
+                setShippingDateKey(null);
+                setAvailableShippingDates([]);
+                setIsScanningDates(false);
+                executeFullProcessing(buffer, undefined, effectiveChannel);
+                return;
+            }
+
+            const channelCandidates: (Canal | 'AUTO')[] = [effectiveChannel];
             let foundDates: { date: string; count: number; key?: string }[] = [];
             let detectedKeyFromConfig: string | null = null;
 
@@ -207,7 +240,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                     if (!raw) return '';
                     if (raw instanceof Date) return raw.toISOString().split('T')[0];
                     let s = String(raw).trim();
-                    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.split('T')[0];
+                    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10); // Fix: handles 'YYYY-MM-DD HH:MM:SS' (space, not T)
                     const dmy = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
                     if (dmy) return `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
                     const parsed = new Date(s);
@@ -233,7 +266,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
 
             if (foundDates.length === 0) {
                 // Fallback para heurística existente
-                const dates = extractShippingDates(buffer, generalSettings, selectedChannel);
+                const dates = extractShippingDates(buffer, generalSettings, effectiveChannel, selectedFile.name);
                 console.debug('DEBUG: extractShippingDates ->', dates);
                 foundDates = dates;
             }
@@ -263,35 +296,10 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 return;
             }
 
-            if (dates.length > 0) {
-                // Se encontrar datas, calcula quantas já existem no banco e abre o modal
-                const normalizeYMD = (v?: string) => {
-                    if (!v) return '';
-                    if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-                    const d = new Date(v);
-                    if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
-                    return '';
-                };
-
-                const enriched = (dates as any[]).map(d => {
-                    const date = d.date as string;
-                    const saved = allOrders.filter(o => normalizeYMD(o.data_prevista_envio) === date).length;
-                    return { date, count: d.count, saved };
-                });
-
-                setAvailableShippingDates(enriched);
-                // guarda a coluna detectada (para forçar o parse a usar a mesma coluna)
-                const detectedKey = (dates[0] as any).key || null;
-                setShippingDateKey(detectedKey);
-                console.debug('DEBUG: shippingDateKey set to', detectedKey, 'enriched:', enriched);
-                setIsScanningDates(false);
-                setIsDateModalOpen(true);
-            } else {
-                // Se não encontrar (ML ou arquivo sem coluna H configurada), processa direto sem filtro
-                setShippingDateKey(null);
-                executeFullProcessing(buffer, undefined); // undefined = sem filtro de data
-                setIsScanningDates(false);
-            }
+            // Sem datas válidas para Shopee: segue sem filtro para não bloquear importação.
+            setShippingDateKey(null);
+            executeFullProcessing(buffer, undefined, effectiveChannel);
+            setIsScanningDates(false);
         } catch (e: any) {
             console.error("Erro ao analisar datas:", e);
             // Em caso de erro na pré-análise, tenta processar direto (fallback)
@@ -309,8 +317,10 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         try {
             // Primeiro rodar diagnóstico com as datas selecionadas para garantir que haverá resultados
             const diag = await runDiagnostics(selectedDates);
-            const available = diag?.parseWithOverride?.total ?? 0;
-            if (!available || available === 0) {
+            // Só bloqueia se o diagnóstico rodou com sucesso E retornou 0 resultados
+            // Se parseWithOverride for undefined (erro), deixa o processamento real tentar
+            const parseResult = diag?.parseWithOverride;
+            if (parseResult !== undefined && parseResult !== null && (parseResult.total === 0 || parseResult.total === null)) {
                 setError('Nenhum pedido encontrado para as datas selecionadas. Execute o diagnóstico para mais detalhes.');
                 setIsProcessing(false);
                 return;
@@ -339,7 +349,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
             });
 
             let extractDates: any = null;
-            try { extractDates = extractShippingDates(buffer as any, generalSettings, selectedChannel); } catch (e) { extractDates = { error: String(e) }; }
+            try { extractDates = extractShippingDates(buffer as any, generalSettings, selectedChannel, selectedFile.name); } catch (e) { extractDates = { error: String(e) }; }
 
             const diagnostics: any = { headers: headers.slice(0, 200), sampleRows, extractShippingDates: extractDates, shippingDateKey };
 
@@ -363,7 +373,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
 
             // Tenta parse sem filtros
             try {
-                const rawNoFilter = parseExcelFile(buffer, selectedFile.name, allOrders, generalSettings, { ...importOptions, allowedShippingDates: undefined, columnOverrides: undefined }, selectedChannel);
+                const rawNoFilter = parseExcelFile(buffer, selectedFile.name, allOrders, generalSettings, { ...importOptions, tiktokOrderType, allowedShippingDates: undefined, columnOverrides: undefined }, selectedChannel);
                 diagnostics.parseWithoutFilters = { total: rawNoFilter.lists?.completa?.length ?? null, sample: (rawNoFilter.lists?.completa || []).slice(0, 10) };
             } catch (e: any) {
                 diagnostics.parseWithoutFiltersError = String(e?.message || e);
@@ -379,7 +389,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                     diagnostics.parserInternalsError = String(inner);
                 }
                 const datesAll = (selectedDates && selectedDates.length > 0) ? selectedDates : availableShippingDates.map(d => d.date);
-                const rawWithOverride = parseExcelFile(buffer, selectedFile.name, allOrders, generalSettings, { ...importOptions, allowedShippingDates: datesAll.length ? datesAll : undefined, columnOverrides: shippingDateKey ? { dateShipping: shippingDateKey } : undefined }, selectedChannel);
+                const rawWithOverride = parseExcelFile(buffer, selectedFile.name, allOrders, generalSettings, { ...importOptions, tiktokOrderType, allowedShippingDates: datesAll.length ? datesAll : undefined, columnOverrides: shippingDateKey ? { dateShipping: shippingDateKey } : undefined }, selectedChannel);
                 diagnostics.parseWithOverride = { total: rawWithOverride.lists?.completa?.length ?? null, sample: (rawWithOverride.lists?.completa || []).slice(0, 10) };
             } catch (e: any) {
                 diagnostics.parseWithOverrideError = String(e?.message || e);
@@ -392,11 +402,11 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
     };
 
     // 3. Execução real do processamento (com ou sem datas filtradas)
-    const executeFullProcessing = (buffer: ArrayBuffer, allowedDates?: string[]) => {
+    const executeFullProcessing = (buffer: ArrayBuffer, allowedDates?: string[], channelOverride?: Canal | 'AUTO') => {
         if (!selectedFile) return;
         setIsProcessing(true);
         try {
-            console.debug('DEBUG: executeFullProcessing -> allowedDates', allowedDates, 'columnOverrides', shippingDateKey ? { dateShipping: shippingDateKey } : undefined, 'fileName', selectedFile?.name);
+            console.debug('DEBUG: executeFullProcessing -> allowedDates', allowedDates, 'channelOverride', channelOverride, 'columnOverrides', shippingDateKey ? { dateShipping: shippingDateKey } : undefined, 'fileName', selectedFile?.name);
             const data = parseExcelFile(
                 buffer,
                 selectedFile.name,
@@ -405,9 +415,10 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 {
                     ...importOptions,
                     allowedShippingDates: allowedDates,
-                    columnOverrides: shippingDateKey ? { dateShipping: shippingDateKey } : undefined
+                    columnOverrides: shippingDateKey ? { dateShipping: shippingDateKey } : undefined,
+                    tiktokOrderType
                 },
-                selectedChannel
+                channelOverride || selectedChannel
             );
             setProcessedData(data);
             setIsViewingHistory(false);
@@ -431,7 +442,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                     console.debug('DEBUG-DIAG: extractShippingDates', datesDiag);
                     // Tenta rodar parse sem filtro para ver se existem pedidos sem filtro
                     try {
-                        const raw = parseExcelFile(buffer, selectedFile.name, allOrders, generalSettings, { ...importOptions, allowedShippingDates: undefined, columnOverrides: undefined }, selectedChannel);
+                        const raw = parseExcelFile(buffer, selectedFile.name, allOrders, generalSettings, { ...importOptions, tiktokOrderType, allowedShippingDates: undefined, columnOverrides: undefined }, selectedChannel);
                         console.debug('DEBUG-DIAG: parse without filters -> total', raw.lists.completa.length, 'sample', raw.lists.completa.slice(0,10));
                     } catch (innerErr: any) {
                         console.debug('DEBUG-DIAG: parse without filters erro ->', innerErr?.message || innerErr);
@@ -450,7 +461,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         const ordersToLaunch = processedData.lists.completa.map(order => ({
             ...order,
             lote_id: loteId,
-            status: importAsHistory ? 'BIPADO' : 'NORMAL' // Override status if history mode is enabled
+            status: importAsHistory ? 'BIPADO' : (order.status || 'NORMAL') // preserva status detectado no parser
         }));
 
         onLaunchSuccess(ordersToLaunch as any);
@@ -560,10 +571,26 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                                         <option value="AUTO">Automático (Detectar cabeçalho)</option>
                                         <option value="ML">Mercado Livre (Forçar layout ML)</option>
                                         <option value="SHOPEE">Shopee (Forçar layout Shopee)</option>
-                                        <option value="SITE">Site (Forçar layout Site)</option>
+                                        <option value="SITE">TikTokShop (Forçar layout TikTok)</option>
                                     </select>
                                     <p className="text-[10px] text-slate-400 mt-2 font-medium">Use "Automático" por padrão. Se houver erro de colunas não encontradas, selecione o canal específico aqui.</p>
                                 </div>
+
+                                {(selectedChannel === 'SITE' || (selectedChannel === 'AUTO' && selectedFile && selectedFile.name.toUpperCase().includes('TIKTOK'))) && (
+                                    <div className="bg-purple-50 p-4 rounded-xl border border-purple-100">
+                                        <label className="block text-[10px] font-black text-purple-500 uppercase tracking-widest mb-2">TikTok — Tipo de Pedido</label>
+                                        <select
+                                            value={tiktokOrderType}
+                                            onChange={e => setTiktokOrderType(e.target.value as any)}
+                                            className="w-full p-3 bg-white border border-purple-200 rounded-xl text-sm font-bold text-purple-700 focus:ring-2 focus:ring-purple-500 outline-none"
+                                        >
+                                            <option value="all">Todos (Normal + Pre-order)</option>
+                                            <option value="normal">Somente Normal (pedidos do dia)</option>
+                                            <option value="pre-order">Somente Pre-order (pedidos futuros)</option>
+                                        </select>
+                                        <p className="text-[10px] text-purple-400 mt-2 font-medium">"Normal" são pedidos para envio imediato. "Pre-order" são pedidos com entrega para dias futuros.</p>
+                                    </div>
+                                )}
 
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <label className="flex items-start gap-3 p-4 bg-gray-50 rounded-xl cursor-pointer border-2 border-transparent hover:border-blue-500 transition-all">

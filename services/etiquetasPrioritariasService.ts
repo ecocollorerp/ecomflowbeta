@@ -4,7 +4,7 @@
 // Integração com Bling API única, armazenagem em ZPL ou PC
 // ============================================================================
 
-import { supabaseClient } from '../lib/supabaseClient';
+import { dbClient as supabaseClient } from '../lib/supabaseClient';
 import { auditLogService } from './auditLogService';
 
 export interface EtiquetaPrioritariaDTO {

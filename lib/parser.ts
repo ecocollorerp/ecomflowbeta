@@ -5,6 +5,53 @@ import { getMultiplicadorFromSku, classificarCor, classificarTipoBase, isItemMen
 import * as XLSX from 'xlsx';
 
 const safeUpper = (val: any) => String(val || '').trim().toUpperCase();
+const normalizeHeaderToken = (val: any) => String(val || '')
+    .trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z0-9\s]/g, '')
+    .replace(/\s+/g, ' ');
+
+const detectCanalHintFromFileName = (fileName?: string): Canal | null => {
+    const upper = safeUpper(fileName || '');
+    if (!upper) return null;
+    if (upper.includes('TIKTOK') || upper.includes('TIK TOK') || upper.includes('TTSHOP')) return 'SITE';
+    if (upper.includes('MERCADO LIVRE') || upper.includes('MERCADOLIVRE') || upper.includes('MELI') || upper.includes('ML_')) return 'ML';
+    if (upper.includes('SHOPEE') || upper.includes('TO_SHIP') || upper.includes('TOSHIP')) return 'SHOPEE';
+    return null;
+};
+
+const orderCandidateChannels = (forcedCanal?: Canal | 'AUTO', fileNameHint?: string): Canal[] => {
+    if (forcedCanal && forcedCanal !== 'AUTO') return [forcedCanal];
+
+    const defaults: Canal[] = ['ML', 'SHOPEE', 'SITE'];
+    const hinted = detectCanalHintFromFileName(fileNameHint);
+    if (!hinted) return defaults;
+
+    return [hinted, ...defaults.filter(c => c !== hinted)];
+};
+
+const getCriticalColumnsForDetection = (canal: Canal, config?: Partial<ColumnMapping>): string[] => {
+    const configured = [config?.orderId, config?.sku, config?.qty, config?.tracking]
+        .filter(Boolean)
+        .map((h) => normalizeHeaderToken(h));
+
+    if (configured.length > 0) return configured;
+
+    if (canal === 'ML') {
+        return ['N.º de venda', 'N° de venda', 'No de venda', 'ID da venda', 'SKU', 'Unidades', 'Quantidade']
+            .map(normalizeHeaderToken);
+    }
+    if (canal === 'SHOPEE') {
+        return ['ID do pedido', 'N.º do pedido', 'Número de referência SKU', 'Quantidade', 'Data prevista de envio']
+            .map(normalizeHeaderToken);
+    }
+
+    // SITE (TikTok / e-commerce próprio)
+    return ['Order ID', 'Seller SKU', 'SKU ID', 'Quantity', 'Created Time', 'Order Status', 'Normal or Pre-order', 'Tracking ID']
+        .map(normalizeHeaderToken);
+};
 
 // Helper para normalizar datas
 const normalizeDate = (rawDate: any): string => {
@@ -77,7 +124,8 @@ export const extractHeadersAndData = (fileBuffer: ArrayBuffer): { headers: strin
 export const extractShippingDates = (
     fileBuffer: ArrayBuffer,
     settings: GeneralSettings,
-    forcedCanal?: Canal | 'AUTO'
+    forcedCanal?: Canal | 'AUTO',
+    sourceFileName?: string
 ): { date: string; count: number; key?: string }[] => {
     const workbook = XLSX.read(fileBuffer, { type: 'array', cellDates: true });
     const sheetName = workbook.SheetNames[0];
@@ -89,25 +137,19 @@ export const extractShippingDates = (
     let mappingToUse: ColumnMapping | null = null;
     let detectedChannel: Canal | null = null;
 
-    let candidateChannels: Canal[] = [];
-    if (forcedCanal && forcedCanal !== 'AUTO') {
-        candidateChannels = [forcedCanal];
-    } else {
-        candidateChannels = ['ML', 'SHOPEE', 'SITE'];
-    }
+    const candidateChannels = orderCandidateChannels(forcedCanal, sourceFileName);
 
     let bestMatch = { rowIndex: -1, channel: null as Canal | null, score: 0 };
 
     for (let i = 0; i < Math.min(rawData.length, 50); i++) {
         const row = rawData[i];
         if (!Array.isArray(row) || row.length === 0) continue;
-        const rowValues = row.map(cell => String(cell || '').trim().toUpperCase());
+        const rowValues = row.map(cell => normalizeHeaderToken(cell));
 
         for (const canal of candidateChannels) {
             const config = settings.importer[canal.toLowerCase() as 'ml' | 'shopee' | 'site'];
-            if (!config) continue;
             // Procura por colunas críticas
-            const criticalColumns = [config.orderId, config.sku].filter(Boolean).map(h => h!.trim().toUpperCase());
+            const criticalColumns = getCriticalColumnsForDetection(canal, config);
             if (criticalColumns.length === 0) continue;
 
             let matchCount = 0;
@@ -145,12 +187,12 @@ export const extractShippingDates = (
             if (headerRowIndex === -1) return [];
 
             // Tenta identificar o canal a partir dos tokens do cabeçalho
-            const firstRowValues = (rawData[headerRowIndex] || []).map(c => String(c || '').trim().toUpperCase());
+            const firstRowValues = (rawData[headerRowIndex] || []).map(c => normalizeHeaderToken(c));
             const possibleChannels: Canal[] = ['ML', 'SHOPEE', 'SITE'];
             for (const canal of possibleChannels) {
                 const cfg = settings.importer[canal.toLowerCase() as 'ml' | 'shopee' | 'site'];
                 if (!cfg) continue;
-                const crit = [cfg.orderId, cfg.sku].filter(Boolean).map(h => h!.trim().toUpperCase());
+                const crit = [cfg.orderId, cfg.sku].filter(Boolean).map(h => normalizeHeaderToken(h));
                 let cnt = 0;
                 for (const h of crit) if (firstRowValues.includes(h)) cnt++;
                 if (cnt > 0) { detectedChannel = canal; break; }
@@ -261,8 +303,9 @@ export const extractShippingDates = (
 
         // Aceita somente se encontrar pelo menos 3 datas parseáveis (evita falso-positivo)
         if (bestKey && bestCount >= 3) {
+            matchedKey = bestKey; // FIX: atualiza matchedKey para a coluna que tem datas de verdade
             jsonData.forEach(row => {
-                const d = normalizeDate(row[bestKey!]);
+                const d = normalizeDate(row[matchedKey!]);
                 if (d) dateMap.set(d, (dateMap.get(d) || 0) + 1);
             });
         }
@@ -298,11 +341,10 @@ export const getParserInternals = (
     for (let i = 0; i < Math.min(rawData.length, 50); i++) {
         const row = rawData[i];
         if (!Array.isArray(row) || row.length === 0) continue;
-        const rowValues = row.map(cell => String(cell || '').trim().toUpperCase());
+        const rowValues = row.map(cell => normalizeHeaderToken(cell));
         for (const canal of candidateChannels) {
             const config = settings.importer[canal.toLowerCase() as 'ml' | 'shopee' | 'site'];
-            if (!config) continue;
-            const criticalColumns = [config.orderId, config.sku].filter(Boolean).map((h: any) => String(h).trim().toUpperCase());
+            const criticalColumns = getCriticalColumnsForDetection(canal, config);
             if (criticalColumns.length === 0) continue;
             let matchCount = 0;
             for (const header of criticalColumns) if (rowValues.includes(header)) matchCount++;
@@ -325,12 +367,12 @@ export const getParserInternals = (
             if (Array.isArray(row) && row.filter(c => String(c || '').trim()).length > 2) { headerRowIndex = i; break; }
         }
         if (headerRowIndex !== -1) {
-            const firstRowValues = (rawData[headerRowIndex] || []).map(c => String(c || '').trim().toUpperCase());
+            const firstRowValues = (rawData[headerRowIndex] || []).map(c => normalizeHeaderToken(c));
             const possibleChannels: Canal[] = ['ML', 'SHOPEE', 'SITE'];
             for (const canal of possibleChannels) {
                 const cfg = settings.importer[canal.toLowerCase() as 'ml' | 'shopee' | 'site'];
                 if (!cfg) continue;
-                const crit = [cfg.orderId, cfg.sku].filter(Boolean).map((h: any) => String(h).trim().toUpperCase());
+                const crit = [cfg.orderId, cfg.sku].filter(Boolean).map((h: any) => normalizeHeaderToken(h));
                 let cnt = 0; for (const h of crit) if (firstRowValues.includes(h)) cnt++;
                 if (cnt > 0) { canalDetectado = canal; mappingToUse = cfg; break; }
             }
@@ -387,6 +429,7 @@ export const parseExcelFile = (
         allowedShippingDates?: string[]; // Array of YYYY-MM-DD strings
         descontarVolatil?: boolean;
         columnOverrides?: Partial<ColumnMapping>;
+        tiktokOrderType?: 'all' | 'normal' | 'pre-order'; // Filtro Normal/Pre-order para TikTok
     },
     forcedCanal?: Canal | 'AUTO',
     forcedStatus?: string // NOVO: Permite forçar um status (NORMAL, BIPADO, etc)
@@ -404,12 +447,7 @@ export const parseExcelFile = (
     let mappingToUse: ColumnMapping | null = null;
 
     // Definição dos canais a testar
-    let candidateChannels: Canal[] = [];
-    if (forcedCanal && forcedCanal !== 'AUTO') {
-        candidateChannels = [forcedCanal];
-    } else {
-        candidateChannels = ['ML', 'SHOPEE', 'SITE'];
-    }
+    const candidateChannels = orderCandidateChannels(forcedCanal, fileName);
 
     // 3. Lógica de Pontuação para Detecção do Cabeçalho
     let bestMatch = { rowIndex: -1, channel: null as Canal | null, score: 0 };
@@ -417,14 +455,12 @@ export const parseExcelFile = (
     for (let i = 0; i < Math.min(rawData.length, 50); i++) {
         const row = rawData[i];
         if (!Array.isArray(row) || row.length === 0) continue;
-        const rowValues = row.map(cell => String(cell || '').trim().toUpperCase());
+        const rowValues = row.map(cell => normalizeHeaderToken(cell));
 
         for (const canal of candidateChannels) {
             const configKey = canal.toLowerCase() as 'ml' | 'shopee' | 'site';
             const config = settings.importer[configKey];
-            if (!config) continue;
-
-            const criticalColumns = [config.orderId, config.sku, config.qty, config.tracking].filter(Boolean).map(h => h!.trim().toUpperCase());
+            const criticalColumns = getCriticalColumnsForDetection(canal, config);
             if (criticalColumns.length === 0) continue;
 
             let matchCount = 0;
@@ -509,6 +545,43 @@ export const parseExcelFile = (
     headerKeyMap['customerCpf'] = tryMatch(mappingToUse!.customerCpf);
     headerKeyMap['statusColumn'] = tryMatch(mappingToUse!.statusColumn);
 
+    const fillMissingHeaderKey = (field: string, aliases: string[]) => {
+        if (headerKeyMap[field]) return;
+        for (const alias of aliases) {
+            const mk = tryMatch(alias);
+            if (mk) {
+                headerKeyMap[field] = mk;
+                return;
+            }
+        }
+    };
+
+    // Fallbacks de aliases por plataforma quando configuração vier incompleta ou com rótulo diferente.
+    if (canalDetectado === 'ML') {
+        fillMissingHeaderKey('orderId', ['N.º de venda', 'N° de venda', 'No de venda', 'ID da venda', 'ID do pedido']);
+        fillMissingHeaderKey('sku', ['SKU', 'SKU do anúncio', 'SKU do produto', 'Seller SKU', 'Número de referência SKU']);
+        fillMissingHeaderKey('qty', ['Quantidade', 'Unidades', 'Quantity']);
+        fillMissingHeaderKey('tracking', ['Código de rastreamento', 'Número de rastreamento', 'Tracking']);
+        fillMissingHeaderKey('date', ['Data da venda', 'Data de criação do pedido', 'Created Time']);
+        fillMissingHeaderKey('statusColumn', ['Estado', 'Status do pedido', 'Order Status']);
+    } else if (canalDetectado === 'SHOPEE') {
+        fillMissingHeaderKey('orderId', ['ID do pedido', 'N.º do pedido', 'Order ID']);
+        fillMissingHeaderKey('sku', ['Número de referência SKU', 'Nº de referência do SKU principal', 'Seller SKU', 'SKU']);
+        fillMissingHeaderKey('qty', ['Quantidade', 'Quantity']);
+        fillMissingHeaderKey('tracking', ['Número de rastreamento', 'Código de rastreio', 'Tracking Number']);
+        fillMissingHeaderKey('date', ['Data de criação do pedido', 'Created Time']);
+        fillMissingHeaderKey('dateShipping', ['Data prevista de envio', 'Data de envio prevista', 'Ship By Date']);
+        fillMissingHeaderKey('statusColumn', ['Status do pedido', 'Order Status']);
+    } else {
+        // SITE (TikTok / e-commerce próprio)
+        fillMissingHeaderKey('orderId', ['Order ID', 'ID do pedido', 'N.º do pedido']);
+        fillMissingHeaderKey('sku', ['Seller SKU', 'SKU', 'SKU ID', 'Número de referência SKU']);
+        fillMissingHeaderKey('qty', ['Quantity', 'Quantidade', 'Unidades']);
+        fillMissingHeaderKey('tracking', ['Tracking ID', 'Package ID', 'Número de rastreamento', 'Tracking Number']);
+        fillMissingHeaderKey('date', ['Created Time', 'Data de criação do pedido', 'Paid Time', 'Data da venda']);
+        fillMissingHeaderKey('statusColumn', ['Order Status', 'Status do pedido', 'Estado']);
+    }
+
     // Hard fallback para Shopee (Data de envio) se não encontrar via config
     if (!headerKeyMap['dateShipping'] && canalDetectado === 'SHOPEE') {
         headerKeyMap['dateShipping'] = tryMatch('Data de envio') || tryMatch('Data de envio prevista');
@@ -544,9 +617,43 @@ export const parseExcelFile = (
 
     // Set for O(1) lookup
     const allowedDatesSet = options.allowedShippingDates ? new Set(options.allowedShippingDates) : null;
+    const shouldApplyDateFilter = canalDetectado === 'SHOPEE';
+
+    // Detecta coluna de sob encomenda por cabeçalho configurável/tolerante.
+    const madeToOrderHeaderTokens = ['SOB ENCOMENDA', 'MADE TO ORDER', 'MTO', 'ENCOMENDA'];
+    const madeToOrderHeaderExclusions = ['NAO', 'NÃO'];
+    const madeToOrderColumnKey = sheetKeys.find((k) => {
+        const nk = normalizeHeaderToken(k);
+        const hasToken = madeToOrderHeaderTokens.some(t => nk.includes(normalizeHeaderToken(t)));
+        const hasExclusion = madeToOrderHeaderExclusions.some(t => nk.includes(normalizeHeaderToken(t)));
+        return hasToken && !hasExclusion;
+    });
+    const madeToOrderTrueValues = new Set(['1', 'SIM', 'YES', 'TRUE', 'SOB ENCOMENDA', 'ENCOMENDA', 'MTO']);
+
+    // TikTok: detecta coluna "Normal or Pre-order" para filtro
+    const preOrderColumnKey = sheetKeys.find(k => normalizeHeaderToken(k).includes('NORMAL OR PRE'));
+    const tiktokOrderType = options.tiktokOrderType || 'all';
+
+    // TikTok: detecta linhas de descrição (segunda linha da planilha que contém textos explicativos)
+    const isTikTokDescriptionRow = (row: any): boolean => {
+        if (canalDetectado !== 'SITE') return false;
+        const orderIdVal = String(row[headerKeyMap['orderId']] || '');
+        // Linhas de descrição TikTok contêm texto longo explicativo no OrderID (ex: "Platform unique order ID.")
+        return orderIdVal.length > 20 && /^[a-zA-Z\s'.]+$/.test(orderIdVal);
+    };
 
     for (let i = 0; i < jsonData.length; i++) {
         const row = jsonData[i];
+
+        // Pula linhas de descrição (TikTok tem uma linha de descrição logo após o cabeçalho)
+        if (isTikTokDescriptionRow(row)) continue;
+
+        // --- FILTRO TIKTOK NORMAL/PRE-ORDER ---
+        if (preOrderColumnKey && tiktokOrderType !== 'all') {
+            const preOrderVal = safeUpper(row[preOrderColumnKey]);
+            if (tiktokOrderType === 'normal' && preOrderVal !== 'NORMAL') continue;
+            if (tiktokOrderType === 'pre-order' && !preOrderVal.includes('PRE')) continue;
+        }
 
         // --- FILTRO DE DATA ---
         const dataEnvioStr = normalizeDate(row[headerKeyMap['dateShipping']]);
@@ -555,7 +662,7 @@ export const parseExcelFile = (
         // Data principal para filtro é a de envio, fallback para venda se não houver envio
         const dateToCheck = dataEnvioStr || dataVendaStr;
 
-        if (allowedDatesSet && allowedDatesSet.size > 0) {
+        if (shouldApplyDateFilter && allowedDatesSet && allowedDatesSet.size > 0) {
             // Se a lista de permitidas não for vazia, e a data da linha não estiver nela, pula
             if (!dateToCheck || !allowedDatesSet.has(dateToCheck)) {
                 continue;
@@ -565,6 +672,17 @@ export const parseExcelFile = (
         // --- Filtro de Status ---
         let statusParaImportacao: any = forcedStatus || 'NORMAL';
         let errorReason = undefined;
+
+        if (!forcedStatus && madeToOrderColumnKey) {
+            const rawMadeToOrder = safeUpper(row[madeToOrderColumnKey]);
+            const normalizedMadeToOrder = normalizeHeaderToken(rawMadeToOrder);
+            const isMadeToOrder = !rawMadeToOrder || madeToOrderTrueValues.has(rawMadeToOrder) || madeToOrderTrueValues.has(normalizedMadeToOrder);
+
+            if (isMadeToOrder) {
+                statusParaImportacao = 'ERRO';
+                errorReason = 'SOB_ENCOMENDA';
+            }
+        }
 
         if (statusColumnName && acceptedStatusValues.length > 0) {
             const rawStatus = String(row[headerKeyMap['statusColumn']] || '') .trim().toLowerCase();

@@ -475,6 +475,32 @@ BEGIN
   CREATE INDEX IF NOT EXISTS idx_order_items_o_id ON public.order_items(order_id);
   CREATE INDEX IF NOT EXISTS idx_order_items_sku ON public.order_items(sku);
 
+  -- Etiquetas Prioritárias
+  CREATE TABLE IF NOT EXISTS public.etiquetas_prioritarias (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pedido_id TEXT NOT NULL,
+    numero_bling TEXT NOT NULL,
+    nfe_lote TEXT NOT NULL,
+    data_geracao TIMESTAMPTZ DEFAULT now(),
+    status_processamento TEXT NOT NULL DEFAULT 'pendente'
+      CHECK (status_processamento IN ('pendente', 'processando', 'concluido', 'salvo_no_pc', 'erro')),
+    armazenagem TEXT NOT NULL DEFAULT 'zpl'
+      CHECK (armazenagem IN ('zpl', 'pc')),
+    conteudo_zpl TEXT,
+    conteudo_txt TEXT,
+    caminho_arquivo TEXT,
+    rastreabilidade JSONB NOT NULL DEFAULT '{}'::jsonb,
+    metadados JSONB DEFAULT '{}'::jsonb,
+    criado_por TEXT,
+    atualizado_em TIMESTAMPTZ DEFAULT now(),
+    atualizado_por TEXT,
+    CONSTRAINT etiquetas_prioritarias_num_nfe_uq UNIQUE (numero_bling, nfe_lote)
+  );
+  CREATE INDEX IF NOT EXISTS idx_etiquetas_nfe_lote ON public.etiquetas_prioritarias(nfe_lote);
+  CREATE INDEX IF NOT EXISTS idx_etiquetas_numero_bling ON public.etiquetas_prioritarias(numero_bling);
+  CREATE INDEX IF NOT EXISTS idx_etiquetas_pedido_id ON public.etiquetas_prioritarias(pedido_id);
+  CREATE INDEX IF NOT EXISTS idx_etiquetas_status ON public.etiquetas_prioritarias(status_processamento);
+
   -- 4. VIEWS (Dados Analíticos)
   DROP VIEW IF EXISTS public.vw_dados_analiticos;
   CREATE OR REPLACE VIEW public.vw_dados_analiticos AS

@@ -3,7 +3,7 @@
 // Fluxo completo: TXT Bling → Upload → Gerar Etiqueta → Processar
 // ============================================================================
 
-import { supabaseClient as dbClient } from './supabaseClient';
+import { dbClient } from '../lib/supabaseClient';
 import { auditLogService } from './auditLogService';
 
 export interface EtiquetaBlingPedido {

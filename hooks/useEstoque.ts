@@ -75,7 +75,7 @@ export const usePacotesProtos = (): UsePacotosProtosReturn => {
             const pacotesFormatados = (data || []).map((p: any) => ({
                 id: p.id,
                 nome: p.batch_id || 'Pacote',
-                sku_primario: p.lote_numero || p.stock_item_id || '',
+                sku_primario: p.stock_item_id || '',,
                 quantidade_total: Number(p.quantidade_total || 0),
                 quantidade_disponivel: Number(p.quantidade_disponivel || 0),
                 quantidade_reservada: Number(p.quantidade_total || 0) - Number(p.quantidade_disponivel || 0),
@@ -107,7 +107,6 @@ export const usePacotesProtos = (): UsePacotosProtosReturn => {
             // ✅ Implementado para Supabase com dbClient
             const novoRegistro = {
                 batch_id: novosPacote.nome,
-                lote_numero: novosPacote.sku_primario,
                 stock_item_id: novosPacote.sku_primario,
                 quantidade_total: novosPacote.quantidade_total,
                 quantidade_disponivel: novosPacote.quantidade_disponivel,

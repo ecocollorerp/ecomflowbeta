@@ -4,7 +4,7 @@
 // ============================================================================
 
 import { useEffect, useState, useCallback } from 'react';
-import { supabaseClient } from '../lib/supabaseClient';
+import { dbClient as supabaseClient } from '../lib/supabaseClient';
 import { etiquetasPrioritariasService, EtiquetaPrioritariaDTO } from '../services/etiquetasPrioritariasService';
 
 interface EtiquetaInfo {

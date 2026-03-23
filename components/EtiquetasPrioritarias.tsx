@@ -20,7 +20,7 @@ import {
   Archive,
   Eye,
 } from 'lucide-react';
-import { supabaseClient } from '../lib/supabaseClient';
+import { dbClient as supabaseClient } from '../lib/supabaseClient';
 
 interface PedidoComNFe {
   id: string;
