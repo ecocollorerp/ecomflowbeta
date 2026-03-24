@@ -1,8 +1,9 @@
 
-import React from 'react';
-import { Menu, QrCode, X, Loader2 } from 'lucide-react';
-import { StockItem, AdminNotice, User } from '../types';
+import React, { useState } from 'react';
+import { Menu, QrCode, X, Loader2, ChevronDown, LayoutDashboard, ScanLine, Package, BarChart3, DollarSign, Printer, Settings, Weight, Recycle, ShoppingCart, ClipboardCheck, ListPlus, BookOpen, HelpCircle, Users, Link as LinkIcon, Globe } from 'lucide-react';
+import { StockItem, AdminNotice, User, GeneralSettings } from '../types';
 import NotificationPanel from './NotificationPanel';
+import { canAccessPage } from '../lib/accessControl';
 
 interface GlobalHeaderProps {
   currentPage: string;
@@ -17,6 +18,8 @@ interface GlobalHeaderProps {
   isProcessingLabels?: boolean;
   labelProgressMessage?: string;
   labelProcessingProgress?: number;
+  generalSettings?: GeneralSettings;
+  navMode?: 'sidebar' | 'topnav';
 }
 
 const getPageTitle = (page: string): string => {
@@ -63,13 +66,63 @@ const NoticeBanner: React.FC<{ notice: AdminNotice; onDismiss: (id: string) => v
 };
 
 
-const GlobalHeader: React.FC<GlobalHeaderProps> = ({ currentPage, onMenuClick, lowStockItems, setCurrentPage, bannerNotice, isAutoBipagemActive, onToggleAutoBipagem, currentUser, onDismissNotice, isProcessingLabels, labelProgressMessage, labelProcessingProgress }) => {
+const GlobalHeader: React.FC<GlobalHeaderProps> = ({ currentPage, onMenuClick, lowStockItems, setCurrentPage, bannerNotice, isAutoBipagemActive, onToggleAutoBipagem, currentUser, onDismissNotice, isProcessingLabels, labelProgressMessage, labelProcessingProgress, generalSettings, navMode }) => {
   
   const headerContainerClasses = `flex-shrink-0 bg-[var(--color-surface)]`;
 
   const headerClasses = `flex items-center justify-between p-4 border-b border-[var(--color-border)] text-[var(--color-text-primary)]`;
   
   const canDismissBanner = !!currentUser && (currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'ADMIN');
+
+  const canShow = (page: string) => generalSettings ? canAccessPage(currentUser, page, generalSettings) : true;
+
+  const menuSections = [
+    {
+      label: 'Produção',
+      items: [
+        { page: 'importer', label: 'Importação', icon: <ScanLine size={14} /> },
+        { page: 'bipagem', label: 'Bipagem', icon: <QrCode size={14} /> },
+        { page: 'pedidos', label: 'Pedidos', icon: <ShoppingCart size={14} /> },
+      ]
+    },
+    {
+      label: 'Estoque',
+      items: [
+        { page: 'estoque', label: 'Estoque', icon: <Package size={14} /> },
+        { page: 'pesagem', label: 'Máquinas', icon: <Weight size={14} /> },
+        { page: 'moagem', label: 'Moagem', icon: <Recycle size={14} /> },
+      ]
+    },
+    {
+      label: 'Planejamento',
+      items: [
+        { page: 'planejamento', label: 'Planejamento', icon: <ClipboardCheck size={14} /> },
+        { page: 'compras', label: 'Compras', icon: <ListPlus size={14} /> },
+      ]
+    },
+    {
+      label: 'Análise',
+      items: [
+        { page: 'financeiro', label: 'Financeiro', icon: <DollarSign size={14} /> },
+        { page: 'relatorios', label: 'Relatórios', icon: <BarChart3 size={14} /> },
+      ]
+    },
+    {
+      label: 'Ferramentas',
+      items: [
+        { page: 'etiquetas', label: 'Etiquetas', icon: <Printer size={14} /> },
+        { page: 'bling', label: 'Bling', icon: <LinkIcon size={14} /> },
+        { page: 'integracoes', label: 'Integrações', icon: <Globe size={14} /> },
+      ]
+    },
+    {
+      label: 'Admin',
+      items: [
+        { page: 'funcionarios', label: 'Funcionários', icon: <Users size={14} /> },
+        { page: 'configuracoes', label: 'Configurações', icon: <Settings size={14} /> },
+      ]
+    },
+  ];
 
   return (
     <header className={headerContainerClasses}>
@@ -114,6 +167,38 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({ currentPage, onMenuClick, l
           <NotificationPanel lowStockItems={lowStockItems} onNavigate={setCurrentPage} />
         </div>
       </div>
+
+      {/* Top Navigation Menu with hover dropdowns — só mostra no modo topnav */}
+      {navMode !== 'sidebar' && <nav className="hidden md:flex items-center gap-1 px-4 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] overflow-x-auto relative z-[100]">
+        <button
+          onClick={() => setCurrentPage('dashboard')}
+          className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-1.5 ${currentPage === 'dashboard' ? 'bg-blue-100 text-blue-700' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]'}`}
+        >
+          <LayoutDashboard size={14} /> Dashboard
+        </button>
+        {menuSections.map(section => {
+          const visibleItems = section.items.filter(item => canShow(item.page));
+          if (visibleItems.length === 0) return null;
+          return (
+            <div key={section.label} className="relative group">
+              <button className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-1 ${visibleItems.some(i => currentPage === i.page) ? 'bg-blue-100 text-blue-700' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]'}`}>
+                {section.label} <ChevronDown size={10} className="opacity-50" />
+              </button>
+              <div className="absolute top-full left-0 mt-0.5 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 min-w-[180px] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-[9999]">
+                {visibleItems.map(item => (
+                  <button
+                    key={item.page}
+                    onClick={() => setCurrentPage(item.page)}
+                    className={`w-full text-left px-4 py-2 text-xs font-bold flex items-center gap-2 transition-all ${currentPage === item.page ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'}`}
+                  >
+                    {item.icon} {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </nav>}
     </header>
   );
 };

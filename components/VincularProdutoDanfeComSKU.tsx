@@ -21,10 +21,9 @@ interface VinculoSKU {
 }
 
 interface SKUDisponivel {
-  id: string;
-  codigo: string;
-  nome: string;
-  descricao: string;
+  code: string;
+  name: string;
+  description: string;
 }
 
 export const VincularProdutoDanfeComSKU: React.FC<{
@@ -57,8 +56,8 @@ export const VincularProdutoDanfeComSKU: React.FC<{
       setLoading(true);
       const { data, error } = await supabaseClient
         .from('product_boms')
-        .select('id, codigo, nome, descricao')
-        .order('nome');
+        .select('code, name, description')
+        .order('name');
 
       if (error) throw error;
       setSkusDisponiveis(data || []);
@@ -171,8 +170,8 @@ export const VincularProdutoDanfeComSKU: React.FC<{
 
   const skusFiltrados = skusDisponiveis.filter(
     sku =>
-      sku.nome.toLowerCase().includes(filtro.toLowerCase()) ||
-      sku.codigo.toLowerCase().includes(filtro.toLowerCase())
+      (sku.name || '').toLowerCase().includes(filtro.toLowerCase()) ||
+      (sku.code || '').toLowerCase().includes(filtro.toLowerCase())
   );
 
   return (
@@ -227,16 +226,16 @@ export const VincularProdutoDanfeComSKU: React.FC<{
                     <select
                       value={vinculo.skuPrincipal}
                       onChange={e => {
-                        const sku = skusDisponiveis.find(s => s.codigo === e.target.value);
-                        atualizarVinculo(idx, e.target.value, sku?.nome || '');
+                        const sku = skusDisponiveis.find(s => s.code === e.target.value);
+                        atualizarVinculo(idx, e.target.value, sku?.name || '');
                       }}
                       className="w-full px-2 py-1 border rounded text-sm"
                       onClick={e => e.stopPropagation()}
                     >
                       <option value="">Selecionar SKU...</option>
                       {skusFiltrados.map(sku => (
-                        <option key={sku.id} value={sku.codigo}>
-                          {sku.codigo} - {sku.nome}
+                        <option key={sku.code} value={sku.code}>
+                          {sku.code} - {sku.name}
                         </option>
                       ))}
                     </select>

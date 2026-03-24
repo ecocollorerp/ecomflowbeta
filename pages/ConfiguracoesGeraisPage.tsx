@@ -116,14 +116,24 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
         </button>
     );
 
-    const MapRow = ({ label, field, canal }: { label: string, field: keyof ColumnMapping, canal: 'ml' | 'shopee' | 'site' }) => (
+    const MapRow = ({ label, field, canal, editable }: { label: string, field: keyof ColumnMapping, canal: 'ml' | 'shopee' | 'site', editable?: boolean }) => (
         <div className="flex flex-col gap-1">
             <label className="text-[10px] font-black text-gray-400 uppercase">{label}</label>
-            <select value={settings.importer[canal][field] as string} onChange={e => updateMapping(canal, field, e.target.value)} className="p-2 border rounded-xl text-xs bg-gray-50 focus:ring-2 focus:ring-blue-500 font-bold">
-                <option value="">-- Selecione --</option>
-                {detectedHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                {settings.importer[canal][field] && !detectedHeaders.includes(settings.importer[canal][field] as string) && (<option value={settings.importer[canal][field] as string}>{settings.importer[canal][field] as string} (Salvo)</option>)}
-            </select>
+            {editable ? (
+                <input
+                    type="text"
+                    value={(settings.importer[canal][field] as string) || ''}
+                    onChange={e => updateMapping(canal, field, e.target.value)}
+                    placeholder="Nome da coluna (opcional)"
+                    className="p-2 border rounded-xl text-xs bg-gray-50 focus:ring-2 focus:ring-blue-500 font-bold outline-none"
+                />
+            ) : (
+                <select value={settings.importer[canal][field] as string} onChange={e => updateMapping(canal, field, e.target.value)} className="p-2 border rounded-xl text-xs bg-gray-50 focus:ring-2 focus:ring-blue-500 font-bold">
+                    <option value="">-- Selecione --</option>
+                    {detectedHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                    {settings.importer[canal][field] && !detectedHeaders.includes(settings.importer[canal][field] as string) && (<option value={settings.importer[canal][field] as string}>{settings.importer[canal][field] as string} (Salvo)</option>)}
+                </select>
+            )}
         </div>
     );
 
@@ -176,6 +186,34 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                             </div>
                         </Section>
 
+                        <Section title="Modo de Navegação" icon={<Settings2 size={24} className="text-blue-500" />}>
+                            <p className="text-xs text-slate-500 mb-4">Escolha como navegar pelo sistema: menu lateral fixo ou barra superior com menus dropdown.</p>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => setSettings(prev => ({ ...prev, navMode: 'sidebar' }))}
+                                    className={`flex-1 flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all ${(settings.navMode ?? 'sidebar') === 'sidebar' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-500 hover:border-blue-200'}`}
+                                >
+                                    <div className="flex gap-1 items-start">
+                                        <div className="w-4 h-8 rounded bg-current opacity-70"></div>
+                                        <div className="flex-1 h-8 rounded bg-current opacity-20"></div>
+                                    </div>
+                                    <span className="text-xs font-black uppercase tracking-widest">Menu Lateral</span>
+                                    <span className="text-[10px] opacity-60 text-center">Sidebar fixa na esquerda</span>
+                                </button>
+                                <button
+                                    onClick={() => setSettings(prev => ({ ...prev, navMode: 'topnav' }))}
+                                    className={`flex-1 flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all ${settings.navMode === 'topnav' ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-500 hover:border-blue-200'}`}
+                                >
+                                    <div className="flex flex-col gap-1 w-full">
+                                        <div className="h-2 w-full rounded bg-current opacity-70"></div>
+                                        <div className="h-5 w-full rounded bg-current opacity-20"></div>
+                                    </div>
+                                    <span className="text-xs font-black uppercase tracking-widest">Menu Superior</span>
+                                    <span className="text-[10px] opacity-60 text-center">Barra no topo com dropdowns</span>
+                                </button>
+                            </div>
+                        </Section>
+
                         <Section title="Gerenciamento de Setores" icon={<Users size={24} className="text-violet-500" />}>
                             <p className="text-xs text-slate-500 mb-6 font-medium">Configure os setores da fábrica. Funcionários podem ser vinculados a múltiplos setores.</p>
                             
@@ -208,21 +246,139 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                                     <div className="col-span-full py-12 text-center bg-slate-50 rounded-2xl border-2 border-dashed">
                                         <p className="text-slate-400 font-bold">Nenhum setor cadastrado. Adicione um acima.</p>
                                     </div>
-                                ) : sectors.map((sector) => (
-                                    <div key={sector.id} className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-200 shadow-sm group hover:border-violet-300 transition-all">
-                                        <div className="flex flex-col">
-                                            <span className="text-sm font-black text-slate-800 uppercase">{sector.name}</span>
-                                            <span className="text-[10px] text-slate-400 font-bold uppercase">ID: {sector.id.split('-')[0]}</span>
+                                ) : sectors.map((sector) => {
+                                    const sectorUsers = users.filter(u => Array.isArray(u.setor) && (u.setor.includes(sector.name) || u.setor.includes(sector.id)));
+                                    return (
+                                    <div key={sector.id} className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm group hover:border-violet-300 transition-all">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex flex-col">
+                                                <span className="text-sm font-black text-slate-800 uppercase">{sector.name}</span>
+                                                <span className="text-[10px] text-slate-400 font-bold uppercase">{sectorUsers.length} funcionário(s)</span>
+                                            </div>
+                                            <button 
+                                                onClick={() => {
+                                                    if (confirm(`Tem certeza que deseja excluir o setor "${sector.name}"? Isso pode afetar funcionários vinculados.`)) {
+                                                        onDeleteSector(sector.id);
+                                                    }
+                                                }}
+                                                className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
                                         </div>
-                                        <button 
-                                            onClick={() => {
-                                                if (confirm(`Tem certeza que deseja excluir o setor "${sector.name}"? Isso pode afetar funcionários vinculados.`)) {
-                                                    onDeleteSector(sector.id);
-                                                }
-                                            }}
-                                            className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                        {sectorUsers.length > 0 && (
+                                            <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap gap-1.5">
+                                                {sectorUsers.map(u => (
+                                                    <span key={u.id} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-violet-50 border border-violet-100 text-violet-700 flex items-center gap-1">
+                                                        <Users size={10} /> {u.name}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                    );
+                                })}
+                            </div>
+                        </Section>
+
+                        {/* TikTok Shop Configurações */}
+                        <Section title="TikTok Shop — Integração" icon={<Globe className="text-pink-500" />}>
+                            <p className="text-xs text-slate-500 mb-4">Configure as credenciais do TikTok Shop para sincronização de pedidos.</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase">App Key (Client ID)</label>
+                                    <input
+                                        type="text"
+                                        value={settings.integrations?.tikTokShop?.apiKey || ''}
+                                        onChange={e => setSettings(prev => ({ ...prev, integrations: { ...prev.integrations, tikTokShop: { ...prev.integrations?.tikTokShop, apiKey: e.target.value } } }))}
+                                        className="p-3 border rounded-xl text-sm bg-gray-50 focus:ring-2 focus:ring-pink-500 font-mono"
+                                        placeholder="App Key do TikTok Shop"
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase">Shop ID</label>
+                                    <input
+                                        type="text"
+                                        value={settings.integrations?.tikTokShop?.shopId || ''}
+                                        onChange={e => setSettings(prev => ({ ...prev, integrations: { ...prev.integrations, tikTokShop: { ...prev.integrations?.tikTokShop, shopId: e.target.value } } }))}
+                                        className="p-3 border rounded-xl text-sm bg-gray-50 focus:ring-2 focus:ring-pink-500 font-mono"
+                                        placeholder="Shop ID"
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase">Nome da Loja (exibição)</label>
+                                    <input
+                                        type="text"
+                                        value={settings.integrations?.tikTokShop?.shopName || ''}
+                                        onChange={e => setSettings(prev => ({ ...prev, integrations: { ...prev.integrations, tikTokShop: { ...prev.integrations?.tikTokShop, shopName: e.target.value } } }))}
+                                        className="p-3 border rounded-xl text-sm bg-gray-50 focus:ring-2 focus:ring-pink-500 font-bold"
+                                        placeholder="Ex: Minha Loja TikTok"
+                                    />
+                                </div>
+                                <div className="flex items-center gap-3 p-3 bg-pink-50 rounded-xl border border-pink-100 mt-auto">
+                                    <input
+                                        type="checkbox"
+                                        id="tiktok-autosync"
+                                        checked={settings.integrations?.tikTokShop?.autoSync ?? false}
+                                        onChange={e => setSettings(prev => ({ ...prev, integrations: { ...prev.integrations, tikTokShop: { ...prev.integrations?.tikTokShop, autoSync: e.target.checked } } }))}
+                                        className="rounded text-pink-600 w-5 h-5"
+                                    />
+                                    <label htmlFor="tiktok-autosync" className="text-sm font-bold text-pink-800 cursor-pointer">
+                                        Sincronização automática habilitada
+                                    </label>
+                                </div>
+                            </div>
+                        </Section>
+
+                        {/* Tipos de Loja Personalizados */}
+                        <Section title="Tipos de Loja Personalizados" icon={<LinkIcon className="text-indigo-500" />}>
+                            <p className="text-xs text-slate-500 mb-4">Crie lojas personalizadas que sempre aparecem nos filtros de canal. Útil para Amazon, Loja Própria, etc.</p>
+                            <div className="flex gap-2 mb-4">
+                                <input
+                                    type="text"
+                                    id="new-store-name"
+                                    placeholder="Nome da loja (ex: Amazon, Loja Própria...)"
+                                    className="flex-1 p-3 border rounded-xl text-sm font-bold bg-white focus:ring-2 focus:ring-indigo-500"
+                                    onKeyDown={e => {
+                                        if (e.key === 'Enter') {
+                                            const val = (e.target as HTMLInputElement).value.trim();
+                                            if (!val) return;
+                                            const newStore = { id: 'custom_' + Date.now(), name: val };
+                                            setSettings(prev => ({ ...prev, customStores: [...(prev.customStores || []), newStore] }));
+                                            (e.target as HTMLInputElement).value = '';
+                                        }
+                                    }}
+                                />
+                                <button
+                                    onClick={() => {
+                                        const input = document.getElementById('new-store-name') as HTMLInputElement;
+                                        const val = input?.value.trim();
+                                        if (!val) return;
+                                        const newStore = { id: 'custom_' + Date.now(), name: val };
+                                        setSettings(prev => ({ ...prev, customStores: [...(prev.customStores || []), newStore] }));
+                                        if (input) input.value = '';
+                                    }}
+                                    className="px-6 py-2 bg-indigo-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-700"
+                                >
+                                    <Plus size={18} /> ADICIONAR
+                                </button>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                {(settings.customStores || []).length === 0 ? (
+                                    <div className="col-span-full py-8 text-center bg-slate-50 rounded-2xl border-2 border-dashed">
+                                        <p className="text-slate-400 font-bold text-sm">Nenhuma loja personalizada. Adicione acima.</p>
+                                    </div>
+                                ) : (settings.customStores || []).map(store => (
+                                    <div key={store.id} className="flex items-center justify-between p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+                                        <div>
+                                            <p className="text-sm font-black text-indigo-800">{store.name}</p>
+                                            <p className="text-[9px] text-indigo-400 font-mono">{store.id}</p>
+                                        </div>
+                                        <button
+                                            onClick={() => setSettings(prev => ({ ...prev, customStores: (prev.customStores || []).filter(s => s.id !== store.id) }))}
+                                            className="p-1.5 text-indigo-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                                         >
-                                            <Trash2 size={18} />
+                                            <Trash2 size={16} />
                                         </button>
                                     </div>
                                 ))}
@@ -263,7 +419,7 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                                 </button>
                                 {expandedPanels.has('ml') && (
                                     <div className="p-4 pt-0 space-y-4 animate-in fade-in">
-                                        <div className="space-y-4"><MapRow label="N.º da Venda" field="orderId" canal="ml" /><MapRow label="SKU do Produto" field="sku" canal="ml" /><MapRow label="Quantidade" field="qty" canal="ml" /><MapRow label="Código de Rastreio" field="tracking" canal="ml" /><MapRow label="Data da Venda" field="date" canal="ml" /><MapRow label="Data de Envio Prev." field="dateShipping" canal="ml" /><MapRow label="Receita Bruta" field="priceGross" canal="ml" /><MapRow label="Nome do Comprador" field="customerName" canal="ml" /></div>
+                                        <div className="space-y-4"><MapRow label="N.º da Venda" field="orderId" canal="ml" /><MapRow label="SKU do Produto" field="sku" canal="ml" /><MapRow label="Quantidade" field="qty" canal="ml" /><MapRow label="Código de Rastreio" field="tracking" canal="ml" /><MapRow label="Data da Venda" field="date" canal="ml" /><MapRow label="Data de Envio Prev." field="dateShipping" canal="ml" /><MapRow label="Receita Bruta" field="priceGross" canal="ml" /><MapRow label="Total Pago pelo Comprador" field="buyerPaidTotal" canal="ml" /><MapRow label="Nome do Comprador" field="customerName" canal="ml" /></div>
                                         <FeeSelector canal="ml" />
                                         <StatusFilterSettings canal="ml" />
                                     </div>
@@ -281,17 +437,20 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                                 </button>
                                 {expandedPanels.has('shopee') && (
                                     <div className="p-4 pt-0 space-y-4 animate-in fade-in">
-                                        <div className="space-y-4"><MapRow label="N.º do Pedido" field="orderId" canal="shopee" /><MapRow label="Referência SKU" field="sku" canal="shopee" /><MapRow label="Quantidade" field="qty" canal="shopee" /><MapRow label="Código de Rastreio" field="tracking" canal="shopee" /><MapRow label="Data da Venda" field="date" canal="shopee" /><MapRow label="Data de Envio Prev." field="dateShipping" canal="shopee" /><MapRow label="Preço Acordado" field="priceGross" canal="shopee" /><MapRow label="Nome do Comprador" field="customerName" canal="shopee" /></div>
+                                        <div className="space-y-4"><MapRow label="N.º do Pedido" field="orderId" canal="shopee" /><MapRow label="Referência SKU" field="sku" canal="shopee" /><MapRow label="Quantidade" field="qty" canal="shopee" /><MapRow label="Código de Rastreio" field="tracking" canal="shopee" /><MapRow label="Data da Venda" field="date" canal="shopee" /><MapRow label="Data de Envio Prev." field="dateShipping" canal="shopee" /><MapRow label="Preço Acordado" field="priceGross" canal="shopee" /><MapRow label="Total Pago pelo Comprador" field="buyerPaidTotal" canal="shopee" /><MapRow label="Nome do Comprador" field="customerName" canal="shopee" /></div>
                                         <FeeSelector canal="shopee" />
                                         <StatusFilterSettings canal="shopee" />
                                     </div>
                                 )}
                             </div>
 
-                            {/* --- TIKTOKSHOP --- */}
+                            {/* --- TIKTOKSHOP / SITE --- */}
                             <div className="bg-gray-50/50 rounded-2xl border overflow-hidden">
                                 <button onClick={() => togglePanel('site')} className="w-full flex items-center justify-between p-4 hover:bg-gray-100 transition-colors">
-                                    <h3 className="font-bold text-gray-700 flex items-center gap-2">TikTokShop</h3>
+                                    <h3 className="font-bold text-gray-700 flex items-center gap-2">
+                                        TikTok Shop / Site / Outros
+                                        <span className="text-[9px] font-normal text-pink-500 bg-pink-50 px-2 py-0.5 rounded-full">Inclui TikTok</span>
+                                    </h3>
                                     <div className="flex items-center gap-2 text-gray-400">
                                         {expandedPanels.has('site') ? <Eye size={18} className="text-blue-500"/> : <EyeOff size={18}/>}
                                         {expandedPanels.has('site') ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
@@ -299,7 +458,8 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                                 </button>
                                 {expandedPanels.has('site') && (
                                     <div className="p-4 pt-0 space-y-4 animate-in fade-in">
-                                        <div className="space-y-4"><MapRow label="Order ID" field="orderId" canal="site" /><MapRow label="Seller SKU" field="sku" canal="site" /><MapRow label="Quantity" field="qty" canal="site" /><MapRow label="Tracking ID" field="tracking" canal="site" /><MapRow label="Created Time" field="date" canal="site" /><MapRow label="Ship By Date" field="dateShipping" canal="site" /><MapRow label="SKU Subtotal" field="priceGross" canal="site" /><MapRow label="Order Amount" field="totalValue" canal="site" /><MapRow label="Recipient" field="customerName" canal="site" /><MapRow label="CPF Number" field="customerCpf" canal="site" /></div>
+                                        <p className="text-[10px] text-slate-400 italic">Configure o mapeamento de colunas para importações do TikTok Shop, Site próprio e outros canais. Digite o nome exato da coluna na sua planilha.</p>
+                                        <div className="space-y-4"><MapRow label="Nº do Pedido" field="orderId" canal="site" editable /><MapRow label="SKU" field="sku" canal="site" editable /><MapRow label="Quantidade" field="qty" canal="site" editable /><MapRow label="Código de Rastreio" field="tracking" canal="site" editable /><MapRow label="Data da Venda" field="date" canal="site" editable /><MapRow label="Data de Envio" field="dateShipping" canal="site" editable /><MapRow label="Receita Bruta" field="priceGross" canal="site" editable /><MapRow label="Valor Total" field="totalValue" canal="site" editable /><MapRow label="Total Pago pelo Comprador" field="buyerPaidTotal" canal="site" editable /><MapRow label="Taxa de Envio" field="shippingFee" canal="site" editable /><MapRow label="Nome do Cliente" field="customerName" canal="site" editable /><MapRow label="CPF" field="customerCpf" canal="site" editable /></div>
                                         <FeeSelector canal="site" />
                                         <StatusFilterSettings canal="site" />
                                     </div>

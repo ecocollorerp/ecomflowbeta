@@ -238,27 +238,41 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
                     <div className="lg:col-span-2">
                         <Section title="Gestão de Setores" icon={<Settings2 size={20} className="text-slate-600"/>}>
                             <div className="space-y-4">
-                                {sectors.map(sector => (
-                                    <div key={sector.id} className="p-4 border rounded-2xl bg-slate-50 border-slate-100 flex justify-between items-center group">
-                                        <div className="flex items-center gap-3">
-                                            <div className="p-2 bg-white rounded-xl border border-slate-100"><Layers size={18} className="text-blue-500"/></div>
-                                            <div>
-                                                <h3 className="font-black text-slate-800 uppercase tracking-tighter text-sm">{sector.name}</h3>
-                                                <p className="text-[9px] text-slate-400 font-bold uppercase">ID: {sector.id}</p>
+                                {sectors.map(sector => {
+                                    const sectorUsers = users.filter(u => Array.isArray(u.setor) && (u.setor.includes(sector.name) || u.setor.includes(sector.id)));
+                                    return (
+                                    <div key={sector.id} className="p-4 border rounded-2xl bg-slate-50 border-slate-100 group">
+                                        <div className="flex justify-between items-center">
+                                            <div className="flex items-center gap-3">
+                                                <div className="p-2 bg-white rounded-xl border border-slate-100"><Layers size={18} className="text-blue-500"/></div>
+                                                <div>
+                                                    <h3 className="font-black text-slate-800 uppercase tracking-tighter text-sm">{sector.name}</h3>
+                                                    <p className="text-[9px] text-slate-400 font-bold uppercase">{sectorUsers.length} funcionário(s)</p>
+                                                </div>
                                             </div>
+                                            <button 
+                                                onClick={() => {
+                                                    if (confirm(`Excluir setor "${sector.name}"?`)) {
+                                                        onDeleteSector(sector.id);
+                                                    }
+                                                }}
+                                                className="text-slate-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-xl transition-colors"
+                                            >
+                                                <Trash2 size={18}/>
+                                            </button>
                                         </div>
-                                        <button 
-                                            onClick={() => {
-                                                if (confirm(`Excluir setor "${sector.name}"?`)) {
-                                                    onDeleteSector(sector.id);
-                                                }
-                                            }}
-                                            className="text-slate-300 hover:text-red-500 p-2 hover:bg-red-50 rounded-xl transition-colors"
-                                        >
-                                            <Trash2 size={18}/>
-                                        </button>
+                                        {sectorUsers.length > 0 && (
+                                            <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap gap-1.5">
+                                                {sectorUsers.map(u => (
+                                                    <span key={u.id} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-white border border-slate-100 text-slate-600 flex items-center gap-1">
+                                                        <UserIcon size={10} className="text-blue-400" /> {u.name}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
-                                ))}
+                                    );
+                                })}
                                 
                                 {sectors.length === 0 && (
                                     <div className="text-center py-10 border-2 border-dashed border-slate-200 rounded-3xl">
@@ -442,6 +456,7 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
                                     <select value={newRule.category} onChange={e => setNewRule({...newRule, category: e.target.value})} className="w-full p-3 border-2 border-slate-100 rounded-xl text-xs font-black bg-white focus:border-blue-500">
                                         <option value="ALL">Todas Categorias</option>
                                         {settings.productCategoryList?.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                                        {settings.insumoCategoryList?.filter(c => !settings.productCategoryList?.includes(c)).map(cat => <option key={cat} value={cat}>{cat}</option>)}
                                     </select>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
@@ -458,7 +473,7 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
                                     <label className="text-[10px] font-black text-gray-400 uppercase">Embalagem a Baixar:</label>
                                     <select value={newRule.stockItemCode} onChange={e => setNewRule({...newRule, stockItemCode: e.target.value})} className="w-full p-3 border-2 border-slate-100 rounded-xl text-xs font-black bg-white focus:border-blue-500">
                                         <option value="">Selecione um Insumo...</option>
-                                        {stockItems.filter(i => i.kind === 'INSUMO').map(i => <option key={i.id} value={i.code}>{i.name}</option>)}
+                                        {stockItems.filter(i => i.kind === 'INSUMO' && (newRule.category === 'ALL' || !i.category || i.category === newRule.category)).map(i => <option key={i.id} value={i.code}>{i.name} ({i.category || 'Sem Categoria'})</option>)}
                                     </select>
                                 </div>
                                 <button onClick={handleAddExpeditionRule} className="w-full py-3.5 bg-blue-600 text-white rounded-xl font-black uppercase text-[10px] tracking-widest hover:bg-blue-700 shadow-lg shadow-blue-100 active:scale-95 transition-all">Ativar Regra</button>

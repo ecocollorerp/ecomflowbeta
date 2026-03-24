@@ -149,6 +149,30 @@ const AddGrindingModal: React.FC<AddGrindingModalProps> = ({ isOpen, onClose, in
                     </div>
                      <div className="border-t pt-4">
                         <h3 className="text-md font-semibold text-gray-700 mb-2">Insumo de Saída (Moído)</h3>
+                        <div className="mb-3">
+                            <label className="text-sm font-medium text-gray-600">Selecionar Material Existente</label>
+                            <select
+                                value={outputCode}
+                                onChange={e => {
+                                    const code = e.target.value;
+                                    setOutputCode(code);
+                                    if (code === '__NEW__') {
+                                        setOutputCode('');
+                                        setOutputName('');
+                                    } else {
+                                        const found = stockItems.find(si => si.code === code);
+                                        if (found) setOutputName(found.name);
+                                    }
+                                }}
+                                className="mt-1 block w-full border-[var(--color-border)] bg-[var(--color-surface)] rounded-md shadow-sm p-2 text-sm"
+                            >
+                                <option value="">-- Selecione ou Crie Novo --</option>
+                                {stockItems.filter(si => si.kind === 'INSUMO' || si.kind === 'PRODUTO').map(si => (
+                                    <option key={si.id} value={si.code}>{si.name} ({si.code}) — Estoque: {si.current_qty.toFixed(2)}</option>
+                                ))}
+                                <option value="__NEW__">➕ Criar Novo Material</option>
+                            </select>
+                        </div>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
                                 <label htmlFor="output-code" className="text-sm">Código/SKU</label>

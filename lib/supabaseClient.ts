@@ -22,7 +22,7 @@ export const dbClient: SupabaseClient = createClient(supabaseUrl, supabaseKey, {
     },
 });
 
-const EXPECTED_SCHEMA_VERSION = '5.3';
+const EXPECTED_SCHEMA_VERSION = '6.1';
 
 /**
  * Fetches all rows from a table, automatically handling pagination to bypass the 1000 row limit.

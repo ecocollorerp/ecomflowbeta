@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import Header from '../components/Header';
 import ActionCard from '../components/ActionCard';
 import RecentActivity from '../components/RecentActivity';
@@ -11,7 +11,8 @@ import PackGroupModal from '../components/PackGroupModal';
 import PackGroupDetailModal from '../components/PackGroupDetailModal';
 import { ActionCardData, AlertItemData, DashboardFilters, AlertLevel, GeneralSettings, ScanLogItem, ActivityType, ActivityItemData, OrderItem, StockItem, User, Canal, UiSettings, AdminNotice, SkuLink, ProductionSummaryData, DeducedMaterial, ProdutoCombinado, Period, DashboardWidgetConfig, StockPackGroup, ProductionStats } from '../types';
 // Added DollarSign to the list of icons imported from lucide-react
-import { Package, Scan, BarChart2, ShoppingCart, Archive, AlertTriangle, AlertCircle, ShieldCheck, Printer, CheckCheck, TrendingUp, Users, Factory, Box, Calendar, RefreshCw, Eye, Settings, DollarSign } from 'lucide-react';
+import { Package, Scan, BarChart2, ShoppingCart, Archive, AlertTriangle, AlertCircle, ShieldCheck, Printer, CheckCheck, TrendingUp, Users, Factory, Box, Calendar, RefreshCw, Eye, Settings, DollarSign, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
+import { dbClient } from '../lib/supabaseClient';
 
 interface DashboardPageProps {
     setCurrentPage: (page: string) => void;
@@ -55,7 +56,11 @@ const getPeriodDates = (period: Period) => {
 const getOrderDate = (order: OrderItem, dateSource: 'sale_date' | 'import_date'): Date | null => {
     if (dateSource === 'import_date' && order.created_at) return new Date(order.created_at);
     const dStr = String(order.data || '');
-    if (!dStr) return null;
+    if (!dStr) {
+        // Fallback: se não tem data de venda, usar data de importação
+        if (order.created_at) return new Date(order.created_at);
+        return null;
+    }
     if (dStr.includes('-')) {
         const [y, m, d] = dStr.split('-');
         return new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0);
@@ -72,6 +77,42 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
     const [viewingPackGroup, setViewingPackGroup] = useState<StockPackGroup | null>(null);
     const [editingPackGroup, setEditingPackGroup] = useState<StockPackGroup | null>(null);
+    const [packMovements, setPackMovements] = useState<Record<string, any[]>>({});
+
+    // Manter viewingPackGroup sincronizado com packGroups atualizado
+    useEffect(() => {
+        if (viewingPackGroup) {
+            const updated = packGroups.find(g => g.id === viewingPackGroup.id);
+            if (updated) {
+                setViewingPackGroup(updated);
+            }
+        }
+    }, [packGroups]);
+
+    // Carregar movimentações recentes dos pacotes para exibir no dashboard
+    const loadPackMovements = useCallback(async () => {
+        if (!packGroups.length) return;
+        const packCodes = packGroups.map(g => `PACK:${g.name}`);
+        try {
+            const { data } = await dbClient
+                .from('stock_movements')
+                .select('*')
+                .in('stock_item_code', packCodes)
+                .order('created_at', { ascending: false })
+                .limit(100);
+            if (data) {
+                const grouped: Record<string, any[]> = {};
+                data.forEach((m: any) => {
+                    const key = m.stock_item_code;
+                    if (!grouped[key]) grouped[key] = [];
+                    if (grouped[key].length < 5) grouped[key].push(m);
+                });
+                setPackMovements(grouped);
+            }
+        } catch (e) { console.error('Erro ao carregar movimentações de pacotes:', e); }
+    }, [packGroups]);
+
+    useEffect(() => { loadPackMovements(); }, [loadPackMovements]);
 
     const [filters, setFilters] = useState<DashboardFilters>({
         period: 'today',
@@ -227,6 +268,9 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
                                     ? (group.quantidade_volatil || 0)
                                     : stockItems.filter(i => group.item_codes.some(c => c.toUpperCase() === i.code.toUpperCase())).reduce((sum, i) => sum + i.current_qty, 0);
                                 const isBelowMin = currentTotal < group.min_pack_qty;
+                                const recentMoves = packMovements[`PACK:${group.name}`] || [];
+                                const totalEntrada = recentMoves.filter((m: any) => (m.qty_delta || 0) > 0).reduce((s: number, m: any) => s + (m.qty_delta || 0), 0);
+                                const totalSaida = recentMoves.filter((m: any) => (m.qty_delta || 0) < 0).reduce((s: number, m: any) => s + Math.abs(m.qty_delta || 0), 0);
                                 return (
                                     <div key={group.id} onClick={() => setViewingPackGroup(group)} className={`p-4 rounded-2xl border-2 transition-all cursor-pointer hover:shadow-xl group relative overflow-hidden ${isBelowMin ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-100 hover:border-blue-300'}`}>
                                         <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity bg-white p-1.5 rounded-full shadow-md text-blue-600">
@@ -249,6 +293,20 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
                                         <div className="w-full bg-slate-200 h-1.5 rounded-full mt-2 overflow-hidden">
                                             <div className={`h-full transition-all duration-1000 ${isBelowMin ? 'bg-red-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, (currentTotal / (group.min_pack_qty || 1)) * 100)}%` }} />
                                         </div>
+                                        {/* Resumo Entradas/Saídas */}
+                                        {recentMoves.length > 0 && (
+                                            <div className="mt-3 pt-2 border-t border-slate-200/60 flex items-center gap-3">
+                                                <div className="flex items-center gap-1">
+                                                    <ArrowDownCircle size={10} className="text-emerald-500" />
+                                                    <span className="text-[9px] font-black text-emerald-600">+{totalEntrada}</span>
+                                                </div>
+                                                <div className="flex items-center gap-1">
+                                                    <ArrowUpCircle size={10} className="text-red-500" />
+                                                    <span className="text-[9px] font-black text-red-600">-{totalSaida}</span>
+                                                </div>
+                                                <span className="text-[8px] text-slate-400 ml-auto">{recentMoves.length} mov.</span>
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}

@@ -75,7 +75,7 @@ export const usePacotesProtos = (): UsePacotosProtosReturn => {
             const pacotesFormatados = (data || []).map((p: any) => ({
                 id: p.id,
                 nome: p.batch_id || 'Pacote',
-                sku_primario: p.stock_item_id || '',,
+                sku_primario: p.stock_item_id || '',
                 quantidade_total: Number(p.quantidade_total || 0),
                 quantidade_disponivel: Number(p.quantidade_disponivel || 0),
                 quantidade_reservada: Number(p.quantidade_total || 0) - Number(p.quantidade_disponivel || 0),

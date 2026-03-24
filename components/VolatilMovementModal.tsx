@@ -105,6 +105,9 @@ const VolatilMovementModal: React.FC<VolatilMovementModalProps> = ({ isOpen, onC
                                             <div className="text-right">
                                                 <p className="text-[9px] font-black text-gray-400 uppercase">Saldo Atual</p>
                                                 <p className="text-xs font-black text-gray-700">{item.current_qty} UN</p>
+                                                {!isEntrada && (
+                                                    <p className="text-[9px] font-black text-blue-500 mt-0.5">Máx saída: {Math.floor(item.current_qty || 0)} UN</p>
+                                                )}
                                             </div>
                                         </div>
                                         <div className="grid grid-cols-2 gap-3">
@@ -127,8 +130,11 @@ const VolatilMovementModal: React.FC<VolatilMovementModalProps> = ({ isOpen, onC
                                         </div>
 
                                         {itemTotal > 0 && (
-                                            <div className="mt-3 text-right">
-                                                <span className={`text-xs font-black uppercase tracking-widest px-2 py-1 rounded bg-white shadow-sm border ${isEntrada ? 'text-emerald-700 border-emerald-200' : 'text-red-700 border-red-200'}`}>
+                                            <div className="mt-3 flex justify-between items-center">
+                                                {!isEntrada && itemTotal > (item.current_qty || 0) && (
+                                                    <span className="text-[9px] font-black text-red-500">⚠️ Excede saldo deste SKU</span>
+                                                )}
+                                                <span className={`ml-auto text-xs font-black uppercase tracking-widest px-2 py-1 rounded bg-white shadow-sm border ${isEntrada ? 'text-emerald-700 border-emerald-200' : 'text-red-700 border-red-200'}`}>
                                                     {isEntrada ? '+' : '-'} {itemTotal} UN
                                                 </span>
                                             </div>

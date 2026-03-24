@@ -1,12 +1,12 @@
 
-import React, { useMemo, useState } from 'react';
-import { OrderItem, Canal, StockItem, ProdutoCombinado, SkuLink, GeneralSettings, MaterialItem, TaxEntry } from '../types';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
+import { OrderItem, Canal, StockItem, ProdutoCombinado, SkuLink, GeneralSettings, MaterialItem, TaxEntry, FinanceCardConfig } from '../types';
 import {
     DollarSign, TrendingUp,
-    FileUp, FileDown, Calendar, ArrowRight, Loader2, ShoppingBag, Box, Trash2, Settings, CheckCircle, RefreshCw, ChevronDown, ChevronRight, FileSpreadsheet, AlertCircle, Percent, PieChart, Landmark, Plus, Minus, FileCode, AlertTriangle
+    FileUp, FileDown, Calendar, ArrowRight, Loader2, ShoppingBag, Box, Trash2, Settings, CheckCircle, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, FileSpreadsheet, AlertCircle, Percent, PieChart, Landmark, Plus, Minus, FileCode, AlertTriangle, Edit2, X, Save, BarChart3
 } from 'lucide-react';
 import { calculateMaterialList } from '../lib/estoque';
-import { exportFinanceReport } from '../lib/export';
+import { exportFinanceReport, exportFinancePptx } from '../lib/export';
 import ConfirmActionModal from '../components/ConfirmActionModal';
 import FinanceImportModal from '../components/FinanceImportModal';
 
@@ -80,10 +80,55 @@ const FinancePage: React.FC<FinancePageProps> = ({
 }) => {
     const [activeTab, setActiveTab] = useState<'overview' | 'reports' | 'materials'>('overview');
 
-    // Novo: Lista de impostos
-    const [taxes, setTaxes] = useState<TaxEntry[]>([
-        { id: '1', name: 'Simples Nacional', type: 'percent', value: 6 }
-    ]);
+    // Lista de despesas/deduções — inicializa de generalSettings.deductions (persiste)
+    const [taxes, setTaxes] = useState<TaxEntry[]>(() => {
+        const saved = generalSettings.deductions;
+        if (saved && saved.length > 0) return saved;
+        return [{ id: '1', name: 'Simples Nacional', type: 'percent', value: 6, enabled: true, category: 'imposto', appliesTo: 'gross' }];
+    });
+
+    // Sincroniza quando generalSettings mudar externamente
+    useEffect(() => {
+        if (generalSettings.deductions && generalSettings.deductions.length > 0) {
+            setTaxes(generalSettings.deductions);
+            setTaxesDirty(false);
+        }
+    }, [generalSettings.deductions]);
+    const [taxesDirty, setTaxesDirty] = useState(false);
+
+    // Cards personalizáveis
+    const defaultCards: FinanceCardConfig[] = [
+        { id: 'card_1', label: 'Faturado', metric: 'gross', color: 'blue', enabled: true },
+        { id: 'card_2', label: 'Líquido Final', metric: 'net', color: 'emerald', enabled: true },
+        { id: 'card_3', label: 'Pago pelos Clientes', metric: 'buyerTotal', color: 'purple', enabled: true },
+    ];
+    const [financeCards, setFinanceCards] = useState<FinanceCardConfig[]>(() => {
+        const saved = generalSettings.financeCards;
+        return saved && saved.length > 0 ? saved : defaultCards;
+    });
+    useEffect(() => {
+        if (generalSettings.financeCards && generalSettings.financeCards.length > 0) {
+            setFinanceCards(generalSettings.financeCards);
+        }
+    }, [generalSettings.financeCards]);
+    const saveCards = (cards: FinanceCardConfig[]) => {
+        setFinanceCards(cards);
+        setCardsDirty(true);
+    };
+    const [cardsDirty, setCardsDirty] = useState(false);
+    const handleSaveCards = () => {
+        if (onSaveSettings) onSaveSettings({ ...generalSettings, financeCards: financeCards });
+        setCardsDirty(false);
+    };
+    const handleAddCard = () => {
+        const nc: FinanceCardConfig = { id: Date.now().toString(), label: 'Novo Card', metric: 'gross', color: 'blue', enabled: true };
+        saveCards([...financeCards, nc]);
+    };
+    const handleRemoveCard = (id: string) => saveCards(financeCards.filter(c => c.id !== id));
+    const handleUpdateCard = (id: string, field: keyof FinanceCardConfig, value: any) => saveCards(financeCards.map(c => c.id === id ? { ...c, [field]: value } : c));
+
+    const [editingCardId, setEditingCardId] = useState<string | null>(null);
+    const [cardColumns, setCardColumns] = useState<3 | 4>(3);
 
     const [rankingMetric, setRankingMetric] = useState<'revenue' | 'quantity'>('revenue');
     const [period, setPeriod] = useState<'today' | 'last7days' | 'thisMonth' | 'lastMonth' | 'custom' | 'last_upload'>('thisMonth');
@@ -91,6 +136,16 @@ const FinancePage: React.FC<FinancePageProps> = ({
     const [customDates, setCustomDates] = useState({ start: '', end: '' });
     const [considerarInvalidos, setConsiderarInvalidos] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
+    const [isExportingPptx, setIsExportingPptx] = useState(false);
+    const [chartPage, setChartPage] = useState(0);
+    const CHART_WINDOW = 10;
+
+    // Reset paginação do gráfico quando filtros mudam
+    useEffect(() => { setChartPage(0); }, [period, canalFilter, customDates.start, customDates.end]);
+
+    // Toggles de deduções da planilha
+    const [deductPlatformFees, setDeductPlatformFees] = useState(true);
+    const [deductShipping, setDeductShipping] = useState(true);
 
     // Modal states
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -118,7 +173,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
         return null;
     };
 
-    const { stats, canalComparison, taxTotal, finalNetProfit, filteredOrders, taxBreakdown, dailyChart, totalPedidos, ticketMedio, margemPct } = useMemo(() => {
+    const { stats, canalComparison, taxTotal, finalNetProfit, filteredOrders, taxBreakdown, dailyChart, totalPedidos, ticketMedio, margemPct, storeProfitability } = useMemo(() => {
         const now = new Date();
         let startLimit: Date | null = null;
         let endLimit: Date | null = null;
@@ -148,9 +203,10 @@ const FinancePage: React.FC<FinancePageProps> = ({
             return true;
         });
 
-        const base = { gross: 0, fees: 0, shipping: 0, net: 0, units: 0, ranking: [] as any[] };
+        const base = { gross: 0, fees: 0, shipping: 0, customerPaid: 0, buyerTotal: 0, net: 0, units: 0, ranking: [] as any[] };
         const comparison = { ml: 0, shopee: 0, site: 0 };
-        const skuMap = new Map<string, { revenue: number, qty: number, name: string }>();
+        const storeProfit: Record<string, { gross: number, fees: number, shipping: number }> = {};
+        const skuMap = new Map<string, { revenue: number, qty: number, name: string, commissions: number, buyerPaid: number }>();
 
         const groups = new Map<string, OrderItem[]>();
         filtered.forEach(o => {
@@ -167,34 +223,59 @@ const FinancePage: React.FC<FinancePageProps> = ({
             const gFees = isRep ? Number(first.platform_fees || 0) : group.reduce((s, i) => s + (i.platform_fees || 0), 0);
             const gShip = isRep ? Number(first.shipping_fee || 0) : group.reduce((s, i) => s + (i.shipping_fee || 0), 0);
             const gCustomerShip = isRep ? Number(first.shipping_paid_by_customer || 0) : group.reduce((s, i) => s + (i.shipping_paid_by_customer || 0), 0);
+            const gNet = isRep ? Number(first.price_net || 0) : group.reduce((s, i) => s + (i.price_net || 0), 0);
 
             base.gross += gGross;
             base.fees += gFees;
             base.shipping += gShip;
-            base.net += (gGross - gFees - gShip - gCustomerShip);
+            base.customerPaid += gCustomerShip;
+            // buyerTotal = valor líquido recebido pelo comprador (price_net), separado do faturamento bruto
+            base.buyerTotal += gNet > 0 ? gNet : (gGross + gCustomerShip);
+            base.net += gGross;
 
             if (first.canal === 'ML') comparison.ml += gGross;
             else if (first.canal === 'SHOPEE') comparison.shopee += gGross;
             else comparison.site += gGross;
 
+            // Lucratividade por loja
+            const storeKey = first.canal || 'SITE';
+            if (!storeProfit[storeKey]) storeProfit[storeKey] = { gross: 0, fees: 0, shipping: 0 };
+            storeProfit[storeKey].gross += gGross;
+            storeProfit[storeKey].fees += gFees;
+            storeProfit[storeKey].shipping += gShip;
+
             group.forEach(o => {
                 base.units += o.qty_final;
-                const entry = skuMap.get(o.sku) || { revenue: 0, qty: 0, name: o.sku };
+                const entry = skuMap.get(o.sku) || { revenue: 0, qty: 0, name: o.sku, commissions: 0, buyerPaid: 0 };
                 entry.revenue += o.price_gross;
                 entry.qty += o.qty_final;
+                // Comissão proporcional: fees alocadas para este item pelo peso no bruto do pedido
+                const orderGrossSum = group.reduce((s, i) => s + (i.price_gross || 0), 0);
+                entry.commissions += orderGrossSum > 0 ? ((o.price_gross || 0) / orderGrossSum) * gFees : 0;
+                entry.buyerPaid += (o.price_total || 0);
                 skuMap.set(o.sku, entry);
             });
         });
 
-        // Cálculo Detalhado de Impostos
+        // Cálculo Detalhado de Impostos (somente os habilitados)
         let totalTaxCalculated = 0;
         const breakdown = taxes.map(t => {
-            const amt = t.type === 'percent' ? (base.gross * t.value) / 100 : t.value;
-            totalTaxCalculated += amt;
-            return { ...t, calculatedAmount: amt };
+            let taxBase = base.gross;
+            if (t.appliesTo === 'after_fees') taxBase = Math.max(0, base.gross - base.fees);
+            else if (t.appliesTo === 'after_ship') taxBase = Math.max(0, base.gross - base.shipping);
+            else if (t.appliesTo === 'after_both') taxBase = Math.max(0, base.gross - base.fees - base.shipping);
+            const amt = t.type === 'percent' ? (taxBase * t.value) / 100 : t.value;
+            if (t.enabled !== false) totalTaxCalculated += amt;
+            return { ...t, calculatedAmount: amt, taxBase };
         });
 
-        const finalNetProfit = base.net - totalTaxCalculated;
+        // Deduções controladas pelos toggles
+        let totalDeductions = 0;
+        if (deductPlatformFees) totalDeductions += base.fees;
+        if (deductShipping) totalDeductions += base.shipping;
+        totalDeductions += totalTaxCalculated;
+
+        const finalNetProfit = base.gross - totalDeductions;
 
         base.ranking = Array.from(skuMap.entries()).map(([code, d]) => ({ code, ...d }))
             .sort((a, b) => rankingMetric === 'revenue' ? b.revenue - a.revenue : b.qty - a.qty);
@@ -217,19 +298,30 @@ const FinancePage: React.FC<FinancePageProps> = ({
         const ticketMedio = totalPedidos > 0 ? base.gross / totalPedidos : 0;
         const margemPct = base.gross > 0 ? (finalNetProfit / base.gross) * 100 : 0;
 
-        return { stats: base, canalComparison: comparison, taxTotal: totalTaxCalculated, finalNetProfit, filteredOrders: filtered, taxBreakdown: breakdown, dailyChart, totalPedidos, ticketMedio, margemPct };
-    }, [allOrders, period, canalFilter, customDates, considerarInvalidos, dateSourceMode, rankingMetric, generalSettings.isRepeatedValue, taxes]);
+        return { stats: base, canalComparison: comparison, taxTotal: totalTaxCalculated, finalNetProfit, filteredOrders: filtered, taxBreakdown: breakdown, dailyChart, totalPedidos, ticketMedio, margemPct, storeProfitability: storeProfit };
+    }, [allOrders, period, canalFilter, customDates, considerarInvalidos, dateSourceMode, rankingMetric, generalSettings.isRepeatedValue, taxes, deductPlatformFees, deductShipping]);
 
     const handleAddTax = () => {
-        setTaxes([...taxes, { id: Date.now().toString(), name: 'Novo Imposto', type: 'percent', value: 0 }]);
+        const updated = [...taxes, { id: Date.now().toString(), name: 'Nova Despesa', type: 'percent' as const, value: 0, enabled: true, category: 'outro' as const, appliesTo: 'gross' as const }];
+        setTaxes(updated);
+        setTaxesDirty(true);
     };
 
     const handleRemoveTax = (id: string) => {
-        setTaxes(taxes.filter(t => t.id !== id));
+        const updated = taxes.filter(t => t.id !== id);
+        setTaxes(updated);
+        setTaxesDirty(true);
     };
 
     const handleUpdateTax = (id: string, field: keyof TaxEntry, value: any) => {
-        setTaxes(taxes.map(t => t.id === id ? { ...t, [field]: value } : t));
+        const updated = taxes.map(t => t.id === id ? { ...t, [field]: value } : t);
+        setTaxes(updated);
+        setTaxesDirty(true);
+    };
+
+    const handleSaveTaxes = () => {
+        if (onSaveSettings) onSaveSettings({ ...generalSettings, deductions: taxes });
+        setTaxesDirty(false);
     };
 
     const handleExport = async () => {
@@ -244,12 +336,42 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 stats,
                 materialList,
                 orders: filteredOrders,
-                taxes: taxBreakdown // Passamos os impostos detalhados
+                taxes: taxBreakdown,
+                dailyChart,
+                canalComparison,
+                deductPlatformFees,
+                deductShipping,
+                showCustomerPaid: false,
             });
         } catch (e) {
             console.error("Erro ao exportar:", e);
         } finally {
             setIsExporting(false);
+        }
+    };
+
+    const handleExportPptx = async () => {
+        setIsExportingPptx(true);
+        try {
+            const materialList = calculateMaterialList(filteredOrders, skuLinks, stockItems, produtosCombinados, generalSettings.expeditionRules, generalSettings);
+            const periodLabel = period === 'custom' ? `${customDates.start} a ${customDates.end}` : period;
+            await exportFinancePptx({
+                period: periodLabel,
+                canal: canalFilter,
+                stats,
+                materialList,
+                orders: filteredOrders,
+                taxes: taxBreakdown,
+                dailyChart,
+                canalComparison,
+                deductPlatformFees,
+                deductShipping,
+                showCustomerPaid: false,
+            });
+        } catch (e) {
+            console.error('Erro ao exportar PPTX:', e);
+        } finally {
+            setIsExportingPptx(false);
         }
     };
 
@@ -297,6 +419,9 @@ const FinancePage: React.FC<FinancePageProps> = ({
                     <button onClick={handleExport} disabled={isExporting} className="bg-red-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-red-100 hover:bg-red-700 transition-all flex items-center gap-2 disabled:opacity-50">
                         {isExporting ? <Loader2 className="animate-spin" size={16} /> : <FileDown size={16} />} Exportar PDF
                     </button>
+                    <button onClick={handleExportPptx} disabled={isExportingPptx} className="bg-orange-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-orange-100 hover:bg-orange-700 transition-all flex items-center gap-2 disabled:opacity-50">
+                        {isExportingPptx ? <Loader2 className="animate-spin" size={16} /> : <FileDown size={16} />} Exportar PPTX
+                    </button>
                 </div>
             </div>
 
@@ -326,22 +451,63 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 <div className="lg:col-span-1 space-y-6">
                     <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4">
                         <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2">
-                            <Settings size={14} className="text-blue-500" /> Configuração de Impostos (Fiscal)
+                            <Settings size={14} className="text-blue-500" /> Despesas e Deduções
                         </h3>
-                        <p className="text-[10px] text-gray-400">Adicione aqui os impostos que serão deduzidos do faturamento bruto para o cálculo de lucro líquido.</p>
-                        <div className="space-y-3">
+                        <p className="text-[10px] text-gray-400">Selecione quais deduções serão aplicadas ao cálculo do Líquido Final. As despesas são salvas automaticamente.</p>
+
+                        {/* Deduções da planilha */}
+                        <div className="space-y-2">
+                            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Taxas da Planilha</p>
+                            <label className="flex items-center gap-2 p-2 bg-slate-50 rounded-xl border border-slate-100 cursor-pointer hover:bg-slate-100 transition-colors">
+                                <input type="checkbox" checked={deductPlatformFees} onChange={e => setDeductPlatformFees(e.target.checked)} className="rounded text-blue-600" />
+                                <div className="flex-1">
+                                    <span className="text-xs font-bold text-slate-700">Comissões Plataforma</span>
+                                    <span className="text-[9px] text-slate-400 block">Taxas do marketplace</span>
+                                </div>
+                                <span className="text-xs font-black text-orange-600">{fmt(stats.fees)}</span>
+                            </label>
+                            <label className="flex items-center gap-2 p-2 bg-slate-50 rounded-xl border border-slate-100 cursor-pointer hover:bg-slate-100 transition-colors">
+                                <input type="checkbox" checked={deductShipping} onChange={e => setDeductShipping(e.target.checked)} className="rounded text-blue-600" />
+                                <div className="flex-1">
+                                    <span className="text-xs font-bold text-slate-700">Taxa de Envio / Frete</span>
+                                    <span className="text-[9px] text-slate-400 block">Frete pago pela empresa</span>
+                                </div>
+                                <span className="text-xs font-black text-orange-600">{fmt(stats.shipping)}</span>
+                            </label>
+                        </div>
+
+                        {/* Despesas e deduções customizadas */}
+                        <div className="space-y-2">
+                            <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Despesas e Deduções</p>
                             {taxes.map(tax => (
                                 <div key={tax.id} className="p-3 bg-slate-50 rounded-2xl border border-slate-100 space-y-2 relative group">
-                                    <button onClick={() => handleRemoveTax(tax.id)} className="absolute -top-2 -right-2 bg-white border shadow-sm p-1 rounded-full text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button onClick={() => handleRemoveTax(tax.id)} className="absolute -top-2 -right-2 bg-white border shadow-sm p-1 rounded-full text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                                         <Minus size={12} />
                                     </button>
-                                    <input
-                                        type="text"
-                                        value={tax.name}
-                                        onChange={e => handleUpdateTax(tax.id, 'name', e.target.value)}
-                                        className="w-full bg-transparent border-b border-slate-200 font-bold text-xs outline-none focus:border-blue-500"
-                                        placeholder="Nome do Imposto"
-                                    />
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input type="checkbox" checked={tax.enabled !== false} onChange={e => handleUpdateTax(tax.id, 'enabled', e.target.checked)} className="rounded text-purple-600" />
+                                        <input
+                                            type="text"
+                                            value={tax.name}
+                                            onChange={e => handleUpdateTax(tax.id, 'name', e.target.value)}
+                                            className="flex-1 bg-transparent border-b border-slate-200 font-bold text-xs outline-none focus:border-blue-500"
+                                            placeholder="Nome da despesa"
+                                        />
+                                    </label>
+                                    <div>
+                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Categoria</label>
+                                        <select
+                                            value={tax.category || 'outro'}
+                                            onChange={e => handleUpdateTax(tax.id, 'category', e.target.value)}
+                                            className="w-full bg-white border rounded-lg text-[10px] font-black p-1"
+                                        >
+                                            <option value="imposto">Imposto Fiscal</option>
+                                            <option value="publicidade">Publicidade</option>
+                                            <option value="funcionarios">Funcionários</option>
+                                            <option value="insumos">Insumos</option>
+                                            <option value="outro">Outro</option>
+                                        </select>
+                                    </div>
                                     <div className="flex gap-2">
                                         <select
                                             value={tax.type}
@@ -358,11 +524,29 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                             className="flex-1 bg-white border rounded-lg p-1 text-xs font-black text-right outline-none"
                                         />
                                     </div>
+                                    <div>
+                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Base de Cálculo</label>
+                                        <select
+                                            value={tax.appliesTo || 'gross'}
+                                            onChange={e => handleUpdateTax(tax.id, 'appliesTo', e.target.value)}
+                                            className="w-full bg-white border rounded-lg text-[10px] font-black p-1"
+                                        >
+                                            <option value="gross">Bruto (total de vendas)</option>
+                                            <option value="after_fees">Bruto − Comissões</option>
+                                            <option value="after_ship">Bruto − Frete</option>
+                                            <option value="after_both">Bruto − Comissões − Frete</option>
+                                        </select>
+                                    </div>
                                 </div>
                             ))}
                             <button onClick={handleAddTax} className="w-full py-2 border-2 border-dashed border-slate-200 rounded-2xl text-[10px] font-black text-slate-400 uppercase hover:bg-slate-50 hover:border-blue-200 transition-all flex items-center justify-center gap-2">
-                                <Plus size={14} /> Adicionar Imposto
+                                <Plus size={14} /> Adicionar Despesa
                             </button>
+                            {taxesDirty && (
+                                <button onClick={handleSaveTaxes} className="w-full py-2.5 bg-emerald-600 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-emerald-100">
+                                    <Save size={14} /> Salvar Despesas
+                                </button>
+                            )}
                         </div>
                     </div>
 
@@ -394,7 +578,10 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                 <option value="ALL">Todos os Canais</option>
                                 <option value="ML">Mercado Livre</option>
                                 <option value="SHOPEE">Shopee</option>
-                                <option value="SITE">Site / Outros</option>
+                                <option value="SITE">TikTok Shop / Site</option>
+                                {(generalSettings.customStores || []).map(s => (
+                                    <option key={s.id} value={s.id}>{s.name}</option>
+                                ))}
                             </select>
                         </div>
                     </div>
@@ -418,32 +605,140 @@ const FinancePage: React.FC<FinancePageProps> = ({
 
                 {/* Dashboard Financeiro Principal */}
                 <div className="lg:col-span-3 space-y-6">
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                        <FinanceStatCard label="Faturamento Bruto (Pedidos)" value={fmt(stats.gross)} color="blue" sub={`${stats.units} unidades vendidas`} />
-                        <FinanceStatCard
-                            label="Deduções Marketplace"
-                            value={fmt(stats.fees + stats.shipping)}
-                            color="orange"
-                            breakdown={[
-                                { label: 'Comissões', value: fmt(stats.fees) },
-                                { label: 'Fretes Empresa', value: fmt(stats.shipping) }
-                            ]}
-                        />
-                        <FinanceStatCard
-                            label="Impostos (Cálculo Fiscal)"
-                            value={fmt(taxTotal)}
-                            color="purple"
-                            breakdown={taxBreakdown.map(t => ({ label: t.name, value: fmt(t.calculatedAmount) }))}
-                        />
-                        <FinanceStatCard
-                            label="Líquido Final"
-                            value={fmt(finalNetProfit)}
-                            color="emerald"
-                            highlight
-                            breakdown={[
-                                { label: 'Margem sobre bruto', value: fmtPct(margemPct), colorClass: margemPct >= 0 ? 'text-emerald-600' : 'text-red-600' }
-                            ]}
-                        />
+                    {/* Cards Personalizáveis */}
+                    <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Cards</span>
+                            {cardsDirty && (
+                                <button onClick={handleSaveCards} className="px-3 py-1 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all flex items-center gap-1 shadow-sm">
+                                    <Save size={10} /> Salvar
+                                </button>
+                            )}
+                        </div>
+                        <div className="flex bg-slate-200 p-0.5 rounded-lg">
+                            <button onClick={() => setCardColumns(3)} className={`px-2 py-1 text-[9px] font-black rounded-md transition-all ${cardColumns === 3 ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>3 cols</button>
+                            <button onClick={() => setCardColumns(4)} className={`px-2 py-1 text-[9px] font-black rounded-md transition-all ${cardColumns === 4 ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>4 cols</button>
+                        </div>
+                    </div>
+                    <div className={`grid grid-cols-1 md:grid-cols-2 ${cardColumns === 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-4`}>
+                        {financeCards.filter(c => c.enabled).map(card => {
+                            // Variáveis disponíveis para fórmulas
+                            const formulaVars: Record<string, number> = {
+                                gross: stats.gross, net: finalNetProfit, buyerTotal: stats.buyerTotal,
+                                fees: stats.fees, shipping: stats.shipping, customerPaid: stats.customerPaid,
+                                taxTotal, deductions: (deductPlatformFees ? stats.fees : 0) + (deductShipping ? stats.shipping : 0) + taxTotal,
+                                units: stats.units, totalPedidos, ticketMedio, margemPct
+                            };
+                            const evalFormula = (formula: string): number => {
+                                try {
+                                    const tokens = formula.trim().split(/\s+/);
+                                    let result = 0;
+                                    let op = '+';
+                                    for (const token of tokens) {
+                                        if (token === '+' || token === '-' || token === '*' || token === '/') { op = token; continue; }
+                                        const val = formulaVars[token] !== undefined ? formulaVars[token] : parseFloat(token);
+                                        if (isNaN(val)) continue;
+                                        if (op === '+') result += val;
+                                        else if (op === '-') result -= val;
+                                        else if (op === '*') result *= val;
+                                        else if (op === '/') result = val !== 0 ? result / val : result;
+                                    }
+                                    return result;
+                                } catch { return 0; }
+                            };
+
+                            const metricMap: Record<string, { value: string; sub?: string; highlight?: boolean; breakdown?: { label: string; value: string; colorClass?: string }[] }> = {
+                                gross: { value: fmt(stats.gross), sub: `${stats.units} un · ${totalPedidos} pedidos` },
+                                net: {
+                                    value: fmt(finalNetProfit), highlight: true,
+                                    breakdown: [
+                                        { label: 'Margem sobre bruto', value: fmtPct(margemPct), colorClass: margemPct >= 0 ? 'text-emerald-600' : 'text-red-600' },
+                                        ...(deductPlatformFees ? [{ label: 'Comissões', value: fmt(stats.fees) }] : []),
+                                        ...(deductShipping ? [{ label: 'Frete', value: fmt(stats.shipping) }] : []),
+                                        ...taxBreakdown.filter(t => t.enabled !== false).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) })),
+                                    ]
+                                },
+                                buyerTotal: { value: fmt(stats.buyerTotal), sub: 'Valor líquido recebido pelo comprador' },
+                                fees: { value: fmt(stats.fees), sub: 'Comissões da plataforma' },
+                                shipping: { value: fmt(stats.shipping), sub: 'Frete pago pela empresa' },
+                                customerPaid: { value: fmt(stats.customerPaid), sub: 'Frete pago pelo comprador' },
+                                taxTotal: {
+                                    value: fmt(taxTotal),
+                                    breakdown: taxBreakdown.filter(t => t.enabled !== false).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) }))
+                                },
+                                deductions: {
+                                    value: fmt((deductPlatformFees ? stats.fees : 0) + (deductShipping ? stats.shipping : 0) + taxTotal),
+                                    breakdown: [
+                                        ...(deductPlatformFees ? [{ label: 'Comissões Plataforma', value: fmt(stats.fees) }] : []),
+                                        ...(deductShipping ? [{ label: 'Frete Empresa', value: fmt(stats.shipping) }] : []),
+                                        ...taxBreakdown.filter(t => t.enabled !== false).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) })),
+                                    ]
+                                },
+                                units: { value: `${stats.units}`, sub: `${totalPedidos} pedidos` },
+                                totalPedidos: { value: `${totalPedidos}`, sub: `${stats.units} unidades` },
+                                ticketMedio: { value: fmt(ticketMedio), sub: 'Média por pedido' },
+                                margemPct: { value: fmtPct(margemPct), sub: 'Margem líquida sobre bruto' },
+                            };
+
+                            // Se metric=custom e há fórmula, calcula
+                            if (card.metric === 'custom' && card.customFormula) {
+                                const customVal = evalFormula(card.customFormula);
+                                metricMap['custom'] = { value: fmt(customVal), sub: card.customFormula };
+                            } else if (card.metric === 'custom') {
+                                metricMap['custom'] = { value: '-', sub: 'Configure a fórmula' };
+                            }
+
+                            const m = metricMap[card.metric] || { value: '-' };
+                            return (
+                                <div key={card.id} className="relative group">
+                                    <FinanceStatCard label={card.label} value={m.value} color={card.color} sub={m.sub} highlight={m.highlight} breakdown={m.breakdown} />
+                                    <button onClick={() => setEditingCardId(editingCardId === card.id ? null : card.id)} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white/80 p-1 rounded-lg shadow-sm z-10" title="Configurar card">
+                                        <Edit2 size={12} className="text-slate-500" />
+                                    </button>
+                                    <button onClick={() => handleRemoveCard(card.id)} className="absolute top-2 right-8 opacity-0 group-hover:opacity-100 transition-opacity bg-white/80 p-1 rounded-lg shadow-sm z-10" title="Remover card">
+                                        <X size={12} className="text-red-500" />
+                                    </button>
+                                    {editingCardId === card.id && (
+                                        <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg p-3 z-20 space-y-2">
+                                            <input type="text" value={card.label} onChange={e => handleUpdateCard(card.id, 'label', e.target.value)} className="w-full p-1.5 border rounded-lg text-xs font-bold outline-none" placeholder="Nome do card" />
+                                            <select value={card.metric} onChange={e => handleUpdateCard(card.id, 'metric', e.target.value)} className="w-full p-1.5 border rounded-lg text-xs font-bold">
+                                                <option value="gross">Faturado (Bruto)</option>
+                                                <option value="net">Líquido Final</option>
+                                                <option value="buyerTotal">Pago pelos Clientes</option>
+                                                <option value="fees">Comissões Plataforma</option>
+                                                <option value="shipping">Frete Empresa</option>
+                                                <option value="customerPaid">Frete Comprador</option>
+                                                <option value="taxTotal">Impostos/Despesas</option>
+                                                <option value="deductions">Total Deduções</option>
+                                                <option value="units">Unidades</option>
+                                                <option value="totalPedidos">Total Pedidos</option>
+                                                <option value="ticketMedio">Ticket Médio</option>
+                                                <option value="margemPct">Margem %</option>
+                                                <option value="custom">⚙️ Fórmula Personalizada</option>
+                                            </select>
+                                            {card.metric === 'custom' && (
+                                                <div>
+                                                    <input type="text" value={card.customFormula || ''} onChange={e => handleUpdateCard(card.id, 'customFormula', e.target.value)} className="w-full p-1.5 border rounded-lg text-xs font-mono outline-none" placeholder="gross - fees - shipping" />
+                                                    <p className="text-[8px] text-slate-400 mt-1">Variáveis: gross, net, fees, shipping, customerPaid, buyerTotal, taxTotal, deductions, units, totalPedidos, ticketMedio, margemPct</p>
+                                                </div>
+                                            )}
+                                            <select value={card.color} onChange={e => handleUpdateCard(card.id, 'color', e.target.value)} className="w-full p-1.5 border rounded-lg text-xs font-bold">
+                                                <option value="blue">Azul</option>
+                                                <option value="emerald">Verde</option>
+                                                <option value="purple">Roxo</option>
+                                                <option value="orange">Laranja</option>
+                                                <option value="red">Vermelho</option>
+                                                <option value="slate">Cinza</option>
+                                            </select>
+                                            <button onClick={() => setEditingCardId(null)} className="w-full py-1 text-[10px] font-bold text-blue-600 bg-blue-50 rounded-lg">Fechar</button>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                        <button onClick={handleAddCard} className="min-h-[120px] border-2 border-dashed border-slate-200 rounded-2xl flex items-center justify-center gap-2 text-slate-400 text-xs font-black uppercase hover:bg-slate-50 hover:border-blue-200 transition-all">
+                            <Plus size={16} /> Adicionar Card
+                        </button>
                     </div>
 
                     {/* Stats secundárias */}
@@ -462,35 +757,67 @@ const FinancePage: React.FC<FinancePageProps> = ({
                         </div>
                     </div>
 
-                    {/* Mini-gráfico de receita diária */}
-                    {dailyChart.length > 1 && (
-                        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
-                            <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest mb-4 flex items-center gap-2">
-                                <TrendingUp size={14} className="text-blue-500" /> Receita Bruta por Dia
-                            </h3>
-                            <div className="flex items-end gap-1 h-24">
-                                {(() => {
-                                    const maxVal = Math.max(...dailyChart.map(d => d.value), 1);
-                                    return dailyChart.map((d, i) => (
+                    {/* Mini-gráfico de receita diária com navegação */}
+                    {dailyChart.length > 0 && (() => {
+                        const totalPages = Math.ceil(dailyChart.length / CHART_WINDOW);
+                        const safePage = Math.min(chartPage, totalPages - 1);
+                        const startIdx = Math.max(0, dailyChart.length - CHART_WINDOW * (safePage + 1));
+                        const endIdx = dailyChart.length - CHART_WINDOW * safePage;
+                        const visibleChart = dailyChart.slice(startIdx, endIdx);
+                        const maxVal = Math.max(...visibleChart.map(d => d.value), 1);
+                        const periodLabel = visibleChart.length > 0
+                            ? `${new Date(visibleChart[0].date + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} – ${new Date(visibleChart[visibleChart.length - 1].date + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`
+                            : '';
+                        return (
+                            <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+                                <div className="flex items-center justify-between mb-4">
+                                    <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2">
+                                        <TrendingUp size={14} className="text-blue-500" /> Receita Bruta por Dia
+                                        <span className="text-[9px] font-normal text-slate-400 ml-1">{periodLabel}</span>
+                                    </h3>
+                                    <div className="flex items-center gap-1">
+                                        <button
+                                            onClick={() => setChartPage(p => Math.min(p + 1, totalPages - 1))}
+                                            disabled={safePage >= totalPages - 1}
+                                            className="p-1.5 rounded-lg border bg-slate-50 hover:bg-slate-100 disabled:opacity-30 transition-all"
+                                            title="Dias anteriores"
+                                        >
+                                            <ChevronLeft size={14} className="text-slate-600" />
+                                        </button>
+                                        <span className="text-[9px] font-black text-slate-400 px-1">{safePage + 1}/{totalPages}</span>
+                                        <button
+                                            onClick={() => setChartPage(p => Math.max(p - 1, 0))}
+                                            disabled={safePage <= 0}
+                                            className="p-1.5 rounded-lg border bg-slate-50 hover:bg-slate-100 disabled:opacity-30 transition-all"
+                                            title="Dias mais recentes"
+                                        >
+                                            <ChevronRight size={14} className="text-slate-600" />
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="flex items-end gap-1 h-28">
+                                    {visibleChart.map((d) => (
                                         <div key={d.date} className="flex-1 flex flex-col items-center gap-1 group relative" title={`${new Date(d.date + 'T12:00:00').toLocaleDateString('pt-BR')}: ${fmt(d.value)}`}>
                                             <div className="absolute -top-7 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[9px] font-bold px-1.5 py-0.5 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
                                                 {fmt(d.value)}
                                             </div>
                                             <div
-                                                className="w-full rounded-t-lg bg-blue-500 hover:bg-blue-600 transition-all"
-                                                style={{ height: `${Math.max(4, (d.value / maxVal) * 88)}px` }}
+                                                className="w-full rounded-t-lg bg-blue-500 hover:bg-blue-400 transition-all cursor-default"
+                                                style={{ height: `${Math.max(4, (d.value / maxVal) * 100)}px` }}
                                             />
-                                            {dailyChart.length <= 14 && (
-                                                <span className="text-[8px] text-slate-400 font-bold">
-                                                    {new Date(d.date + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
-                                                </span>
-                                            )}
+                                            <span className="text-[8px] text-slate-400 font-bold">
+                                                {new Date(d.date + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}
+                                            </span>
                                         </div>
-                                    ));
-                                })()}
+                                    ))}
+                                </div>
+                                <div className="mt-2 flex justify-between text-[9px] text-slate-400 font-bold border-t pt-2">
+                                    <span>Total no período: {fmt(visibleChart.reduce((s, d) => s + d.value, 0))}</span>
+                                    <span>Média/dia: {fmt(visibleChart.length ? visibleChart.reduce((s, d) => s + d.value, 0) / visibleChart.length : 0)}</span>
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        );
+                    })()}
 
                     {canalFilter === 'ALL' && (
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -509,6 +836,54 @@ const FinancePage: React.FC<FinancePageProps> = ({
                         </div>
                     )}
 
+                    {/* Gráfico de Lucratividade por Loja */}
+                    {Object.keys(storeProfitability).length > 0 && (
+                        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm">
+                            <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2 mb-4">
+                                <BarChart3 size={14} className="text-emerald-500" /> Lucratividade por Loja
+                            </h3>
+                            <div className="space-y-3">
+                                {Object.entries(storeProfitability).map(([store, data]) => {
+                                    const storeNet = data.gross - data.fees - data.shipping;
+                                    const storeMargin = data.gross > 0 ? (storeNet / data.gross) * 100 : 0;
+                                    const maxGross = Math.max(...Object.values(storeProfitability).map(d => d.gross), 1);
+                                    const barWidth = (data.gross / maxGross) * 100;
+                                    const storeColors: Record<string, string> = { ML: 'bg-yellow-500', SHOPEE: 'bg-orange-500', SITE: 'bg-blue-500' };
+                                    const storeColor = storeColors[store] || 'bg-purple-500';
+                                    const storeNames: Record<string, string> = { ML: 'Mercado Livre', SHOPEE: 'Shopee', SITE: 'Site / Outros' };
+                                    const customStore = (generalSettings.customStores || []).find(s => s.id === store);
+                                    const storeName = storeNames[store] || customStore?.name || store;
+                                    return (
+                                        <div key={store} className="space-y-1">
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-[10px] font-black text-slate-700 uppercase">{storeName}</span>
+                                                <div className="flex items-center gap-3 text-[10px]">
+                                                    <span className="font-bold text-slate-500">Bruto: {fmt(data.gross)}</span>
+                                                    <span className="font-bold text-orange-600">Taxas: {fmt(data.fees)}</span>
+                                                    <span className="font-bold text-blue-600">Frete: {fmt(data.shipping)}</span>
+                                                    <span className={`font-black ${storeNet >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>Líq: {fmt(storeNet)}</span>
+                                                    <span className={`font-black px-1.5 py-0.5 rounded ${storeMargin >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>{fmtPct(storeMargin)}</span>
+                                                </div>
+                                            </div>
+                                            <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+                                                <div className="h-full flex rounded-full overflow-hidden" style={{ width: `${barWidth}%` }}>
+                                                    <div className={`${storeColor} opacity-80`} style={{ width: `${data.gross > 0 ? ((data.gross - data.fees - data.shipping) / data.gross) * 100 : 0}%` }} />
+                                                    <div className="bg-orange-300" style={{ width: `${data.gross > 0 ? (data.fees / data.gross) * 100 : 0}%` }} />
+                                                    <div className="bg-blue-300" style={{ width: `${data.gross > 0 ? (data.shipping / data.gross) * 100 : 0}%` }} />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                            <div className="flex gap-4 mt-3 pt-2 border-t border-slate-100">
+                                <span className="flex items-center gap-1 text-[9px] font-bold text-slate-400"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" /> Líquido</span>
+                                <span className="flex items-center gap-1 text-[9px] font-bold text-slate-400"><span className="w-2 h-2 rounded-full bg-orange-300 inline-block" /> Comissões</span>
+                                <span className="flex items-center gap-1 text-[9px] font-bold text-slate-400"><span className="w-2 h-2 rounded-full bg-blue-300 inline-block" /> Frete</span>
+                            </div>
+                        </div>
+                    )}
+
                     <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden">
                         <div className="p-6 border-b flex justify-between items-center bg-slate-50/50">
                             <h3 className="font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
@@ -523,30 +898,40 @@ const FinancePage: React.FC<FinancePageProps> = ({
                             <table className="min-w-full text-sm">
                                 <thead className="bg-slate-900 text-white text-[10px] font-black uppercase">
                                     <tr>
-                                        <th className="px-6 py-4 text-left">Pos</th>
-                                        <th className="px-6 py-4 text-left">Produto Mestre</th>
-                                        <th className="px-6 py-4 text-center">Unidades</th>
-                                        <th className="px-6 py-4 text-right">Bruto Acordado</th>
-                                        <th className="px-6 py-4 text-right">% de Peso</th>
+                                        <th className="px-4 py-4 text-left">Pos</th>
+                                        <th className="px-4 py-4 text-left">Produto Mestre</th>
+                                        <th className="px-4 py-4 text-center">Unid.</th>
+                                        <th className="px-4 py-4 text-right">Bruto Acordado</th>
+                                        <th className="px-4 py-4 text-right">Comissão Aprox.</th>
+                                        <th className="px-4 py-4 text-right">Pago pelo Comprador</th>
+                                        <th className="px-4 py-4 text-right">% Peso</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-50 font-bold text-slate-600">
-                                    {stats.ranking.slice(0, 30).map((item, idx) => (
-                                        <tr key={item.code} className="hover:bg-slate-50 transition-colors">
-                                            <td className="px-6 py-4 text-xs text-slate-400">#{idx + 1}</td>
-                                            <td className="px-6 py-4">
-                                                <p className="text-slate-800 uppercase leading-tight">{item.name}</p>
-                                                <p className="text-[9px] font-mono text-slate-400">{item.code}</p>
-                                            </td>
-                                            <td className="px-6 py-4 text-center">{item.qty}</td>
-                                            <td className="px-6 py-4 text-right font-black text-slate-800">{fmt(item.revenue)}</td>
-                                            <td className="px-6 py-4 text-right">
-                                                <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-2 py-0.5 rounded">
-                                                    {((item.revenue / (stats.gross || 1)) * 100).toFixed(1)}%
-                                                </span>
-                                            </td>
-                                        </tr>
-                                    ))}
+                                    {stats.ranking.slice(0, 30).map((item: any, idx: number) => {
+                                        const link = skuLinks.find(l => l.importedSku === item.code);
+                                        const masterSku = link ? link.masterProductSku : item.code;
+                                        const product = stockItems.find(s => s.code === masterSku);
+                                        const displayName = product ? product.name : (link ? masterSku : item.name);
+                                        return (
+                                            <tr key={item.code} className="hover:bg-slate-50 transition-colors">
+                                                <td className="px-4 py-3 text-xs text-slate-400">#{idx + 1}</td>
+                                                <td className="px-4 py-3">
+                                                    <p className="text-slate-800 uppercase leading-tight text-xs">{displayName}</p>
+                                                    <p className="text-[9px] font-mono text-slate-400">{item.code}{link ? ` → ${masterSku}` : ''}</p>
+                                                </td>
+                                                <td className="px-4 py-3 text-center text-xs">{item.qty}</td>
+                                                <td className="px-4 py-3 text-right font-black text-slate-800 text-xs">{fmt(item.revenue)}</td>
+                                                <td className="px-4 py-3 text-right text-xs text-orange-600 font-bold">{fmt(item.commissions || 0)}</td>
+                                                <td className="px-4 py-3 text-right text-xs text-purple-600 font-bold">{fmt(item.buyerPaid || 0)}</td>
+                                                <td className="px-4 py-3 text-right">
+                                                    <span className="text-[10px] font-black bg-blue-50 text-blue-600 px-2 py-0.5 rounded">
+                                                        {((item.revenue / (stats.gross || 1)) * 100).toFixed(1)}%
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
                                 </tbody>
                             </table>
                         </div>

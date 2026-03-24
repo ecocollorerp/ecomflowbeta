@@ -4,6 +4,7 @@ import { User, StockItem, StockMovement, OrderItem, SkuLink, ProcessedData, Resu
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
+import PptxGenJS from 'pptxgenjs';
 
 export type Tab = 'vinculo' | 'completa' | 'resumida' | 'totais' | 'materiais';
 
@@ -195,93 +196,445 @@ export const exportPdf = (
     doc.save(`importacao_${data.canal}_${activeTab}${operatorName ? `_${operatorName}` : ''}.pdf`);
 };
 
-export const exportFinanceReport = async (payload: { period: string, canal: string, stats: any, materialList: MaterialItem[], orders: OrderItem[], taxes?: any[] }) => {
+export const exportFinanceReport = async (payload: { period: string, canal: string, stats: any, materialList: MaterialItem[], orders: OrderItem[], taxes?: any[], dailyChart?: { date: string, value: number }[], canalComparison?: { ml: number, shopee: number, site: number }, deductPlatformFees?: boolean, deductShipping?: boolean, showCustomerPaid?: boolean }) => {
     const doc = new jsPDF();
     const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+    const pageW = doc.internal.pageSize.getWidth();
+    const marginL = 14;
+    const marginR = 14;
+    const usableW = pageW - marginL - marginR;
 
-    doc.setFontSize(22);
+    const getY = () => (doc as any).lastAutoTable?.finalY || 30;
+    const ensureSpace = (needed: number) => {
+        if (getY() + needed > doc.internal.pageSize.getHeight() - 20) {
+            doc.addPage();
+            return 20;
+        }
+        return getY() + 12;
+    };
+
+    doc.setFontSize(18);
     doc.setFont('helvetica', 'bold');
-    doc.text('Relatório Financeiro Estratégico', 14, 20);
+    doc.text('Relatório Financeiro Estratégico', marginL, 20);
     
-    doc.setFontSize(10);
+    doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Período: ${payload.period} | Canal: ${payload.canal} | Gerado em: ${new Date().toLocaleString()}`, 14, 28);
+    doc.text(`Período: ${payload.period} | Canal: ${payload.canal} | Gerado em: ${new Date().toLocaleString()}`, marginL, 27);
 
     // 1. Sumário Executivo
-    doc.setFontSize(14);
+    let secY = 34;
+    doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
-    doc.text('1. Sumário Executivo', 14, 40);
+    doc.text('1. Sumário Executivo', marginL, secY);
     
-    const taxTotal = payload.taxes?.reduce((s: any, t: any) => s + t.calculatedAmount, 0) || 0;
+    const enabledTaxes = payload.taxes?.filter((t: any) => t.enabled !== false) || [];
+    const taxTotal = enabledTaxes.reduce((s: any, t: any) => s + t.calculatedAmount, 0) || 0;
+    const feesDeducted = payload.deductPlatformFees !== false ? payload.stats.fees : 0;
+    const shippingDeducted = payload.deductShipping !== false ? payload.stats.shipping : 0;
+    const totalDeductions = feesDeducted + shippingDeducted + taxTotal;
+    const netFinal = payload.stats.gross - totalDeductions;
+
+    const summaryBody: any[][] = [
+        ['Faturamento Bruto', fmt(payload.stats.gross)],
+    ];
+    if (payload.deductPlatformFees !== false) {
+        summaryBody.push(['(-) Comissões Plataforma', fmt(payload.stats.fees)]);
+    }
+    if (payload.deductShipping !== false) {
+        summaryBody.push(['(-) Frete / Taxa de Envio', fmt(payload.stats.shipping)]);
+    }
+    enabledTaxes.forEach((t: any) => {
+        summaryBody.push([`(-) ${t.name}`, fmt(t.calculatedAmount)]);
+    });
+    summaryBody.push(['(=) Líquido Final', fmt(netFinal)]);
+    summaryBody.push(['Total de Unidades Vendidas', String(payload.stats.units)]);
+    summaryBody.push(['Total de Pedidos Processados', String(payload.orders.length)]);
+    if (payload.showCustomerPaid && payload.stats.customerPaid) {
+        summaryBody.push(['ℹ Total Pago pelos Clientes (informativo)', fmt(payload.stats.customerPaid)]);
+    }
 
     autoTable(doc, {
-        startY: 45,
+        startY: secY + 4,
         head: [['Indicador', 'Valor']],
-        body: [
-            ['Faturamento Bruto', fmt(payload.stats.gross)],
-            ['(-) Taxas Marketplace (Comissões/Fretes)', fmt(payload.stats.fees + payload.stats.shipping)],
-            ['(-) Impostos Governamentais', fmt(taxTotal)],
-            ['(=) Resultado Líquido Final', fmt(payload.stats.net - taxTotal)],
-            ['Total de Unidades Vendidas', payload.stats.units],
-            ['Total de Pedidos Processados', payload.orders.length],
-        ],
+        body: summaryBody,
         theme: 'striped',
-        headStyles: { fillColor: '#059669' }
+        headStyles: { fillColor: '#059669', fontSize: 8 },
+        styles: { fontSize: 8, cellPadding: 3 },
+        margin: { left: marginL, right: marginR },
     });
 
-    // 2. Detalhamento de Impostos (NOVO)
-    if (payload.taxes && payload.taxes.length > 0) {
-        doc.setFontSize(14);
+    // 2. Detalhamento de Impostos
+    if (enabledTaxes.length > 0) {
+        secY = ensureSpace(40);
+        doc.setFontSize(12);
         doc.setFont('helvetica', 'bold');
-        doc.text('2. Detalhamento de Impostos Configurados', 14, (doc as any).lastAutoTable.finalY + 15);
+        doc.text('2. Detalhamento de Impostos', marginL, secY);
 
         autoTable(doc, {
-            startY: (doc as any).lastAutoTable.finalY + 20,
+            startY: secY + 4,
             head: [['Imposto', 'Tipo', 'Valor Base', 'Total Deduzido']],
-            body: payload.taxes.map((t: any) => [
+            body: enabledTaxes.map((t: any) => [
                 t.name,
                 t.type === 'percent' ? 'Porcentagem' : 'Fixo',
                 t.type === 'percent' ? `${t.value}%` : fmt(t.value),
                 fmt(t.calculatedAmount)
             ]),
             theme: 'grid',
-            headStyles: { fillColor: '#8b5cf6' }
+            headStyles: { fillColor: '#8b5cf6', fontSize: 8 },
+            styles: { fontSize: 8, cellPadding: 3 },
+            margin: { left: marginL, right: marginR },
         });
     }
 
     // 3. Ranking de Produtos
-    doc.setFontSize(14);
+    secY = ensureSpace(50);
+    doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
-    doc.text('3. Performance de Vendas por SKU', 14, (doc as any).lastAutoTable.finalY + 15);
+    doc.text('3. Performance de Vendas por SKU', marginL, secY);
     
     autoTable(doc, {
-        startY: (doc as any).lastAutoTable.finalY + 20,
-        head: [['SKU', 'Produto', 'Qtd. Vendida (Total)', 'Receita Bruta', '% Participação']],
+        startY: secY + 4,
+        head: [['SKU', 'Produto', 'Qtd.', 'Receita', '% Part.']],
         body: payload.stats.ranking.slice(0, 30).map((item: any) => [
             item.code,
-            item.name,
-            item.qty, // Quantidade Total Vendida
+            (item.name || '').substring(0, 35),
+            item.qty,
             fmt(item.revenue),
             `${((item.revenue / (payload.stats.gross || 1)) * 100).toFixed(1)}%`
         ]),
         theme: 'grid',
-        styles: { fontSize: 8 }
+        styles: { fontSize: 7, cellPadding: 2 },
+        headStyles: { fontSize: 7 },
+        margin: { left: marginL, right: marginR },
+        columnStyles: {
+            0: { cellWidth: 30 },
+            1: { cellWidth: 'auto' },
+            2: { cellWidth: 15, halign: 'center' },
+            3: { cellWidth: 30, halign: 'right' },
+            4: { cellWidth: 18, halign: 'center' },
+        }
     });
 
     // 4. Insumos Consumidos
-    doc.setFontSize(14);
-    doc.setFont('helvetica', 'bold');
-    doc.text('4. Insumos Necessários para esta Produção', 14, (doc as any).lastAutoTable.finalY + 15);
-    
-    autoTable(doc, {
-        startY: (doc as any).lastAutoTable.finalY + 20,
-        head: [['Material', 'Quantidade Estimada', 'Unidade']],
-        body: payload.materialList.map((m: any) => [m.name, m.quantity.toFixed(3), m.unit]),
-        theme: 'striped',
-        headStyles: { fillColor: '#3b82f6' }
-    });
+    if (payload.materialList && payload.materialList.length > 0) {
+        secY = ensureSpace(40);
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.text('4. Insumos Necessários para esta Produção', marginL, secY);
+        
+        autoTable(doc, {
+            startY: secY + 4,
+            head: [['Material', 'Quantidade Estimada', 'Unidade']],
+            body: payload.materialList.map((m: any) => [m.name, m.quantity.toFixed(3), m.unit]),
+            theme: 'striped',
+            headStyles: { fillColor: '#3b82f6', fontSize: 8 },
+            styles: { fontSize: 8, cellPadding: 3 },
+            margin: { left: marginL, right: marginR },
+        });
+    }
+
+    // 5. Gráfico de Faturamento Diário
+    if (payload.dailyChart && payload.dailyChart.length > 0) {
+        doc.addPage();
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.text('5. Gráfico de Faturamento Diário', marginL, 20);
+
+        const chartData = payload.dailyChart;
+        const maxVal = Math.max(...chartData.map(d => d.value), 1);
+        const chartX = marginL + 6;
+        const chartY = 30;
+        const chartW = usableW - 6;
+        const chartH = 70;
+        const barCount = chartData.length;
+        const barGap = Math.max(1, Math.min(2, (chartW / barCount) * 0.1));
+        const barW = Math.min(Math.max((chartW - barGap * barCount) / barCount, 2), 18);
+        const totalBarsW = barCount * (barW + barGap);
+        const offsetX = chartX + (chartW - totalBarsW) / 2;
+
+        // Eixos
+        doc.setDrawColor(200, 200, 200);
+        doc.setLineWidth(0.3);
+        doc.line(chartX, chartY + chartH, chartX + chartW, chartY + chartH);
+        doc.line(chartX, chartY, chartX, chartY + chartH);
+
+        // Grid horizontal
+        for (let i = 0; i <= 4; i++) {
+            const yLine = chartY + chartH - (chartH * (i / 4));
+            doc.setDrawColor(235, 235, 235);
+            doc.line(chartX, yLine, chartX + chartW, yLine);
+            doc.setFontSize(5);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(140, 140, 140);
+            doc.text(fmt(maxVal * (i / 4)), chartX - 1, yLine + 1, { align: 'right' });
+        }
+        doc.setTextColor(0, 0, 0);
+
+        // Barras
+        chartData.forEach((d, i) => {
+            const barH = (d.value / maxVal) * chartH;
+            const x = offsetX + i * (barW + barGap);
+            const y = chartY + chartH - barH;
+            doc.setFillColor(59, 130, 246);
+            doc.rect(x, y, barW, barH, 'F');
+
+            if (barCount <= 31) {
+                doc.setFontSize(4.5);
+                doc.setFont('helvetica', 'normal');
+                const label = d.date.slice(5);
+                doc.text(label, x + barW / 2, chartY + chartH + 3.5, { align: 'center' });
+            }
+        });
+
+        doc.setFontSize(7);
+        doc.setFont('helvetica', 'normal');
+        const totalDC = chartData.reduce((s, d) => s + d.value, 0);
+        doc.text(`Total: ${fmt(totalDC)} | Média/dia: ${fmt(totalDC / chartData.length)}`, chartX, chartY + chartH + 10);
+
+        // 6. Comparativo por Canal
+        if (payload.canalComparison) {
+            const comp = payload.canalComparison;
+            const channels = [
+                { name: 'Mercado Livre', value: comp.ml, color: [255, 230, 0] as [number, number, number] },
+                { name: 'Shopee', value: comp.shopee, color: [238, 77, 45] as [number, number, number] },
+                { name: 'TikTok/Site', value: comp.site, color: [0, 0, 0] as [number, number, number] },
+            ].filter(c => c.value > 0);
+
+            if (channels.length > 0) {
+                const cY = chartY + chartH + 20;
+                doc.setFontSize(12);
+                doc.setFont('helvetica', 'bold');
+                doc.text('6. Comparativo por Canal de Venda', marginL, cY);
+
+                const cMaxVal = Math.max(...channels.map(c => c.value), 1);
+                const cBarH = 14;
+                const cBarGap = 6;
+
+                channels.forEach((ch, i) => {
+                    const y = cY + 8 + i * (cBarH + cBarGap);
+                    const w = (ch.value / cMaxVal) * (usableW - 80);
+
+                    doc.setFillColor(ch.color[0], ch.color[1], ch.color[2]);
+                    doc.rect(55, y, Math.max(w, 2), cBarH, 'F');
+
+                    doc.setFontSize(8);
+                    doc.setFont('helvetica', 'bold');
+                    doc.setTextColor(0, 0, 0);
+                    doc.text(ch.name, 53, y + cBarH / 2 + 2, { align: 'right' });
+
+                    doc.setFontSize(7);
+                    doc.setFont('helvetica', 'normal');
+                    const totalAll = channels.reduce((s, c) => s + c.value, 0);
+                    const pct = totalAll > 0 ? ((ch.value / totalAll) * 100).toFixed(1) : '0.0';
+                    doc.text(`${fmt(ch.value)} (${pct}%)`, 57 + Math.max(w, 2), y + cBarH / 2 + 2);
+                });
+            }
+        }
+
+        // 7. Top 10 SKUs (horizontal bars)
+        if (payload.stats.ranking && payload.stats.ranking.length > 0) {
+            doc.addPage();
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'bold');
+            doc.text('7. Top 10 Produtos por Faturamento', marginL, 20);
+
+            const top10 = payload.stats.ranking.slice(0, 10);
+            const skuMaxVal = Math.max(...top10.map((r: any) => r.revenue), 1);
+            const sBarH = 10;
+            const sBarGap = 4;
+            const sY = 28;
+            const labelW = 55;
+            const barsAreaW = usableW - labelW - 50;
+
+            top10.forEach((item: any, i: number) => {
+                const y = sY + i * (sBarH + sBarGap);
+                const w = (item.revenue / skuMaxVal) * barsAreaW;
+
+                doc.setFillColor(229, 231, 235);
+                doc.rect(marginL + labelW, y, barsAreaW, sBarH, 'F');
+                doc.setFillColor(16, 185, 129);
+                doc.rect(marginL + labelW, y, Math.max(w, 1), sBarH, 'F');
+
+                doc.setFontSize(6);
+                doc.setFont('helvetica', 'bold');
+                doc.setTextColor(0, 0, 0);
+                const label = (item.name || item.code).substring(0, 30);
+                doc.text(label, marginL + labelW - 2, y + sBarH / 2 + 1.5, { align: 'right' });
+
+                doc.setFontSize(6);
+                doc.setFont('helvetica', 'normal');
+                doc.text(`${fmt(item.revenue)} (${item.qty} un.)`, marginL + labelW + barsAreaW + 2, y + sBarH / 2 + 1.5);
+            });
+        }
+    }
 
     doc.save(`financeiro_detalhado_${payload.canal}_${new Date().toISOString().split('T')[0]}.pdf`);
+};
+
+export const exportFinancePptx = async (payload: { period: string, canal: string, stats: any, materialList: MaterialItem[], orders: OrderItem[], taxes?: any[], dailyChart?: { date: string, value: number }[], canalComparison?: { ml: number, shopee: number, site: number }, deductPlatformFees?: boolean, deductShipping?: boolean, showCustomerPaid?: boolean }) => {
+    const pptx = new PptxGenJS();
+    pptx.author = 'EcomFlow';
+    pptx.title = `Relatório Financeiro - ${payload.canal}`;
+    const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+    const GREEN = '059669';
+    const BLUE = '3b82f6';
+    const PURPLE = '8b5cf6';
+
+    const enabledTaxes = payload.taxes?.filter((t: any) => t.enabled !== false) || [];
+    const taxTotal = enabledTaxes.reduce((s: any, t: any) => s + (t.calculatedAmount || 0), 0);
+    const feesDeducted = payload.deductPlatformFees !== false ? payload.stats.fees : 0;
+    const shippingDeducted = payload.deductShipping !== false ? payload.stats.shipping : 0;
+    const totalDeductions = feesDeducted + shippingDeducted + taxTotal;
+    const netFinal = payload.stats.gross - totalDeductions;
+
+    // Slide 1 — Capa
+    const s1 = pptx.addSlide();
+    s1.addText('Relatório Financeiro', { x: 0.5, y: 1.2, w: 9, h: 1, fontSize: 32, bold: true, color: '1f2937', fontFace: 'Arial' });
+    s1.addText(`${payload.canal} — ${payload.period}`, { x: 0.5, y: 2.2, w: 9, h: 0.6, fontSize: 18, color: '6b7280', fontFace: 'Arial' });
+    s1.addText(`Gerado em ${new Date().toLocaleString('pt-BR')}`, { x: 0.5, y: 4.5, w: 9, h: 0.4, fontSize: 10, color: '9ca3af', fontFace: 'Arial' });
+
+    // Slide 2 — Sumário KPIs
+    const s2 = pptx.addSlide();
+    s2.addText('Sumário Executivo', { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, color: '1f2937' });
+
+    const kpis: { label: string; value: string; color: string }[] = [
+        { label: 'Faturamento Bruto', value: fmt(payload.stats.gross), color: BLUE },
+        { label: 'Taxas Deduzidas', value: fmt(totalDeductions), color: 'ef4444' },
+        { label: 'Líquido Final', value: fmt(netFinal), color: GREEN },
+    ];
+    kpis.forEach((k, i) => {
+        const x = 0.5 + i * 3.1;
+        s2.addShape(pptx.ShapeType.roundRect, { x, y: 1.2, w: 2.8, h: 1.4, fill: { color: 'f9fafb' }, line: { color: k.color, width: 1.5 }, rectRadius: 0.1 });
+        s2.addText(k.label, { x, y: 1.3, w: 2.8, h: 0.4, fontSize: 10, color: '6b7280', align: 'center' });
+        s2.addText(k.value, { x, y: 1.7, w: 2.8, h: 0.7, fontSize: 18, bold: true, color: k.color, align: 'center' });
+    });
+
+    // Tabela de deduções
+    const rows: PptxGenJS.TableRow[] = [
+        [{ text: 'Indicador', options: { bold: true, color: 'ffffff', fill: { color: GREEN } } }, { text: 'Valor', options: { bold: true, color: 'ffffff', fill: { color: GREEN } } }],
+        [{ text: 'Faturamento Bruto' }, { text: fmt(payload.stats.gross) }],
+    ];
+    if (payload.deductPlatformFees !== false) rows.push([{ text: '(-) Comissões' }, { text: fmt(payload.stats.fees) }]);
+    if (payload.deductShipping !== false) rows.push([{ text: '(-) Frete' }, { text: fmt(payload.stats.shipping) }]);
+    enabledTaxes.forEach((t: any) => rows.push([{ text: `(-) ${t.name}` }, { text: fmt(t.calculatedAmount) }]));
+    rows.push([{ text: '(=) Líquido Final', options: { bold: true } }, { text: fmt(netFinal), options: { bold: true } }]);
+    rows.push([{ text: 'Unidades Vendidas' }, { text: String(payload.stats.units) }]);
+    rows.push([{ text: 'Pedidos Processados' }, { text: String(payload.orders.length) }]);
+    if (payload.showCustomerPaid && payload.stats.customerPaid) {
+        rows.push([{ text: 'Total Pago Clientes (info)' }, { text: fmt(payload.stats.customerPaid) }]);
+    }
+
+    s2.addTable(rows, { x: 0.5, y: 3, w: 9, fontSize: 10, border: { type: 'solid', pt: 0.5, color: 'e5e7eb' }, colW: [5, 4], autoPage: true });
+
+    // Slide 3 — Ranking de Produtos
+    const s3 = pptx.addSlide();
+    s3.addText('Performance por SKU (Top 15)', { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, color: '1f2937' });
+
+    const rankRows: PptxGenJS.TableRow[] = [
+        [
+            { text: 'SKU', options: { bold: true, color: 'ffffff', fill: { color: '1f2937' } } },
+            { text: 'Produto', options: { bold: true, color: 'ffffff', fill: { color: '1f2937' } } },
+            { text: 'Qtd.', options: { bold: true, color: 'ffffff', fill: { color: '1f2937' } } },
+            { text: 'Receita', options: { bold: true, color: 'ffffff', fill: { color: '1f2937' } } },
+            { text: '%', options: { bold: true, color: 'ffffff', fill: { color: '1f2937' } } },
+        ]
+    ];
+    (payload.stats.ranking || []).slice(0, 15).forEach((item: any) => {
+        rankRows.push([
+            { text: item.code },
+            { text: (item.name || '').substring(0, 35) },
+            { text: String(item.qty) },
+            { text: fmt(item.revenue) },
+            { text: `${((item.revenue / (payload.stats.gross || 1)) * 100).toFixed(1)}%` },
+        ]);
+    });
+
+    s3.addTable(rankRows, { x: 0.5, y: 1, w: 9, fontSize: 8, border: { type: 'solid', pt: 0.5, color: 'e5e7eb' }, colW: [1.5, 3.5, 0.8, 1.8, 0.8], autoPage: true, autoPageRepeatHeader: true });
+
+    // Slide 4 — Gráfico Faturamento Diário
+    if (payload.dailyChart && payload.dailyChart.length > 0) {
+        const s4 = pptx.addSlide();
+        s4.addText('Faturamento Diário', { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, color: '1f2937' });
+
+        const chartDataObj = [{
+            name: 'Faturamento',
+            labels: payload.dailyChart.map(d => d.date.slice(5)),
+            values: payload.dailyChart.map(d => d.value),
+        }];
+
+        s4.addChart(pptx.ChartType.bar, chartDataObj, {
+            x: 0.5, y: 1, w: 9, h: 4,
+            showValue: false,
+            catAxisLabelFontSize: 7,
+            valAxisLabelFontSize: 8,
+            chartColors: [BLUE],
+            barDir: 'bar',
+            catAxisOrientation: 'minMax',
+            valAxisOrientation: 'minMax',
+        });
+
+        const totalDC = payload.dailyChart.reduce((s, d) => s + d.value, 0);
+        s4.addText(`Total: ${fmt(totalDC)} | Média/dia: ${fmt(totalDC / payload.dailyChart.length)}`, { x: 0.5, y: 5.1, w: 9, h: 0.3, fontSize: 9, color: '6b7280' });
+    }
+
+    // Slide 5 — Comparativo por Canal
+    if (payload.canalComparison) {
+        const comp = payload.canalComparison;
+        const channels = [
+            { name: 'Mercado Livre', value: comp.ml },
+            { name: 'Shopee', value: comp.shopee },
+            { name: 'TikTok/Site', value: comp.site },
+        ].filter(c => c.value > 0);
+
+        if (channels.length > 0) {
+            const s5 = pptx.addSlide();
+            s5.addText('Comparativo por Canal', { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, color: '1f2937' });
+
+            const pieData = [{
+                name: 'Canal',
+                labels: channels.map(c => c.name),
+                values: channels.map(c => c.value),
+            }];
+
+            s5.addChart(pptx.ChartType.pie, pieData, {
+                x: 1, y: 1.2, w: 4, h: 3.5,
+                showPercent: true,
+                showLegend: true,
+                legendPos: 'b',
+                chartColors: ['FFE600', 'EE4D2D', '111111'],
+            });
+
+            const cRows: PptxGenJS.TableRow[] = [
+                [{ text: 'Canal', options: { bold: true, color: 'ffffff', fill: { color: GREEN } } }, { text: 'Valor', options: { bold: true, color: 'ffffff', fill: { color: GREEN } } }, { text: '%', options: { bold: true, color: 'ffffff', fill: { color: GREEN } } }],
+            ];
+            const totalVal = channels.reduce((s, c) => s + c.value, 0);
+            channels.forEach(c => cRows.push([{ text: c.name }, { text: fmt(c.value) }, { text: `${((c.value / totalVal) * 100).toFixed(1)}%` }]));
+            s5.addTable(cRows, { x: 5.5, y: 1.5, w: 4, fontSize: 10, border: { type: 'solid', pt: 0.5, color: 'e5e7eb' }, colW: [1.8, 1.4, 0.8] });
+        }
+    }
+
+    // Slide 6 — Impostos
+    if (enabledTaxes.length > 0) {
+        const s6 = pptx.addSlide();
+        s6.addText('Detalhamento de Impostos', { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, color: '1f2937' });
+        const tRows: PptxGenJS.TableRow[] = [
+            [
+                { text: 'Imposto', options: { bold: true, color: 'ffffff', fill: { color: PURPLE } } },
+                { text: 'Tipo', options: { bold: true, color: 'ffffff', fill: { color: PURPLE } } },
+                { text: 'Valor', options: { bold: true, color: 'ffffff', fill: { color: PURPLE } } },
+                { text: 'Total Deduzido', options: { bold: true, color: 'ffffff', fill: { color: PURPLE } } },
+            ]
+        ];
+        enabledTaxes.forEach((t: any) => tRows.push([
+            { text: t.name },
+            { text: t.type === 'percent' ? 'Porcentagem' : 'Fixo' },
+            { text: t.type === 'percent' ? `${t.value}%` : fmt(t.value) },
+            { text: fmt(t.calculatedAmount) },
+        ]));
+        s6.addTable(tRows, { x: 0.5, y: 1.2, w: 9, fontSize: 10, border: { type: 'solid', pt: 0.5, color: 'e5e7eb' }, colW: [3, 2, 2, 2] });
+    }
+
+    await pptx.writeFile({ fileName: `financeiro_${payload.canal}_${new Date().toISOString().split('T')[0]}.pptx` });
 };
 
 export const exportProductionPlanToPdf = (planItems: any[], params: any) => {

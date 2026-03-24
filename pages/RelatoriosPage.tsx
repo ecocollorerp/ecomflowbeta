@@ -731,6 +731,18 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
         });
         data['bipagem/por-operador'] = Array.from(operatorStats.values());
 
+        const deviceStats = new Map<string, { id: string, name: string, total: number, ok: number, duplicate: number, not_found: number }>();
+        scansNoPeriodo.forEach(s => {
+            const dev = s.device || 'Desconhecido';
+            if (!deviceStats.has(dev)) deviceStats.set(dev, { id: dev, name: dev, total: 0, ok: 0, duplicate: 0, not_found: 0 });
+            const stats = deviceStats.get(dev)!;
+            stats.total++;
+            if (s.status === 'OK' || s.synced) stats.ok++;
+            else if (s.status === 'DUPLICATE') stats.duplicate++;
+            else if (s.status === 'NOT_FOUND') stats.not_found++;
+        });
+        data['bipagem/por-dispositivo'] = Array.from(deviceStats.values());
+
         // --- ENSACAMENTO ---
         const weighingBatchesNoPeriodo = weighingBatches.filter(b => dateFilter(b.createdAt) && operatorFilter(b));
         const totaisEnsacamentoMap = new Map<string, { userId: string, userName: string, itemCode: string, itemName: string, total: number, count: number }>();
@@ -838,6 +850,11 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
                 headers = ['Código Insumo/Material', 'Nome', 'Quantidade Total Gasta'];
                 body = (data as { itemCode: string, itemName: string, qtyUsada: number }[]).map(d => [d.itemCode, d.itemName, d.qtyUsada.toFixed(2)]);
                 break;
+            case 'bipagem/por-operador':
+            case 'bipagem/por-dispositivo':
+                headers = [reportId === 'bipagem/por-dispositivo' ? 'Dispositivo' : 'Operador', 'Total Bipagens', 'Sucesso', 'Duplicados', 'Não Encontrados'];
+                body = (data as { name: string, total: number, ok: number, duplicate: number, not_found: number }[]).map(d => [d.name, d.total, d.ok, d.duplicate, d.not_found]);
+                break;
             case 'ensacamento/totais':
                 headers = ['Operador', 'Insumo', 'Total Ensacado (kg)', 'Nº de Lotes'];
                 body = (data as { userName: string, itemName: string, total: number, count: number }[]).map(d => [d.userName, d.itemName, d.total.toFixed(3), d.count]);
@@ -870,6 +887,7 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
             case 'pedidos/com-erro': return <PedidosReport orders={data} generalSettings={generalSettings} />;
             case 'pedidos/devolucoes': return <DevolucoesReport returns={data} />;
             case 'bipagem/por-operador': return <BipagemAgregadaReport data={data} title="Operador" />;
+            case 'bipagem/por-dispositivo': return <BipagemAgregadaReport data={data} title="Dispositivo" />;
             case 'bipagem/timeline': return <BipagemTimelineReport scans={data} />;
             case 'ensacamento/totais': return <TotaisEnsacamentoReport data={data} />;
             case 'producao/material-gasto': return <MaterialGastoReport data={data} />;

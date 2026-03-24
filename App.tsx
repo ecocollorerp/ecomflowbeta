@@ -2099,7 +2099,7 @@ const App: React.FC = () => {
             case 'ajuda': return <AjudaPage />
             case 'powerbi': return <BiDashboardPage biData={biData} users={users} />
             case 'powerbi-templates': return <PowerBiTemplatesPage setCurrentPage={setCurrentPage} />
-            case 'configuracoes': return <ConfiguracoesPage users={users} setCurrentPage={setCurrentPage} onDeleteUser={handleDeleteUser} onAddNewUser={handleAddNewUser} currentUser={currentUser!} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} stockItems={stockItems} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} onClearScanHistory={handleClearScanHistory} onSaveGeneralSettings={handleSaveGeneralSettings} addToast={addToast} sectors={sectors} />
+            case 'configuracoes': return <ConfiguracoesPage users={users} setCurrentPage={setCurrentPage} onDeleteUser={handleDeleteUser} onAddNewUser={handleAddNewUser} currentUser={currentUser!} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} stockItems={stockItems} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} onClearScanHistory={handleClearScanHistory} onSaveGeneralSettings={handleSaveGeneralSettings} addToast={addToast} sectors={sectors} onAddSector={handleAddSector} onDeleteSector={handleDeleteSector} />
             case 'configuracoes-gerais': return <ConfiguracoesGeraisPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} onSaveGeneralSettings={handleSaveGeneralSettings} currentUser={currentUser} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} addToast={addToast} stockItems={stockItems} onClearScanHistory={handleClearScanHistory} users={users} sectors={sectors} onAddSector={handleAddSector} onDeleteSector={handleDeleteSector} />
             default: return <DashboardPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} allOrders={allOrders} scanHistory={scanHistory} stockItems={stockItems} produtosCombinados={produtosCombinados} users={users} lowStockCount={lowStockCount} uiSettings={uiSettings} onSaveUiSettings={handleSaveUiSettings} adminNotices={adminNotices} onSaveNotice={handleSaveNotice} onDeleteNotice={handleDeleteNotice} currentUser={currentUser!} skuLinks={skuLinks} onSaveDashboardConfig={handleSaveDashboardConfig} packGroups={packGroups} onSavePackGroup={async (g, id) => { await dbClient.from('stock_pack_groups').upsert(id ? { ...g, id } : g); loadData(); }} onRefreshData={loadData} />
         }
@@ -2124,8 +2124,8 @@ const App: React.FC = () => {
         <div>
             <style>{`:root { --font-size-dynamic: ${uiSettings.fontSize}px; }`}</style>
             <div className="flex h-screen font-sans bg-[var(--color-bg)]">
-                <Sidebar currentPage={currentPage} setCurrentPage={setCurrentPage} lowStockCount={lowStockCount} isCollapsed={isSidebarCollapsed} toggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} isMobileOpen={isMobileSidebarOpen} setIsMobileSidebarOpen={setIsMobileSidebarOpen} currentUser={currentUser} onLogout={() => { localStorage.removeItem('erp_current_user'); initialized.current = false; setCurrentUser(null) }} generalSettings={generalSettings} />
-                <main className={`flex-1 flex flex-col transition-all duration-300 ${isSidebarCollapsed ? 'md:pl-20' : 'md:pl-64'}`}>
+                {generalSettings.navMode !== 'topnav' && <Sidebar currentPage={currentPage} setCurrentPage={setCurrentPage} lowStockCount={lowStockCount} isCollapsed={isSidebarCollapsed} toggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} isMobileOpen={isMobileSidebarOpen} setIsMobileSidebarOpen={setIsMobileSidebarOpen} currentUser={currentUser} onLogout={() => { localStorage.removeItem('erp_current_user'); initialized.current = false; setCurrentUser(null) }} generalSettings={generalSettings} />}
+                <main className={`flex-1 flex flex-col transition-all duration-300 ${generalSettings.navMode === 'topnav' ? '' : isSidebarCollapsed ? 'md:pl-20' : 'md:pl-64'}`}>
                     <GlobalHeader
                         currentPage={currentPage}
                         onMenuClick={() => setIsMobileSidebarOpen(true)}
@@ -2139,6 +2139,8 @@ const App: React.FC = () => {
                         isProcessingLabels={isProcessingLabels}
                         labelProgressMessage={labelProgressMessage}
                         labelProcessingProgress={labelProcessingProgress}
+                        generalSettings={generalSettings}
+                        navMode={generalSettings.navMode}
                     />
                     <div className="flex-1 p-4 md:p-6 overflow-y-auto bg-[var(--color-bg)]">
                         {renderPage()}

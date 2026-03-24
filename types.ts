@@ -1064,6 +1064,7 @@ export interface ColumnMapping {
   dateShipping: string;
   priceGross: string;
   totalValue?: string;
+  buyerPaidTotal?: string;        // Total pago pelo comprador (coluna específica)
   shippingFee: string;
   shippingPaidByCustomer?: string;
   fees: string[];
@@ -1137,10 +1138,34 @@ export interface GeneralSettings {
     bling?: BlingSettings;
     mercadoLivre?: MLSettings;
     shopee?: ShopeeSettings;
+    tikTokShop?: {
+      apiKey?: string;
+      shopId?: string;
+      shopName?: string;
+      autoSync?: boolean;
+    };
   };
   setorList: string[];
   setorDisplayNames: Record<string, string>;
   customSectors?: CustomSector[];
+  customStores?: CustomStore[];
+  /** Modo de navegação: 'sidebar' = menu lateral ativo, 'topnav' = menu superior ativo sem lateral */
+  navMode?: 'sidebar' | 'topnav';
+  /** Lista de despesas/deduções salvas (impostos, publicidade, funcionários, insumos...) */
+  deductions?: TaxEntry[];
+  /** Cards personalizáveis do financeiro */
+  financeCards?: FinanceCardConfig[];
+}
+
+/** Configuração de um card customizável no painel financeiro */
+export interface FinanceCardConfig {
+  id: string;
+  label: string;
+  metric: 'gross' | 'net' | 'buyerTotal' | 'fees' | 'shipping' | 'customerPaid' | 'taxTotal' | 'units' | 'totalPedidos' | 'ticketMedio' | 'margemPct' | 'deductions' | 'custom';
+  color: 'blue' | 'red' | 'orange' | 'emerald' | 'slate' | 'purple';
+  enabled: boolean;
+  /** Fórmula customizada: tokens separados por espaço. Ex: "gross - fees - shipping" */
+  customFormula?: string;
 }
 
 export const defaultGeneralSettings: GeneralSettings = {
@@ -1243,7 +1268,14 @@ export const defaultGeneralSettings: GeneralSettings = {
   },
   setorList: [],
   setorDisplayNames: {},
-  customSectors: []
+  customSectors: [],
+  navMode: 'sidebar',
+  deductions: [],
+  financeCards: [
+    { id: 'card_1', label: 'Faturado', metric: 'gross', color: 'blue', enabled: true },
+    { id: 'card_2', label: 'Líquido Final', metric: 'net', color: 'emerald', enabled: true },
+    { id: 'card_3', label: 'Pago pelos Clientes', metric: 'buyerTotal', color: 'purple', enabled: true },
+  ]
 };
 
 // BI Data
@@ -1294,7 +1326,18 @@ export interface TaxEntry {
   name: string;
   type: "percent" | "fixed";
   value: number;
+  enabled?: boolean;
   calculatedAmount?: number;
+  /** Base de cálculo */
+  appliesTo?: 'gross' | 'after_fees' | 'after_ship' | 'after_both';
+  /** Categoria da despesa */
+  category?: 'imposto' | 'publicidade' | 'funcionarios' | 'insumos' | 'outro';
+}
+
+export interface CustomStore {
+  id: string;
+  name: string;
+  color?: string;
 }
 
 // ─── Bling Importação — campos editáveis por pedido antes de gerar NF-e ───────

@@ -1,4 +1,3 @@
-﻿export const SETUP_SQL_STRING = `
 -- ============================================================================
 -- ERP FÁBRICA PRO — BANCO DE DADOS COMPLETO CORRIGIDO
 -- Versão: 2026-03-24 v6.1
@@ -1494,5 +1493,3 @@ ORDER BY table_name;
 -- Inclui: fiscal (inserir_nfe, listar_nfes, obter_proximo_numero_nfe)
 -- Inclui: migração camelCase para nfes e certificados pré-existentes
 -- ════════════════════════════════════════════════════════════════════════════
-
-`;

@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
-import { X, FileUp, Loader2, CheckCircle2, Settings, AlertTriangle, Layers, Database, Globe, Calendar } from 'lucide-react';
-import { GeneralSettings, OrderItem, ProcessedData, Canal } from '../types';
+import { X, FileUp, Loader2, CheckCircle2, Settings, AlertTriangle, Layers, Database, Globe, Calendar, Save, Plus, Power } from 'lucide-react';
+import { GeneralSettings, OrderItem, ProcessedData, Canal, CustomStore } from '../types';
 import { parseExcelFile, extractHeadersAndData } from '../lib/parser';
 import { parseSalesNFeXML, extractXmlsFromZip } from '../lib/xmlParser';
 
@@ -16,17 +16,23 @@ interface FinanceImportModalProps {
 
 type ImportType = 'finance_only' | 'full_import';
 
+const OFF_VALUE = '__OFF__';
+
 const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose, allOrders, generalSettings, onLaunchOrders, onSaveSettings }) => {
     const [files, setFiles] = useState<File[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const [importType, setImportType] = useState<ImportType>('finance_only');
     const [resultSummary, setResultSummary] = useState<{ updated: number, created: number } | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [selectedChannel, setSelectedChannel] = useState<Canal | 'AUTO'>('AUTO');
+    const [selectedChannel, setSelectedChannel] = useState<Canal | 'AUTO' | string>('AUTO');
     const [importStatus, setImportStatus] = useState<string>('');
+    const [newCustomChannelName, setNewCustomChannelName] = useState('');
+    const [showAddChannel, setShowAddChannel] = useState(false);
+    const [configSaved, setConfigSaved] = useState(false);
 
     const [filterStartDate, setFilterStartDate] = useState('');
     const [filterEndDate, setFilterEndDate] = useState('');
+    const [ignoreShipping, setIgnoreShipping] = useState(false);
 
     const [availableHeaders, setAvailableHeaders] = useState<string[]>([]);
     const [sheetData, setSheetData] = useState<any[]>([]);
@@ -49,8 +55,12 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
         setFilterStartDate('');
         setFilterEndDate('');
         setImportStatus('');
+        setIgnoreShipping(false);
         setAvailableHeaders([]);
         setSheetData([]);
+        setConfigSaved(false);
+        setNewCustomChannelName('');
+        setShowAddChannel(false);
         setColumnMapping({ priceGross: '', platformFees: [], shippingFee: '', priceNet: '', statusColumn: '', acceptedStatusValues: '' });
     };
 
@@ -64,8 +74,11 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
             setColumnMapping({ priceGross: '', platformFees: [], shippingFee: '', priceNet: '', statusColumn: '', acceptedStatusValues: '' });
             return;
         }
-        const canalKey = selectedChannel.toLowerCase() as 'ml' | 'shopee' | 'site';
-        const config = generalSettings.importer[canalKey] || {} as any;
+        const canalKey = selectedChannel.toLowerCase();
+        const knownKeys = ['ml', 'shopee', 'site'];
+        const config = knownKeys.includes(canalKey)
+            ? (generalSettings.importer as any)[canalKey] || {}
+            : (generalSettings as any)[`importer_${canalKey}`] || {};
 
         setColumnMapping({
             priceGross: config.priceGross || '',
@@ -75,7 +88,52 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
             statusColumn: config.statusColumn || '',
             acceptedStatusValues: config.acceptedStatusValues ? config.acceptedStatusValues.join(', ') : ''
         });
+        setConfigSaved(false);
     }, [selectedChannel, generalSettings.importer]);
+
+    const handleAddCustomChannel = () => {
+        if (!newCustomChannelName.trim() || !onSaveSettings) return;
+        const id = newCustomChannelName.trim().toUpperCase().replace(/\s+/g, '_');
+        const existing = generalSettings.customStores || [];
+        if (existing.some(s => s.id === id)) return;
+        const newStore: CustomStore = { id, name: newCustomChannelName.trim() };
+        onSaveSettings({ ...generalSettings, customStores: [...existing, newStore] });
+        setSelectedChannel(id);
+        setNewCustomChannelName('');
+        setShowAddChannel(false);
+    };
+
+    const handleSaveChannelConfig = () => {
+        if (!onSaveSettings || selectedChannel === 'AUTO') return;
+        const canalKey = selectedChannel.toLowerCase();
+        const knownKeys = ['ml', 'shopee', 'site'];
+        const configData = {
+            priceGross: columnMapping.priceGross === OFF_VALUE ? '' : columnMapping.priceGross,
+            fees: columnMapping.platformFees.filter(f => f !== OFF_VALUE),
+            shippingFee: columnMapping.shippingFee === OFF_VALUE ? '' : columnMapping.shippingFee,
+            priceNet: columnMapping.priceNet === OFF_VALUE ? '' : columnMapping.priceNet,
+            statusColumn: columnMapping.statusColumn === OFF_VALUE ? '' : columnMapping.statusColumn,
+            acceptedStatusValues: columnMapping.acceptedStatusValues ? columnMapping.acceptedStatusValues.split(',').map(s => s.trim()) : []
+        };
+
+        if (knownKeys.includes(canalKey)) {
+            const currentConfig = (generalSettings.importer as any)[canalKey] || {};
+            onSaveSettings({
+                ...generalSettings,
+                importer: {
+                    ...generalSettings.importer,
+                    [canalKey]: { ...currentConfig, ...configData }
+                }
+            });
+        } else {
+            onSaveSettings({
+                ...generalSettings,
+                [`importer_${canalKey}`]: configData
+            } as any);
+        }
+        setConfigSaved(true);
+        setTimeout(() => setConfigSaved(false), 2000);
+    };
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -128,7 +186,16 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                 }
             } else {
                 const buffer = await firstFile.arrayBuffer();
-                let canalToUse: Canal | undefined = selectedChannel !== 'AUTO' ? selectedChannel : undefined;
+                let canalToUse: Canal | undefined = (selectedChannel !== 'AUTO' && ['ML', 'SHOPEE', 'SITE'].includes(selectedChannel)) ? selectedChannel as Canal : undefined;
+                // Para canais customizados, usa SITE como canal base mas grava o canal correto depois
+                const isCustomChannel = selectedChannel !== 'AUTO' && !['ML', 'SHOPEE', 'SITE'].includes(selectedChannel);
+                if (isCustomChannel) canalToUse = 'SITE';
+
+                const effectiveGross = columnMapping.priceGross === OFF_VALUE ? '__IGNORE__' : columnMapping.priceGross;
+                const effectiveFees = columnMapping.platformFees.filter(f => f !== OFF_VALUE);
+                const effectiveShipping = (ignoreShipping || columnMapping.shippingFee === OFF_VALUE) ? '__IGNORE__' : columnMapping.shippingFee;
+                const effectiveNet = columnMapping.priceNet === OFF_VALUE ? '__IGNORE__' : columnMapping.priceNet;
+                const effectiveStatus = columnMapping.statusColumn === OFF_VALUE ? '' : columnMapping.statusColumn;
 
                 const data: ProcessedData = parseExcelFile(
                     buffer,
@@ -139,11 +206,11 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                         importCpf: false,
                         importName: true,
                         columnOverrides: {
-                            ...(columnMapping.priceGross ? { priceGross: columnMapping.priceGross } : {}),
-                            ...(columnMapping.platformFees.length > 0 ? { fees: columnMapping.platformFees } : {}),
-                            ...(columnMapping.shippingFee ? { shippingFee: columnMapping.shippingFee } : {}),
-                            ...(columnMapping.priceNet ? { priceNet: columnMapping.priceNet } : {}),
-                            ...(columnMapping.statusColumn ? { statusColumn: columnMapping.statusColumn } : {}),
+                            ...(effectiveGross ? { priceGross: effectiveGross } : {}),
+                            ...(effectiveFees.length > 0 ? { fees: effectiveFees } : {}),
+                            ...(effectiveShipping ? { shippingFee: effectiveShipping } : {}),
+                            ...(effectiveNet ? { priceNet: effectiveNet } : {}),
+                            ...(effectiveStatus ? { statusColumn: effectiveStatus } : {}),
                             ...(columnMapping.acceptedStatusValues ? { acceptedStatusValues: columnMapping.acceptedStatusValues.split(',').map(s => s.trim()) } : {})
                         }
                     },
@@ -151,6 +218,16 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                     importStatus || undefined
                 );
                 ordersToProcess = data.lists.completa;
+
+                // Para canais customizados, sobrescreve o canal com o ID do canal custom
+                if (isCustomChannel) {
+                    ordersToProcess = ordersToProcess.map(o => ({ ...o, canal: selectedChannel as Canal }));
+                }
+
+                // Quando frete desativado, zera shipping_fee de todos os pedidos importados
+                if (ignoreShipping || columnMapping.shippingFee === OFF_VALUE) {
+                    ordersToProcess = ordersToProcess.map(o => ({ ...o, shipping_fee: 0 }));
+                }
             }
 
             if (filterStartDate || filterEndDate) {
@@ -260,7 +337,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                         </label>
 
                         {isExcel && (
-                            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
                                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 block">Canal da Planilha</label>
                                 <select
                                     value={selectedChannel}
@@ -271,7 +348,27 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                                     <option value="ML">Mercado Livre</option>
                                     <option value="SHOPEE">Shopee</option>
                                     <option value="SITE">Site / Outros</option>
+                                    {(generalSettings.customStores || []).map(s => (
+                                        <option key={s.id} value={s.id}>{s.name}</option>
+                                    ))}
                                 </select>
+                                {!showAddChannel ? (
+                                    <button onClick={() => setShowAddChannel(true)} className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                                        <Plus size={12} /> Adicionar Canal Personalizado
+                                    </button>
+                                ) : (
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            value={newCustomChannelName}
+                                            onChange={e => setNewCustomChannelName(e.target.value)}
+                                            placeholder="Nome do canal"
+                                            className="flex-1 p-2 border border-slate-300 rounded-lg text-xs font-bold outline-none focus:ring-2 focus:ring-blue-400"
+                                        />
+                                        <button onClick={handleAddCustomChannel} disabled={!newCustomChannelName.trim()} className="px-3 py-1 bg-blue-600 text-white rounded-lg text-[10px] font-bold disabled:opacity-50">Criar</button>
+                                        <button onClick={() => { setShowAddChannel(false); setNewCustomChannelName(''); }} className="px-2 py-1 bg-slate-200 rounded-lg text-[10px] font-bold">×</button>
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -307,8 +404,9 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                                 <div className="grid grid-cols-2 gap-3">
                                     <div className="col-span-1">
                                         <label className="text-[10px] font-bold text-slate-600 mb-1 block">Valor Bruto</label>
-                                        <select value={columnMapping.priceGross} onChange={(e) => setColumnMapping(p => ({ ...p, priceGross: e.target.value }))} className="w-full p-2 border border-slate-300 rounded text-xs bg-white">
+                                        <select value={columnMapping.priceGross} onChange={(e) => setColumnMapping(p => ({ ...p, priceGross: e.target.value }))} className={`w-full p-2 border rounded text-xs bg-white ${columnMapping.priceGross === OFF_VALUE ? 'border-red-300 bg-red-50 text-red-400' : 'border-slate-300'}`}>
                                             <option value="">-- Auto --</option>
+                                            <option value={OFF_VALUE}>🚫 Desativado (Off)</option>
                                             {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
                                         </select>
                                     </div>
@@ -337,28 +435,34 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                                     </div>
                                     <div>
                                         <label className="text-[10px] font-bold text-slate-600 mb-1 block">Envio</label>
-                                        <select value={columnMapping.shippingFee} onChange={(e) => setColumnMapping(p => ({ ...p, shippingFee: e.target.value }))} className="w-full p-2 border border-slate-300 rounded text-xs bg-white">
+                                        <select value={ignoreShipping ? OFF_VALUE : columnMapping.shippingFee} onChange={(e) => {
+                                            if (e.target.value === OFF_VALUE) { setIgnoreShipping(true); setColumnMapping(p => ({ ...p, shippingFee: '' })); }
+                                            else { setIgnoreShipping(false); setColumnMapping(p => ({ ...p, shippingFee: e.target.value })); }
+                                        }} className={`w-full p-2 border rounded text-xs bg-white ${ignoreShipping ? 'border-red-300 bg-red-50 text-red-400' : 'border-slate-300'}`}>
                                             <option value="">-- Auto --</option>
+                                            <option value={OFF_VALUE}>🚫 Desativado (Off)</option>
                                             {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="text-[10px] font-bold text-slate-600 mb-1 block">Líquido</label>
-                                        <select value={columnMapping.priceNet} onChange={(e) => setColumnMapping(p => ({ ...p, priceNet: e.target.value }))} className="w-full p-2 border border-slate-300 rounded text-xs bg-white">
+                                        <label className="text-[10px] font-bold text-slate-600 mb-1 block">Líquido (pagos pelo comprador)</label>
+                                        <select value={columnMapping.priceNet} onChange={(e) => setColumnMapping(p => ({ ...p, priceNet: e.target.value }))} className={`w-full p-2 border rounded text-xs bg-white ${columnMapping.priceNet === OFF_VALUE ? 'border-red-300 bg-red-50 text-red-400' : 'border-slate-300'}`}>
                                             <option value="">-- Auto --</option>
+                                            <option value={OFF_VALUE}>🚫 Desativado (Off)</option>
                                             {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
                                         </select>
                                     </div>
                                     <div>
                                         <label className="text-[10px] font-bold text-slate-600 mb-1 block">Status (Filtro)</label>
-                                        <select value={columnMapping.statusColumn} onChange={(e) => setColumnMapping(p => ({ ...p, statusColumn: e.target.value }))} className="w-full p-2 border border-slate-300 rounded text-xs bg-white border-blue-300">
+                                        <select value={columnMapping.statusColumn} onChange={(e) => setColumnMapping(p => ({ ...p, statusColumn: e.target.value }))} className={`w-full p-2 border rounded text-xs bg-white ${columnMapping.statusColumn === OFF_VALUE ? 'border-red-300 bg-red-50 text-red-400' : 'border-blue-300'}`}>
                                             <option value="">-- Ignorar --</option>
+                                            <option value={OFF_VALUE}>🚫 Desativado (Off)</option>
                                             {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
                                         </select>
                                     </div>
                                     <div className="col-span-1">
                                         <label className="text-[10px] font-bold text-slate-600 mb-1 block">Status Válidos</label>
-                                        {columnMapping.statusColumn && sheetData.length > 0 ? (
+                                        {columnMapping.statusColumn && columnMapping.statusColumn !== OFF_VALUE && sheetData.length > 0 ? (
                                             <div className="flex flex-wrap gap-1.5 p-2 border border-slate-300 rounded bg-white max-h-32 overflow-y-auto w-full">
                                                 {Array.from(new Set(sheetData.map(r => String(r[columnMapping.statusColumn] || '').trim().toLowerCase()).filter(Boolean))).sort().map(h => {
                                                     const currentList = columnMapping.acceptedStatusValues ? columnMapping.acceptedStatusValues.split(',').map(s => s.trim()) : [];
@@ -382,31 +486,10 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                                     <div className="mt-3 flex justify-end">
                                         <button
                                             type="button"
-                                            onClick={() => {
-                                                const canalKey = selectedChannel.toLowerCase() as 'ml' | 'shopee' | 'site';
-                                                const currentConfig = generalSettings.importer[canalKey];
-                                                if (currentConfig) {
-                                                    onSaveSettings({
-                                                        ...generalSettings,
-                                                        importer: {
-                                                            ...generalSettings.importer,
-                                                            [canalKey]: {
-                                                                ...currentConfig,
-                                                                priceGross: columnMapping.priceGross || currentConfig.priceGross,
-                                                                fees: columnMapping.platformFees.length > 0 ? columnMapping.platformFees : currentConfig.fees,
-                                                                shippingFee: columnMapping.shippingFee || currentConfig.shippingFee,
-                                                                priceNet: columnMapping.priceNet || currentConfig.priceNet,
-                                                                statusColumn: columnMapping.statusColumn || currentConfig.statusColumn,
-                                                                acceptedStatusValues: columnMapping.acceptedStatusValues ? columnMapping.acceptedStatusValues.split(',').map(s => s.trim()) : currentConfig.acceptedStatusValues
-                                                            }
-                                                        }
-                                                    });
-                                                    alert(`Mapeamento atualizado e salvo para o canal ${selectedChannel}!`);
-                                                }
-                                            }}
-                                            className="px-3 py-1.5 bg-blue-100 text-blue-700 text-[10px] font-black uppercase tracking-widest rounded-lg hover:bg-blue-200 transition-all"
+                                            onClick={handleSaveChannelConfig}
+                                            className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-1.5 ${configSaved ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-md'}`}
                                         >
-                                            Salvar Padrão para {selectedChannel}
+                                            {configSaved ? <><CheckCircle2 size={12} /> Salvo!</> : <><Save size={12} /> Salvar Configuração para {selectedChannel}</>}
                                         </button>
                                     </div>
                                 )}

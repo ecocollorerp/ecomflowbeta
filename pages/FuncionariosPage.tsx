@@ -374,6 +374,7 @@ const FuncionariosPage: React.FC<FuncionariosPageProps> = ({ users, onSetAttenda
                 userToEdit={userToEdit}
                 onConfirmUpdate={onUpdateUser}
                 generalSettings={generalSettings}
+                sectors={sectors}
             />
              {userToDelete && (
                 <>
