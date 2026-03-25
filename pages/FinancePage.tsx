@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import { OrderItem, Canal, StockItem, ProdutoCombinado, SkuLink, GeneralSettings, MaterialItem, TaxEntry, FinanceCardConfig } from '../types';
+import { OrderItem, Canal, StockItem, ProdutoCombinado, SkuLink, GeneralSettings, MaterialItem, TaxEntry, FinanceCardConfig, StockMovement } from '../types';
 import {
     DollarSign, TrendingUp,
     FileUp, FileDown, Calendar, ArrowRight, Loader2, ShoppingBag, Box, Trash2, Settings, CheckCircle, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, FileSpreadsheet, AlertCircle, Percent, PieChart, Landmark, Plus, Minus, FileCode, AlertTriangle, Edit2, X, Save, BarChart3
@@ -16,6 +16,7 @@ interface FinancePageProps {
     skuLinks: SkuLink[];
     produtosCombinados: ProdutoCombinado[];
     generalSettings: GeneralSettings;
+    stockMovements?: StockMovement[];
     onDeleteOrders: (ids: string[]) => Promise<void>;
     onLaunchOrders: (orders: OrderItem[]) => Promise<void>;
     onSaveSettings?: (settings: GeneralSettings) => void;
@@ -195,7 +196,8 @@ const FinancePage: React.FC<FinancePageProps> = ({
 
         const filtered = allOrders.filter(order => {
             if (canalFilter !== 'ALL' && order.canal !== canalFilter) return false;
-            if (!considerarInvalidos && (order.status === 'ERRO' || order.status === 'DEVOLVIDO')) return false;
+            // Garantindo que pedidos com status de erro, devolução ou cancelamento sejam filtrados
+            if (!considerarInvalidos && (order.status === 'ERRO' || order.status === 'DEVOLVIDO' || order.status === 'CANCELADO')) return false;
             const d = parseOrderDate(order);
             if (!d) return false;
             if (startLimit && d < startLimit) return false;
@@ -219,40 +221,43 @@ const FinancePage: React.FC<FinancePageProps> = ({
             const first = group[0];
             const isRep = generalSettings.isRepeatedValue;
 
-            const gGross = isRep ? Number(first.price_total || 0) : group.reduce((s, i) => s + (i.price_total || 0), 0);
-            const gFees = isRep ? Number(first.platform_fees || 0) : group.reduce((s, i) => s + (i.platform_fees || 0), 0);
-            const gShip = isRep ? Number(first.shipping_fee || 0) : group.reduce((s, i) => s + (i.shipping_fee || 0), 0);
-            const gCustomerShip = isRep ? Number(first.shipping_paid_by_customer || 0) : group.reduce((s, i) => s + (i.shipping_paid_by_customer || 0), 0);
-            const gNet = isRep ? Number(first.price_net || 0) : group.reduce((s, i) => s + (i.price_net || 0), 0);
+            // Helper para centavos evitando erro de ponto flutuante
+            const toCents = (v: any) => Math.round((Number(v) || 0) * 100);
 
-            base.gross += gGross;
-            base.fees += gFees;
-            base.shipping += gShip;
-            base.customerPaid += gCustomerShip;
+            const gGross = isRep ? toCents(first.price_total) : group.reduce((s, i) => s + toCents(i.price_total), 0);
+            const gFees = isRep ? toCents(first.platform_fees) : group.reduce((s, i) => s + toCents(i.platform_fees), 0);
+            const gShip = isRep ? toCents(first.shipping_fee) : group.reduce((s, i) => s + toCents(i.shipping_fee), 0);
+            const gCustomerShip = isRep ? toCents(first.shipping_paid_by_customer) : group.reduce((s, i) => s + toCents(i.shipping_paid_by_customer), 0);
+            const gNet = isRep ? toCents(first.price_net) : group.reduce((s, i) => s + toCents(i.price_net), 0);
+
+            base.gross += gGross / 100;
+            base.fees += gFees / 100;
+            base.shipping += gShip / 100;
+            base.customerPaid += gCustomerShip / 100;
             // buyerTotal = valor líquido recebido pelo comprador (price_net), separado do faturamento bruto
-            base.buyerTotal += gNet > 0 ? gNet : (gGross + gCustomerShip);
-            base.net += gGross;
+            base.buyerTotal += (gNet > 0 ? gNet : (gGross + gCustomerShip)) / 100;
+            base.net += gGross / 100;
 
-            if (first.canal === 'ML') comparison.ml += gGross;
-            else if (first.canal === 'SHOPEE') comparison.shopee += gGross;
-            else comparison.site += gGross;
+            if (first.canal === 'ML') comparison.ml += gGross / 100;
+            else if (first.canal === 'SHOPEE') comparison.shopee += gGross / 100;
+            else comparison.site += gGross / 100;
 
             // Lucratividade por loja
             const storeKey = first.canal || 'SITE';
             if (!storeProfit[storeKey]) storeProfit[storeKey] = { gross: 0, fees: 0, shipping: 0 };
-            storeProfit[storeKey].gross += gGross;
-            storeProfit[storeKey].fees += gFees;
-            storeProfit[storeKey].shipping += gShip;
+            storeProfit[storeKey].gross += gGross / 100;
+            storeProfit[storeKey].fees += gFees / 100;
+            storeProfit[storeKey].shipping += gShip / 100;
 
             group.forEach(o => {
                 base.units += o.qty_final;
                 const entry = skuMap.get(o.sku) || { revenue: 0, qty: 0, name: o.sku, commissions: 0, buyerPaid: 0 };
-                entry.revenue += o.price_gross;
+                entry.revenue += toCents(o.price_gross) / 100;
                 entry.qty += o.qty_final;
                 // Comissão proporcional: fees alocadas para este item pelo peso no bruto do pedido
-                const orderGrossSum = group.reduce((s, i) => s + (i.price_gross || 0), 0);
-                entry.commissions += orderGrossSum > 0 ? ((o.price_gross || 0) / orderGrossSum) * gFees : 0;
-                entry.buyerPaid += (o.price_total || 0);
+                const orderGrossSum = group.reduce((s, i) => s + toCents(i.price_gross), 0) / 100;
+                entry.commissions += orderGrossSum > 0 ? ((toCents(o.price_gross) / 100) / orderGrossSum) * (gFees / 100) : 0;
+                entry.buyerPaid += toCents(o.price_total) / 100;
                 skuMap.set(o.sku, entry);
             });
         });
@@ -260,13 +265,15 @@ const FinancePage: React.FC<FinancePageProps> = ({
         // Cálculo Detalhado de Impostos (somente os habilitados)
         let totalTaxCalculated = 0;
         const breakdown = taxes.map(t => {
-            let taxBase = base.gross;
-            if (t.appliesTo === 'after_fees') taxBase = Math.max(0, base.gross - base.fees);
-            else if (t.appliesTo === 'after_ship') taxBase = Math.max(0, base.gross - base.shipping);
-            else if (t.appliesTo === 'after_both') taxBase = Math.max(0, base.gross - base.fees - base.shipping);
-            const amt = t.type === 'percent' ? (taxBase * t.value) / 100 : t.value;
-            if (t.enabled !== false) totalTaxCalculated += amt;
-            return { ...t, calculatedAmount: amt, taxBase };
+            let taxBase = Math.round(base.gross * 100);
+            if (t.appliesTo === 'after_fees') taxBase = Math.max(0, Math.round(base.gross * 100) - Math.round(base.fees * 100));
+            else if (t.appliesTo === 'after_ship') taxBase = Math.max(0, Math.round(base.gross * 100) - Math.round(base.shipping * 100));
+            else if (t.appliesTo === 'after_both') taxBase = Math.max(0, Math.round(base.gross * 100) - Math.round(base.fees * 100) - Math.round(base.shipping * 100));
+            
+            const amt = t.type === 'percent' ? Math.round(taxBase * t.value / 100) : Math.round(t.value * 100);
+            const amtInReal = amt / 100;
+            if (t.enabled !== false) totalTaxCalculated += amtInReal;
+            return { ...t, calculatedAmount: amtInReal, taxBase: taxBase / 100 };
         });
 
         // Deduções controladas pelos toggles
@@ -342,6 +349,9 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 deductPlatformFees,
                 deductShipping,
                 showCustomerPaid: false,
+                reportTitle: generalSettings.reportTitle,
+                reportLogoBase64: generalSettings.reportLogoBase64,
+                stockMovements: stockMovements
             });
         } catch (e) {
             console.error("Erro ao exportar:", e);
@@ -367,6 +377,9 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 deductPlatformFees,
                 deductShipping,
                 showCustomerPaid: false,
+                reportTitle: generalSettings.reportTitle,
+                reportLogoBase64: generalSettings.reportLogoBase64,
+                stockMovements: stockMovements
             });
         } catch (e) {
             console.error('Erro ao exportar PPTX:', e);
@@ -415,6 +428,9 @@ const FinancePage: React.FC<FinancePageProps> = ({
                     </button>
                     <button onClick={() => setIsImportModalOpen(true)} className="bg-blue-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center gap-2">
                         <FileUp size={16} /> Importar Planilha
+                    </button>
+                    <button onClick={onNavigateToSettings} className="bg-slate-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-slate-100 hover:bg-slate-700 transition-all flex items-center gap-2">
+                        <Settings size={16} /> Configurar Importação
                     </button>
                     <button onClick={handleExport} disabled={isExporting} className="bg-red-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-red-100 hover:bg-red-700 transition-all flex items-center gap-2 disabled:opacity-50">
                         {isExporting ? <Loader2 className="animate-spin" size={16} /> : <FileDown size={16} />} Exportar PDF
@@ -578,7 +594,6 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                 <option value="ALL">Todos os Canais</option>
                                 <option value="ML">Mercado Livre</option>
                                 <option value="SHOPEE">Shopee</option>
-                                <option value="SITE">TikTok Shop / Site</option>
                                 {(generalSettings.customStores || []).map(s => (
                                     <option key={s.id} value={s.id}>{s.name}</option>
                                 ))}
@@ -843,16 +858,22 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                 <BarChart3 size={14} className="text-emerald-500" /> Lucratividade por Loja
                             </h3>
                             <div className="space-y-3">
-                                {Object.entries(storeProfitability).map(([store, data]) => {
+                                {Object.entries(storeProfitability as Record<string, { gross: number, fees: number, shipping: number }>).map(([store, data]) => {
                                     const storeNet = data.gross - data.fees - data.shipping;
                                     const storeMargin = data.gross > 0 ? (storeNet / data.gross) * 100 : 0;
-                                    const maxGross = Math.max(...Object.values(storeProfitability).map(d => d.gross), 1);
+                                    const maxGross = Math.max(...Object.values(storeProfitability as Record<string, { gross: number, fees: number, shipping: number }>).map(d => d.gross), 1);
                                     const barWidth = (data.gross / maxGross) * 100;
                                     const storeColors: Record<string, string> = { ML: 'bg-yellow-500', SHOPEE: 'bg-orange-500', SITE: 'bg-blue-500' };
                                     const storeColor = storeColors[store] || 'bg-purple-500';
-                                    const storeNames: Record<string, string> = { ML: 'Mercado Livre', SHOPEE: 'Shopee', SITE: 'Site / Outros' };
-                                    const customStore = (generalSettings.customStores || []).find(s => s.id === store);
-                                    const storeName = storeNames[store] || customStore?.name || store;
+                                    const storeNames: Record<string, string> = {
+                                        ML: 'Mercado Livre',
+                                        SHOPEE: 'Shopee',
+                                        SITE: generalSettings?.importer?.site?.storeName || 'Site / Outros'
+                                    };
+                                    // Também verificar lojas customizadas configuradas
+                                    const customStoreMappings = (generalSettings as any).customStoreMappings || [];
+                                    const customMapping = customStoreMappings.find((m: any) => m.canal === store || m.id === store);
+                                    const storeName = storeNames[store] || customMapping?.storeName || store;
                                     return (
                                         <div key={store} className="space-y-1">
                                             <div className="flex justify-between items-center">

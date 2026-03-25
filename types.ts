@@ -216,13 +216,19 @@ export type StockMovementOrigin =
 
 export interface StockMovement {
   id: string;
+  /** Código do produto */
   stockItemCode: string;
-  stockItemName: string;
-  origin: StockMovementOrigin | string;
+  /** Operador/Usuário que registrou a movimentação */
+  operatorName: string;
+  /** Diferença na quantidade (positivo para entrada, negativo para saída) */
   qty_delta: number;
+  /** Dados do item no momento da movimentação (snapshot repassado pelo DB) */
+  itemSnapshot?: { name: string, unit: string };
+  /** Novo total APÓS a movimentação (opcional/informativo) */
+  new_total?: number;
+  origin: StockMovementOrigin | string;
   ref: string;
   createdAt: Date;
-  createdBy: string;
   fromWeighing?: boolean;
   productSku?: string;
 }
@@ -1073,6 +1079,7 @@ export interface ColumnMapping {
   customerCpf: string;
   statusColumn?: string;
   acceptedStatusValues?: string[];
+  storeName?: string;  // Nome amigável da loja para exibição em relatórios
 }
 
 export interface ExpeditionRule {
@@ -1155,6 +1162,10 @@ export interface GeneralSettings {
   deductions?: TaxEntry[];
   /** Cards personalizáveis do financeiro */
   financeCards?: FinanceCardConfig[];
+  /** Título personalizado para o relatório financeiro exportado */
+  reportTitle?: string;
+  /** Logo em Base64 para incluir nos relatórios exportados */
+  reportLogoBase64?: string;
 }
 
 /** Configuração de um card customizável no painel financeiro */

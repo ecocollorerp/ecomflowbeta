@@ -73,7 +73,8 @@ export const PacotesProntosPage: React.FC<PacotesProntosPageProps> = ({ addToast
     const [formNovoPacote, setFormNovoPacote] = useState({
         nome: '',
         sku_primario: '',
-        quantidade: '50',
+        quantidade_pacotes: '',
+        unidades_por_pacote: '1',
         localizacao: ''
     });
 
@@ -188,17 +189,21 @@ export const PacotesProntosPage: React.FC<PacotesProntosPageProps> = ({ addToast
     // Adicionar novo pacote
     const handleAdicionarPacote = useCallback(() => {
         setShowNovoModal(true);
-        setFormNovoPacote({ nome: '', sku_primario: '', quantidade: '50', localizacao: '' });
+        setFormNovoPacote({ nome: '', sku_primario: '', quantidade_pacotes: '', unidades_por_pacote: '1', localizacao: '' });
     }, []);
 
     // ✅ Salvar novo pacote no banco
     const handleSalvarNovoPacote = useCallback(async () => {
-        const { nome, sku_primario, quantidade, localizacao } = formNovoPacote;
+        const { nome, sku_primario, quantidade_pacotes, unidades_por_pacote, localizacao } = formNovoPacote;
 
-        if (!nome || !sku_primario || !localizacao) {
+        if (!nome || !sku_primario || !localizacao || !quantidade_pacotes || !unidades_por_pacote) {
             addToast('Preencha todos os campos obrigatórios', 'error');
             return;
         }
+
+        const qtdPac = Number(quantidade_pacotes);
+        const unid = Number(unidades_por_pacote);
+        const total = qtdPac * unid;
 
         try {
             const { dbClient } = await import('../lib/supabaseClient');
@@ -207,13 +212,13 @@ export const PacotesProntosPage: React.FC<PacotesProntosPageProps> = ({ addToast
                 batch_id: nome,
                 lote_numero: sku_primario,
                 stock_item_id: sku_primario,
-                quantidade_total: Number(quantidade),
-                quantidade_disponivel: Number(quantidade),
+                quantidade_total: total,
+                quantidade_disponivel: total,
                 localizacao: localizacao,
                 status: 'PRONTO',
                 created_by: 'Usuário',
-                produtos: [],
-                observacoes: ''
+                produtos: [{ sku: sku_primario, nome: 'Itens por pacote', quantidade: unid }],
+                observacoes: `${qtdPac} pacote(s) c/ ${unid} unidade(s)`
             };
 
             const { data, error } = await dbClient
@@ -229,22 +234,22 @@ export const PacotesProntosPage: React.FC<PacotesProntosPageProps> = ({ addToast
                 id: data.id,
                 nome: nome,
                 sku_primario: sku_primario,
-                quantidade_total: Number(quantidade),
-                quantidade_disponivel: Number(quantidade),
+                quantidade_total: total,
+                quantidade_disponivel: total,
                 quantidade_reservada: 0,
                 localizacao: localizacao,
                 status: 'PRONTO',
                 data_preparacao: Date.now(),
                 data_disponibilidade: Date.now() + 604800000,
                 operador: 'Usuário',
-                observacoes: '',
-                produtos: []
+                observacoes: `${qtdPac} pacote(s) c/ ${unid} unidade(s)`,
+                produtos: [{ sku: sku_primario, nome: 'Itens por pacote', quantidade: unid }]
             };
 
             setPacotes(prev => [novoPacote, ...prev]);
-            addToast(`Pacote \"${nome}\" criado com sucesso!`, 'success');
+            addToast(`Pacote "${nome}" criado com sucesso! (Total: ${total} unidades)`, 'success');
             setShowNovoModal(false);
-            setFormNovoPacote({ nome: '', sku_primario: '', quantidade: '50', localizacao: '' });
+            setFormNovoPacote({ nome: '', sku_primario: '', quantidade_pacotes: '', unidades_por_pacote: '1', localizacao: '' });
         } catch (err) {
             console.error('Erro ao salvar pacote:', err);
             addToast(`Erro: ${err instanceof Error ? err.message : 'desconhecido'}`, 'error');
@@ -524,15 +529,27 @@ export const PacotesProntosPage: React.FC<PacotesProntosPageProps> = ({ addToast
                                             className="w-full p-3 border-2 border-slate-200 rounded-lg outline-none focus:border-emerald-500"
                                         />
                                     </div>
-                                    <div>
-                                        <label className="text-sm font-black text-slate-600 uppercase mb-2 block">Quantidade</label>
-                                        <input
-                                            type="number"
-                                            placeholder="50"
-                                            value={formNovoPacote.quantidade}
-                                            onChange={(e) => setFormNovoPacote(prev => ({ ...prev, quantidade: e.target.value }))}
-                                            className="w-full p-3 border-2 border-slate-200 rounded-lg outline-none focus:border-emerald-500"
-                                        />
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label className="text-sm font-black text-slate-600 uppercase mb-2 block" title="Quantidade de pacotes/kits a serem cadastrados">Qtd. Pacotes</label>
+                                            <input
+                                                type="number"
+                                                placeholder="10"
+                                                value={formNovoPacote.quantidade_pacotes}
+                                                onChange={(e) => setFormNovoPacote(prev => ({ ...prev, quantidade_pacotes: e.target.value }))}
+                                                className="w-full p-3 border-2 border-slate-200 rounded-lg outline-none focus:border-emerald-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-black text-slate-600 uppercase mb-2 block" title="Quantidade de unidades de produto dentro de cada pacote">Unid/Pacote</label>
+                                            <input
+                                                type="number"
+                                                placeholder="2"
+                                                value={formNovoPacote.unidades_por_pacote}
+                                                onChange={(e) => setFormNovoPacote(prev => ({ ...prev, unidades_por_pacote: e.target.value }))}
+                                                className="w-full p-3 border-2 border-slate-200 rounded-lg outline-none focus:border-emerald-500"
+                                            />
+                                        </div>
                                     </div>
                                 </div>
                                 <div>

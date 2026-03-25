@@ -1,6 +1,6 @@
 // components/DashboardSettingsModal.tsx
 import React, { useState, useEffect } from 'react';
-import { X, Palette, Text, Save, Volume2, Sun, Moon, Zap, ChevronRight, Laptop } from 'lucide-react';
+import { X, Palette, Text, Save, Volume2, Sun, Moon, Zap, ChevronRight, Laptop, PanelTop, PanelLeft } from 'lucide-react';
 import { UiSettings } from '../types';
 
 interface DashboardSettingsModalProps {
@@ -9,9 +9,11 @@ interface DashboardSettingsModalProps {
     currentSettings: UiSettings;
     onSave: (newSettings: UiSettings) => void;
     setCurrentPage: (page: string) => void;
+    navMode?: 'sidebar' | 'topnav';
+    onNavModeChange?: (mode: 'sidebar' | 'topnav') => void;
 }
 
-const DashboardSettingsModal: React.FC<DashboardSettingsModalProps> = ({ isOpen, onClose, currentSettings, onSave, setCurrentPage }) => {
+const DashboardSettingsModal: React.FC<DashboardSettingsModalProps> = ({ isOpen, onClose, currentSettings, onSave, setCurrentPage, navMode = 'sidebar', onNavModeChange }) => {
     const [settings, setSettings] = useState<UiSettings>(currentSettings);
 
     useEffect(() => {
@@ -191,6 +193,33 @@ const DashboardSettingsModal: React.FC<DashboardSettingsModalProps> = ({ isOpen,
                             />
                         </div>
                     </div>
+                    {onNavModeChange && (
+                        <div>
+                            <h3 className="text-md font-semibold mb-2 flex items-center">
+                                <PanelTop size={18} className="mr-2" /> Modo de Navegação
+                            </h3>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => onNavModeChange('sidebar')}
+                                    className={`flex-1 p-3 rounded-md text-sm font-medium border-2 transition-all flex flex-col items-center justify-center gap-2 ${
+                                        navMode === 'sidebar' ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary-bg-subtle)]' : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-surface-tertiary)]'
+                                    }`}
+                                >
+                                    <PanelLeft size={20} />
+                                    Sidebar
+                                </button>
+                                <button
+                                    onClick={() => onNavModeChange('topnav')}
+                                    className={`flex-1 p-3 rounded-md text-sm font-medium border-2 transition-all flex flex-col items-center justify-center gap-2 ${
+                                        navMode === 'topnav' ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-[var(--color-primary-bg-subtle)]' : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-surface-tertiary)]'
+                                    }`}
+                                >
+                                    <PanelTop size={20} />
+                                    Barra Superior
+                                </button>
+                            </div>
+                        </div>
+                    )}
                     <div>
                         <h3 className="text-md font-semibold mb-2 flex items-center">
                             <Zap size={18} className="mr-2" /> Ações Rápidas

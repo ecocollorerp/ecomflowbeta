@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { Menu, QrCode, X, Loader2, ChevronDown, LayoutDashboard, ScanLine, Package, BarChart3, DollarSign, Printer, Settings, Weight, Recycle, ShoppingCart, ClipboardCheck, ListPlus, BookOpen, HelpCircle, Users, Link as LinkIcon, Globe } from 'lucide-react';
+import { Menu, QrCode, X, Loader2, ChevronDown, LayoutDashboard, ScanLine, Package, BarChart3, DollarSign, Printer, Settings, Weight, Recycle, ShoppingCart, ClipboardCheck, ListPlus, BookOpen, HelpCircle, Users, Link as LinkIcon, Globe, PackageOpen } from 'lucide-react';
 import { StockItem, AdminNotice, User, GeneralSettings } from '../types';
 import NotificationPanel from './NotificationPanel';
 import { canAccessPage } from '../lib/accessControl';
@@ -33,6 +33,7 @@ const getPageTitle = (page: string): string => {
         'funcionarios': 'Controle de Funcionários',
         'relatorios': 'Relatórios e Análises',
         'etiquetas': 'Gerador de Etiquetas ZPL',
+        'pacotes-prontos': 'Pacotes Prontos',
         'passo-a-passo': 'Passo a Passo',
         'ajuda': 'Central de Ajuda',
         'configuracoes': 'Configurações de Usuários',
@@ -68,7 +69,7 @@ const NoticeBanner: React.FC<{ notice: AdminNotice; onDismiss: (id: string) => v
 
 const GlobalHeader: React.FC<GlobalHeaderProps> = ({ currentPage, onMenuClick, lowStockItems, setCurrentPage, bannerNotice, isAutoBipagemActive, onToggleAutoBipagem, currentUser, onDismissNotice, isProcessingLabels, labelProgressMessage, labelProcessingProgress, generalSettings, navMode }) => {
   
-  const headerContainerClasses = `flex-shrink-0 bg-[var(--color-surface)]`;
+  const headerContainerClasses = `flex-shrink-0 bg-[var(--color-surface)] sticky top-0 z-[9999] shadow-sm`;
 
   const headerClasses = `flex items-center justify-between p-4 border-b border-[var(--color-border)] text-[var(--color-text-primary)]`;
   
@@ -89,6 +90,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({ currentPage, onMenuClick, l
       label: 'Estoque',
       items: [
         { page: 'estoque', label: 'Estoque', icon: <Package size={14} /> },
+        { page: 'pacotes-prontos', label: 'Pacotes Prontos', icon: <PackageOpen size={14} /> },
         { page: 'pesagem', label: 'Máquinas', icon: <Weight size={14} /> },
         { page: 'moagem', label: 'Moagem', icon: <Recycle size={14} /> },
       ]

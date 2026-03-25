@@ -1,4 +1,4 @@
-﻿export const SETUP_SQL_STRING = `
+export const SETUP_SQL_STRING = `
 -- ============================================================================
 -- ERP FÁBRICA PRO — BANCO DE DADOS COMPLETO CORRIGIDO
 -- Versão: 2026-03-24 v6.1

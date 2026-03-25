@@ -35,6 +35,7 @@ interface DashboardPageProps {
     onSavePackGroup: (group: Omit<StockPackGroup, 'id'>, id?: string) => Promise<void>;
     onExportDailyLog: () => void;
     onRefreshData?: () => void;
+    onSaveGeneralSettings?: (settings: GeneralSettings) => void;
 }
 
 const getTodayString = () => new Date().toISOString().split('T')[0];
@@ -72,7 +73,7 @@ const getOrderDate = (order: OrderItem, dateSource: 'sale_date' | 'import_date')
 }
 
 const DashboardPage: React.FC<DashboardPageProps> = (props) => {
-    const { setCurrentPage, generalSettings, allOrders, scanHistory, stockItems, produtosCombinados, users, lowStockCount, uiSettings, onSaveUiSettings, adminNotices, onSaveNotice, onDeleteNotice, currentUser, skuLinks, packGroups, onSavePackGroup, onExportDailyLog, onRefreshData } = props;
+    const { setCurrentPage, generalSettings, allOrders, scanHistory, stockItems, produtosCombinados, users, lowStockCount, uiSettings, onSaveUiSettings, adminNotices, onSaveNotice, onDeleteNotice, currentUser, skuLinks, packGroups, onSavePackGroup, onExportDailyLog, onRefreshData, onSaveGeneralSettings } = props;
 
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
     const [viewingPackGroup, setViewingPackGroup] = useState<StockPackGroup | null>(null);
@@ -272,7 +273,7 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
                                 const totalEntrada = recentMoves.filter((m: any) => (m.qty_delta || 0) > 0).reduce((s: number, m: any) => s + (m.qty_delta || 0), 0);
                                 const totalSaida = recentMoves.filter((m: any) => (m.qty_delta || 0) < 0).reduce((s: number, m: any) => s + Math.abs(m.qty_delta || 0), 0);
                                 return (
-                                    <div key={group.id} onClick={() => setViewingPackGroup(group)} className={`p-4 rounded-2xl border-2 transition-all cursor-pointer hover:shadow-xl group relative overflow-hidden ${isBelowMin ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-100 hover:border-blue-300'}`}>
+                                    <div key={group.id} onClick={() => setCurrentPage('pacotes-prontos')} className={`p-4 rounded-2xl border-2 transition-all cursor-pointer hover:shadow-xl group relative overflow-hidden ${isBelowMin ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-100 hover:border-blue-300'}`}>
                                         <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity bg-white p-1.5 rounded-full shadow-md text-blue-600">
                                             <Eye size={14} />
                                         </div>
@@ -348,7 +349,7 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
                 </div>
             </div>
 
-            <DashboardSettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} currentSettings={uiSettings} onSave={onSaveUiSettings} setCurrentPage={setCurrentPage} />
+            <DashboardSettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} currentSettings={uiSettings} onSave={onSaveUiSettings} setCurrentPage={setCurrentPage} navMode={generalSettings.navMode || 'sidebar'} onNavModeChange={onSaveGeneralSettings ? (mode) => onSaveGeneralSettings({ ...generalSettings, navMode: mode }) : undefined} />
             <PackGroupDetailModal
                 isOpen={!!viewingPackGroup}
                 onClose={() => setViewingPackGroup(null)}

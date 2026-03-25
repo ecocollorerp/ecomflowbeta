@@ -244,7 +244,7 @@ export const PacotesProntosManager: React.FC<PacotesProntosManagerProps> = ({
                     <table className="min-w-full bg-white text-sm">
                         <thead className="bg-slate-900 text-white sticky top-0">
                             <tr>
-                                {['Nome', 'SKU', 'Status', 'Localização', 'Disponível', 'Operador', 'Data', 'Ações'].map(h =>
+                                {['Nome', 'SKU', 'Composição (Unid/Pacote)', 'Status', 'Localização', 'Total Unid', 'Operador', 'Data', 'Ações'].map(h =>
                                     <th key={h} className="p-4 text-left text-[9px] font-black uppercase tracking-widest">{h}</th>
                                 )}
                             </tr>
@@ -254,6 +254,22 @@ export const PacotesProntosManager: React.FC<PacotesProntosManagerProps> = ({
                                 <tr key={pacote.id} className="hover:bg-slate-50 transition-colors">
                                     <td className="p-4 font-bold text-slate-800">{pacote.nome}</td>
                                     <td className="p-4 font-mono font-black text-slate-600">{pacote.sku_primario}</td>
+                                    <td className="p-4">
+                                        {/* Composição: detalhe dos SKUs e unidades por pacote */}
+                                        {pacote.produtos && pacote.produtos.length > 0 ? (
+                                            <div className="space-y-1">
+                                                {pacote.produtos.map((prod, idx) => (
+                                                    <div key={idx} className="flex items-center gap-2 text-xs">
+                                                        <span className="font-mono font-black text-purple-700 bg-purple-50 px-2 py-0.5 rounded">{prod.sku}</span>
+                                                        <span className="text-slate-400">×</span>
+                                                        <span className="font-black text-slate-700">{prod.quantidade} unid/pacote</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <span className="text-xs text-slate-400 italic">Sem detalhes</span>
+                                        )}
+                                    </td>
                                     <td className="p-4">
                                         <div className={`flex items-center gap-2 w-fit px-3 py-1 rounded-full border font-black text-xs uppercase ${getStatusColor(pacote.status)}`}>
                                             {getStatusIcon(pacote.status)}
@@ -268,7 +284,22 @@ export const PacotesProntosManager: React.FC<PacotesProntosManagerProps> = ({
                                     </td>
                                     <td className="p-4 text-center">
                                         <span className="font-black text-emerald-700 text-lg">{pacote.quantidade_disponivel}</span>
-                                        <span className="text-[10px] text-slate-400 block">de {pacote.quantidade_total}</span>
+                                        <span className="text-[10px] text-slate-400 block">de {pacote.quantidade_total} un</span>
+                                        {/* Mostrar detalhe de cada SKU: qtd_pacotes × unid/pacote */}
+                                        {pacote.produtos && pacote.produtos.length > 0 && (
+                                            <div className="mt-1 space-y-0.5">
+                                                {pacote.produtos.map((prod, idx) => {
+                                                    // qtd_pacotes = quantidade_total / unidades_por_pacote
+                                                    const unidPorPacote = prod.quantidade;
+                                                    const qtdPacotes = unidPorPacote > 0 ? Math.round(pacote.quantidade_total / unidPorPacote) : pacote.quantidade_total;
+                                                    return (
+                                                        <div key={idx} className="text-[9px] text-slate-500 font-bold">
+                                                            {qtdPacotes} pct × {unidPorPacote} = {pacote.quantidade_total}un
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
                                     </td>
                                     <td className="p-4 text-slate-600 text-sm">
                                         <div className="flex items-center gap-1">

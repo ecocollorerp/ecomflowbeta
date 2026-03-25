@@ -196,11 +196,17 @@ export const exportPdf = (
     doc.save(`importacao_${data.canal}_${activeTab}${operatorName ? `_${operatorName}` : ''}.pdf`);
 };
 
-export const exportFinanceReport = async (payload: { period: string, canal: string, stats: any, materialList: MaterialItem[], orders: OrderItem[], taxes?: any[], dailyChart?: { date: string, value: number }[], canalComparison?: { ml: number, shopee: number, site: number }, deductPlatformFees?: boolean, deductShipping?: boolean, showCustomerPaid?: boolean }) => {
+export const exportFinanceReport = async (payload: { 
+    period: string; canal: string; stats: any; materialList: MaterialItem[]; 
+    orders: OrderItem[]; taxes?: any[]; dailyChart?: { date: string, value: number }[]; 
+    canalComparison?: { ml: number, shopee: number, site: number }; 
+    deductPlatformFees?: boolean; deductShipping?: boolean; showCustomerPaid?: boolean;
+    reportTitle?: string; reportLogoBase64?: string; stockMovements?: StockMovement[];
+}) => {
     const doc = new jsPDF();
     const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
     const pageW = doc.internal.pageSize.getWidth();
-    const marginL = 14;
+    let marginL = 14; // Alterado de const para let
     const marginR = 14;
     const usableW = pageW - marginL - marginR;
 
@@ -213,13 +219,28 @@ export const exportFinanceReport = async (payload: { period: string, canal: stri
         return getY() + 12;
     };
 
+    let startY = 20;
+
+    if (payload.reportLogoBase64 && payload.reportLogoBase64.startsWith('data:image')) {
+        try {
+            doc.addImage(payload.reportLogoBase64, 'JPEG', marginL, 12, 30, 15);
+            marginL += 35; // Desloca o texto se a logo existir
+        } catch (e) {
+            console.error("Erro ao adicionar logo no PDF:", e);
+        }
+    }
+
     doc.setFontSize(18);
     doc.setFont('helvetica', 'bold');
-    doc.text('Relatório Financeiro Estratégico', marginL, 20);
+    doc.text(payload.reportTitle || 'Relatório Financeiro Estratégico', marginL, startY);
     
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
-    doc.text(`Período: ${payload.period} | Canal: ${payload.canal} | Gerado em: ${new Date().toLocaleString()}`, marginL, 27);
+    const periodText = `Período: ${payload.period} | Canal: ${payload.canal} | Gerado em: ${new Date().toLocaleString()}`;
+    doc.text(periodText, marginL, startY + 7);
+
+    // Reset margin para o resto do documento
+    marginL = 14;
 
     // 1. Sumário Executivo
     let secY = 34;
@@ -331,6 +352,36 @@ export const exportFinanceReport = async (payload: { period: string, canal: stri
             styles: { fontSize: 8, cellPadding: 3 },
             margin: { left: marginL, right: marginR },
         });
+    }
+
+    // 4.1. Insumos Consumidos (do Estoque - BOM)
+    if (payload.stockMovements && payload.stockMovements.length > 0) {
+        // Filtra apenas movimentos de saída (negativos) para saber o que gastou
+        const consumption = payload.stockMovements.filter(m => m.qty_delta < 0);
+        if (consumption.length > 0) {
+            secY = ensureSpace(40);
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'bold');
+            doc.text('4.1 Insumos e Materiais Efetivamente Consumidos (Baixas no Estoque)', marginL, secY);
+
+            // Agrupa por código do item para soma total consumida
+            const consumedMap = new Map<string, {name: string; qty: number; unit: string}>();
+            consumption.forEach(m => {
+                const entry = consumedMap.get(m.stockItemCode) || {name: m.itemSnapshot?.name || m.stockItemCode, qty: 0, unit: m.itemSnapshot?.unit || 'un'};
+                entry.qty += Math.abs(m.qty_delta);
+                consumedMap.set(m.stockItemCode, entry);
+            });
+
+            autoTable(doc, {
+                startY: secY + 4,
+                head: [['Material', 'Soma de Saídas (Consumo)', 'Unidade']],
+                body: Array.from(consumedMap.values()).map(m => [m.name, m.qty.toFixed(3), m.unit]),
+                theme: 'grid',
+                headStyles: { fillColor: '#ea580c', fontSize: 8 }, // orange-600
+                styles: { fontSize: 8, cellPadding: 3 },
+                margin: { left: marginL, right: marginR },
+            });
+        }
     }
 
     // 5. Gráfico de Faturamento Diário
@@ -467,6 +518,57 @@ export const exportFinanceReport = async (payload: { period: string, canal: stri
             });
         }
     }
+
+    // 8. Resumo Completo de Despesas (DRE Simplificado)
+    doc.addPage();
+    secY = 20;
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('8. Resumo Completo de Despesas Fixas e Variáveis', marginL, secY);
+
+    const expenseRows: any[][] = [];
+    let totalExpenses = 0;
+
+    // Frete e Comissões
+    if (payload.deductPlatformFees !== false && payload.stats.fees > 0) {
+        expenseRows.push(['Comissões e Taxas de Plataforma', 'Variável', fmt(payload.stats.fees)]);
+        totalExpenses += payload.stats.fees;
+    }
+    if (payload.deductShipping !== false && payload.stats.shipping > 0) {
+        expenseRows.push(['Frete Repassado / Envios', 'Variável', fmt(payload.stats.shipping)]);
+        totalExpenses += payload.stats.shipping;
+    }
+
+    // Impostos e Despesas Adicionais (Categoria)
+    if (enabledTaxes.length > 0) {
+        enabledTaxes.forEach((t: any) => {
+            const catName = t.category === 'funcionarios' ? 'Despesas com Pessoal'
+                        : t.category === 'imposto' ? 'Tributação / Impostos'
+                        : t.category === 'publicidade' ? 'Ads e Marketing'
+                        : t.category === 'insumos' ? 'Aquisições Externas (Insumos)'
+                        : 'Outras Despesas';
+            expenseRows.push([`${catName}: ${t.name}`, t.type === 'percent' ? 'Variável' : 'Fixo', fmt(t.calculatedAmount)]);
+            totalExpenses += t.calculatedAmount;
+        });
+    }
+
+    // Custo de Insumos (Opcional - pode ser usado futuramente para somar ao custo)
+    const consumption = payload.stockMovements?.filter((m: any) => m.qty_delta < 0) || [];
+    if (consumption.length > 0) {
+        expenseRows.push(['Consumo Físico de Estoque (BOM)', 'Custos Insumo', 'Informativo na Seção 4.1']);
+    }
+
+    autoTable(doc, {
+        startY: secY + 8,
+        head: [['Categoria da Despesa', 'Tipo', 'Valor Deduzido']],
+        body: expenseRows,
+        foot: [['TOTAL DE DESPESAS OPERACIONAIS', '', fmt(totalExpenses)]],
+        theme: 'striped',
+        headStyles: { fillColor: '#be123c', fontSize: 9 }, // rose-700
+        footStyles: { fillColor: '#ffe4e6', textColor: '#be123c', fontStyle: 'bold' },
+        styles: { fontSize: 8, cellPadding: 4 },
+        margin: { left: marginL, right: marginR },
+    });
 
     doc.save(`financeiro_detalhado_${payload.canal}_${new Date().toISOString().split('T')[0]}.pdf`);
 };
@@ -633,6 +735,36 @@ export const exportFinancePptx = async (payload: { period: string, canal: string
         ]));
         s6.addTable(tRows, { x: 0.5, y: 1.2, w: 9, fontSize: 10, border: { type: 'solid', pt: 0.5, color: 'e5e7eb' }, colW: [3, 2, 2, 2] });
     }
+
+    // Slide 7 - Resumo Operacional (DRE)
+    const s7 = pptx.addSlide();
+    s7.addText('Resumo Completo de Despesas Operacionais', { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, color: '1f2937' });
+
+    const dreRows: PptxGenJS.TableRow[] = [
+        [
+            { text: 'Categoria da Despesa', options: { bold: true, color: 'ffffff', fill: { color: 'be123c' } } },
+            { text: 'Valor Custeado', options: { bold: true, color: 'ffffff', fill: { color: 'be123c' } } },
+        ]
+    ];
+    let totalOp = 0;
+    if (payload.deductPlatformFees !== false && payload.stats.fees > 0) {
+        dreRows.push([{ text: 'Comissões de Plataforma' }, { text: fmt(payload.stats.fees) }]);
+        totalOp += payload.stats.fees;
+    }
+    if (payload.deductShipping !== false && payload.stats.shipping > 0) {
+        dreRows.push([{ text: 'Fretes e Envios' }, { text: fmt(payload.stats.shipping) }]);
+        totalOp += payload.stats.shipping;
+    }
+    if (enabledTaxes.length > 0) {
+        enabledTaxes.forEach((t: any) => {
+            const cName = t.category === 'funcionarios' ? 'Gastos c/ Pessoal' : t.category === 'imposto' ? 'Impostos Fiscais' : 'Despesas Manuais';
+            dreRows.push([{ text: `${cName}: ${t.name}` }, { text: fmt(t.calculatedAmount) }]);
+            totalOp += t.calculatedAmount;
+        });
+    }
+    dreRows.push([{ text: 'TOTAL DEDUZIDO', options: { bold: true } }, { text: fmt(totalOp), options: { bold: true } }]);
+
+    s7.addTable(dreRows, { x: 0.5, y: 1.2, w: 9, fontSize: 12, border: { type: 'solid', pt: 0.5, color: 'e5e7eb' }, colW: [6, 3] });
 
     await pptx.writeFile({ fileName: `financeiro_${payload.canal}_${new Date().toISOString().split('T')[0]}.pptx` });
 };

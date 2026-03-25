@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, ScanLine, Package, BarChart3, DollarSign, Printer, Settings, UserCircle, ArrowLeftToLine, ArrowRightFromLine, Weight, Factory, QrCode, Users, ShoppingCart, LogOut, ClipboardCheck, ListPlus, BookOpen, Recycle, HelpCircle, ChevronDown, Link as LinkIcon, Globe } from 'lucide-react';
+import { LayoutDashboard, ScanLine, Package, BarChart3, DollarSign, Printer, Settings, UserCircle, ArrowLeftToLine, ArrowRightFromLine, Weight, Factory, QrCode, Users, ShoppingCart, LogOut, ClipboardCheck, ListPlus, BookOpen, Recycle, HelpCircle, ChevronDown, Link as LinkIcon, Globe, PackageOpen } from 'lucide-react';
 import { User, GeneralSettings } from '../types';
 import DynamicIcon from './DynamicIcon';
 import { canAccessPage } from '../lib/accessControl';
@@ -134,6 +134,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, lowStock
 
         <NavSection title="Estoque" isCollapsed={isCollapsed}>
           {canShow('estoque') && <NavItem icon={<Package size={20} />} text="Estoque" page="estoque" active={currentPage === 'estoque'} onClick={handlePageClick} alertCount={lowStockCount} isCollapsed={isCollapsed} />}
+          {canShow('pacotes-prontos') && <NavItem icon={<PackageOpen size={20} />} text="Pacotes Prontos" page="pacotes-prontos" active={currentPage === 'pacotes-prontos'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
           {canShow('pesagem') && <NavItem icon={<Weight size={20} />} text="Máquinas" page="pesagem" active={currentPage === 'pesagem'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
           {canShow('moagem') && <NavItem icon={<Recycle size={20} />} text="Moagem" page="moagem" active={currentPage === 'moagem'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
         </NavSection>

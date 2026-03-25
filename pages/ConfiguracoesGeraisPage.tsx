@@ -1,7 +1,6 @@
-
 import React, { useState, ReactNode, useMemo } from 'react';
-import { GeneralSettings, User, ToastMessage, StockItem, ExpeditionRule, UserRole, UserSetor, ColumnMapping } from '../types';
-import { ArrowLeft, Database, Save, AlertTriangle, RefreshCw, Truck, Download, Plus, Trash2, Settings2, FileSpreadsheet, DollarSign, Package, Users, UserPlus, Mail, KeyRound, Loader2, Edit3, UploadCloud, CheckSquare, Square, QrCode, Building, Terminal, History, Calendar, Filter, Info, Globe, Link as LinkIcon, CheckCircle, Eye, EyeOff, ChevronDown, ChevronRight } from 'lucide-react';
+import { GeneralSettings, User, ToastMessage, StockItem, ExpeditionRule, UserRole, UserSetor, ColumnMapping, Setor } from '../types';
+import { Download, Upload, Trash2, ArrowLeft, Settings2, Database, ShieldAlert, CheckCircle, Info, FileSpreadsheet, ListTree, Filter, Plus, Calendar as CalendarIcon, PackageOpen, Globe, Terminal, Users, CheckSquare, Square, Building, Loader2, Edit2, X, Check, Link as LinkIcon, UploadCloud, EyeOff, Eye, ChevronDown, ChevronRight, RefreshCw, AlertTriangle, Save, FileDown } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { syncDatabase } from '../lib/supabaseClient';
 import ConfirmDbResetModal from '../components/ConfirmDbResetModal';
@@ -18,15 +17,16 @@ interface ConfiguracoesGeraisPageProps {
     addToast: (message: string, type: ToastMessage['type']) => void;
     stockItems: StockItem[];
     users: User[];
-    sectors: any[];
+    sectors: Setor[];
     onAddSector: (name: string) => Promise<boolean>;
-    onDeleteSector: (id: string) => Promise<boolean>;
+    onDeleteSector: (id: string) => void;
+    onEditSector?: (id: string, newName: string) => Promise<boolean>;
 }
 
 type ConfigTab = 'sistema' | 'mapeamento' | 'manutencao';
 
 export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (props) => {
-    const { setCurrentPage, generalSettings, onSaveGeneralSettings, addToast, stockItems, users, onBackupData, onResetDatabase, onClearScanHistory, sectors, onAddSector, onDeleteSector } = props;
+    const { setCurrentPage, generalSettings, onSaveGeneralSettings, addToast, stockItems, users, onBackupData, onResetDatabase, onClearScanHistory, sectors, onAddSector, onDeleteSector, onEditSector } = props;
     
     const [activeTab, setActiveTab] = useState<ConfigTab>('sistema');
     const [settings, setSettings] = useState<GeneralSettings>(generalSettings);
@@ -37,6 +37,8 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
     const [isClearHistoryModalOpen, setIsClearHistoryModalOpen] = useState(false);
     const [newSectorName, setNewSectorName] = useState('');
     const [isAddingSector, setIsAddingSector] = useState(false);
+    const [editingSectorId, setEditingSectorId] = useState<string | null>(null);
+    const [editingSectorName, setEditingSectorName] = useState('');
     const [expandedPanels, setExpandedPanels] = useState<Set<string>>(new Set());
 
     const togglePanel = (canal: string) => {
@@ -46,9 +48,10 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
             return next;
         });
     };
-    const showAllPanels = () => setExpandedPanels(new Set(['ml', 'shopee', 'site']));
+    const allChannelsList = useMemo(() => ['ml', 'shopee', 'site', ...(settings.customStores || []).map(cs => cs.id)], [settings.customStores]);
+    const showAllPanels = () => setExpandedPanels(new Set(allChannelsList));
     const hideAllPanels = () => setExpandedPanels(new Set());
-    const allExpanded = expandedPanels.size === 3;
+    const allExpanded = expandedPanels.size > 0 && expandedPanels.size === allChannelsList.length;
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -79,25 +82,32 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
         }
     };
 
-    const updateMapping = (canal: 'ml' | 'shopee' | 'site', field: keyof ColumnMapping, value: any) => {
-        setSettings(prev => ({...prev, importer: {...prev.importer, [canal]: { ...prev.importer[canal], [field]: value }}}));
+    const getMappingForChannel = (canalId: string): any => {
+        const key = canalId.toLowerCase();
+        if (['ml', 'shopee', 'site'].includes(key)) return settings.importer[key as 'ml' | 'shopee' | 'site'] || {};
+        return (settings as any)[`importer_${key}`] || {};
     };
 
-    const toggleStatusValue = (canal: 'ml' | 'shopee' | 'site', value: string) => {
-        setSettings(prev => {
-            const currentValues = prev.importer[canal].acceptedStatusValues || [];
-            const valueTrimmed = value.trim();
-            const newValues = currentValues.includes(valueTrimmed) ? currentValues.filter(v => v !== valueTrimmed) : [...currentValues, valueTrimmed];
-            return {...prev, importer: {...prev.importer, [canal]: { ...prev.importer[canal], acceptedStatusValues: newValues }}};
-        });
+    const updateMapping = (canalId: string, field: string, value: any) => {
+        const key = canalId.toLowerCase();
+        if (['ml', 'shopee', 'site'].includes(key)) {
+            setSettings(prev => ({...prev, importer: {...prev.importer, [key]: { ...prev.importer[key as 'ml' | 'shopee' | 'site'], [field]: value }}}));
+        } else {
+            setSettings(prev => ({...prev, [`importer_${key}`]: { ...((prev as any)[`importer_${key}`] || {}), [field]: value }}));
+        }
     };
 
-    const toggleFeeColumn = (canal: 'ml' | 'shopee' | 'site', header: string) => {
-        setSettings(prev => {
-            const currentFees = prev.importer[canal].fees || [];
-            const newFees = currentFees.includes(header) ? currentFees.filter(f => f !== header) : [...currentFees, header];
-            return { ...prev, importer: { ...prev.importer, [canal]: { ...prev.importer[canal], fees: newFees }}};
-        });
+    const toggleStatusValue = (canalId: string, value: string) => {
+        const current = getMappingForChannel(canalId).acceptedStatusValues || [];
+        const valueTrimmed = value.trim();
+        const newValues = current.includes(valueTrimmed) ? current.filter((v: string) => v !== valueTrimmed) : [...current, valueTrimmed];
+        updateMapping(canalId, 'acceptedStatusValues', newValues);
+    };
+
+    const toggleFeeColumn = (canalId: string, header: string) => {
+        const current = getMappingForChannel(canalId).fees || [];
+        const newFees = current.includes(header) ? current.filter((f: string) => f !== header) : [...current, header];
+        updateMapping(canalId, 'fees', newFees);
     };
 
     const Section: React.FC<{title: string, icon: ReactNode, children: ReactNode, className?: string}> = ({title, icon, children, className}) => (
@@ -116,42 +126,51 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
         </button>
     );
 
-    const MapRow = ({ label, field, canal, editable }: { label: string, field: keyof ColumnMapping, canal: 'ml' | 'shopee' | 'site', editable?: boolean }) => (
-        <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-black text-gray-400 uppercase">{label}</label>
-            {editable ? (
-                <input
-                    type="text"
-                    value={(settings.importer[canal][field] as string) || ''}
-                    onChange={e => updateMapping(canal, field, e.target.value)}
-                    placeholder="Nome da coluna (opcional)"
-                    className="p-2 border rounded-xl text-xs bg-gray-50 focus:ring-2 focus:ring-blue-500 font-bold outline-none"
-                />
-            ) : (
-                <select value={settings.importer[canal][field] as string} onChange={e => updateMapping(canal, field, e.target.value)} className="p-2 border rounded-xl text-xs bg-gray-50 focus:ring-2 focus:ring-blue-500 font-bold">
-                    <option value="">-- Selecione --</option>
-                    {detectedHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                    {settings.importer[canal][field] && !detectedHeaders.includes(settings.importer[canal][field] as string) && (<option value={settings.importer[canal][field] as string}>{settings.importer[canal][field] as string} (Salvo)</option>)}
-                </select>
-            )}
-        </div>
-    );
-
-    const FeeSelector = ({ canal }: { canal: 'ml' | 'shopee' | 'site' }) => (
-        <div className="mt-4">
-            <label className="text-[10px] font-black text-gray-400 uppercase mb-2 block">Taxas e Descontos a Abater (Múltiplos)</label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-3 border rounded-2xl bg-slate-50 border-slate-100">
-                {detectedHeaders.length > 0 ? detectedHeaders.map(h => (<button key={h} onClick={() => toggleFeeColumn(canal, h)} className={`flex items-center gap-3 p-2.5 rounded-xl border transition-all text-left ${settings.importer[canal].fees?.includes(h) ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-100' : 'bg-white border-slate-200 text-slate-600 hover:border-blue-300'}`}><div className="flex-shrink-0">{settings.importer[canal].fees?.includes(h) ? <CheckSquare size={18}/> : <Square size={18} className="text-slate-300"/>}</div><span className="text-[11px] font-bold uppercase truncate">{h}</span></button>)) : (<div className="col-span-full py-6 text-center"><p className="text-xs text-slate-400 font-medium uppercase italic">Suba uma planilha de exemplo para listar as colunas de taxas.</p></div>)}
+    const MapRow = ({ label, field, canalId, editable }: { label: string, field: string, canalId: string, editable?: boolean }) => {
+        const val = getMappingForChannel(canalId)[field] as string;
+        const OFF_VALUE = '__OFF__';
+        return (
+            <div className="flex flex-col gap-1 w-full">
+                <label className="text-[10px] font-black text-gray-400 uppercase">{label}</label>
+                {editable ? (
+                    <input
+                        type="text"
+                        value={val || ''}
+                        onChange={e => updateMapping(canalId, field, e.target.value)}
+                        placeholder="Nome da coluna (opcional)"
+                        className="p-2 border rounded-xl text-xs bg-gray-50 focus:ring-2 focus:ring-blue-500 font-bold outline-none"
+                    />
+                ) : (
+                    <select value={val || ''} onChange={e => updateMapping(canalId, field, e.target.value)} className={`p-2 border rounded-xl w-full text-xs font-bold ${val === OFF_VALUE ? 'bg-red-50 text-red-500 border-red-200' : 'bg-gray-50 border-gray-200 focus:ring-2 focus:ring-blue-500'}`}>
+                        <option value="">-- Selecione ou Auto --</option>
+                        <option value={OFF_VALUE}>🚫 Desativado (Off)</option>
+                        {detectedHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                        {val && val !== OFF_VALUE && !detectedHeaders.includes(val) && (<option value={val}>{val} (Salvo)</option>)}
+                    </select>
+                )}
             </div>
-        </div>
-    );
+        );
+    };
 
-    const StatusFilterSettings = ({ canal }: { canal: 'ml' | 'shopee' | 'site' }) => {
-        const statusCol = settings.importer[canal].statusColumn;
-        const savedValues = settings.importer[canal].acceptedStatusValues || [];
-        const uniqueValuesInFile = useMemo(() => { if (!statusCol || sampleData.length === 0) return []; const values = new Set<string>(); sampleData.forEach(row => { const val = row[statusCol]; if (val) values.add(String(val).trim()); }); return Array.from(values).sort(); }, [statusCol, sampleData]);
+    const FeeSelector = ({ canalId }: { canalId: string }) => {
+        const fees = getMappingForChannel(canalId).fees || [];
+        return (
+            <div className="mt-4">
+                <label className="text-[10px] font-black text-gray-400 uppercase mb-2 block">Taxas e Descontos a Abater (Múltiplos)</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-3 border rounded-2xl bg-slate-50 border-slate-100">
+                    {detectedHeaders.length > 0 ? detectedHeaders.map(h => (<button key={h} onClick={() => toggleFeeColumn(canalId, h)} className={`flex items-center gap-3 p-2.5 rounded-xl border transition-all text-left ${fees.includes(h) ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-100' : 'bg-white border-slate-200 text-slate-600 hover:border-blue-300'}`}><div className="flex-shrink-0">{fees.includes(h) ? <CheckSquare size={18}/> : <Square size={18} className="text-slate-300"/>}</div><span className="text-[11px] font-bold uppercase truncate">{h}</span></button>)) : (<div className="col-span-full py-6 text-center"><p className="text-xs text-slate-400 font-medium uppercase italic">Suba uma planilha de exemplo para listar as colunas de taxas.</p></div>)}
+                </div>
+            </div>
+        );
+    };
+
+    const StatusFilterSettings = ({ canalId }: { canalId: string }) => {
+        const OFF_VALUE = '__OFF__';
+        const statusCol = getMappingForChannel(canalId).statusColumn;
+        const savedValues = getMappingForChannel(canalId).acceptedStatusValues || [];
+        const uniqueValuesInFile = useMemo(() => { if (!statusCol || statusCol === OFF_VALUE || sampleData.length === 0) return []; const values = new Set<string>(); sampleData.forEach(row => { const val = row[statusCol]; if (val) values.add(String(val).trim()); }); return Array.from(values).sort(); }, [statusCol, sampleData]);
         const allDisplayValues = Array.from(new Set([...savedValues, ...uniqueValuesInFile])).sort();
-        return (<div className="mt-6 p-4 bg-purple-50 rounded-2xl border border-purple-100"><h4 className="text-xs font-black text-purple-800 uppercase mb-3 flex items-center gap-2"><Filter size={14}/> Filtro de Validação de Venda</h4><div className="space-y-4"><MapRow label="Coluna de Status na Planilha" field="statusColumn" canal={canal} />{statusCol ? (<div><label className="text-[10px] font-black text-gray-400 uppercase mb-2 block">Selecione os Status Válidos (Venda Concluída)</label>{allDisplayValues.length > 0 ? (<div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto bg-white p-2 rounded-xl border border-purple-100">{allDisplayValues.map(val => (<button key={val} onClick={() => toggleStatusValue(canal, val)} className={`flex items-center gap-2 p-2 rounded-lg border text-left transition-all ${savedValues.includes(val) ? 'bg-purple-600 border-purple-600 text-white' : 'bg-gray-50 border-gray-100 text-gray-600 hover:bg-gray-100'}`}>{savedValues.includes(val) ? <CheckSquare size={16}/> : <Square size={16}/>}<span className="text-xs font-bold truncate">{val}</span></button>))}</div>) : (<div className="p-4 bg-white rounded-xl border border-dashed border-gray-300 text-center"><p className="text-xs text-gray-400 italic">Nenhum valor encontrado nesta coluna na planilha de exemplo. <br/>Suba uma planilha acima para carregar as opções.</p></div>)}<p className="text-[9px] text-purple-600 mt-2 font-medium flex items-center gap-1"><Info size={12}/> Apenas linhas com os status marcados serão contabilizadas no financeiro. O restante será considerado cancelado ou devolvido.</p></div>) : (<p className="text-xs text-gray-400 italic">Selecione a coluna de status acima para configurar os valores.</p>)}</div></div>);
+        return (<div className="mt-6 p-4 bg-purple-50 rounded-2xl border border-purple-100"><h4 className="text-xs font-black text-purple-800 uppercase mb-3 flex items-center gap-2"><Filter size={14}/> Filtro de Validação de Venda</h4><div className="space-y-4"><MapRow label="Coluna de Status na Planilha" field="statusColumn" canalId={canalId} />{statusCol && statusCol !== OFF_VALUE ? (<div><label className="text-[10px] font-black text-gray-400 uppercase mb-2 block">Selecione os Status Válidos (Venda Concluída)</label>{allDisplayValues.length > 0 ? (<div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto bg-white p-2 rounded-xl border border-purple-100">{allDisplayValues.map(val => (<button key={val} onClick={() => toggleStatusValue(canalId, val)} className={`flex items-center gap-2 p-2 rounded-lg border text-left transition-all ${savedValues.includes(val) ? 'bg-purple-600 border-purple-600 text-white' : 'bg-gray-50 border-gray-100 text-gray-600 hover:bg-gray-100'}`}>{savedValues.includes(val) ? <CheckSquare size={16}/> : <Square size={16}/>}<span className="text-xs font-bold truncate">{val}</span></button>))}</div>) : (<div className="flex items-center gap-2"><input type="text" value={savedValues.join(', ')} onChange={(e) => updateMapping(canalId, 'acceptedStatusValues', e.target.value.split(',').map(s=>s.trim()).filter(Boolean))} placeholder="ex: concluído, pago" className="flex-1 p-2 border border-slate-300 rounded text-xs bg-white outline-none focus:ring-1 focus:ring-purple-500" /><p className="text-[10px] text-gray-400">Separe por vírgulas</p></div>)}<p className="text-[9px] text-purple-600 mt-2 font-medium flex items-center gap-1"><Info size={12}/> Apenas linhas com os status marcados serão contabilizadas. O restante será desconsiderado.</p></div>) : (<p className="text-xs text-gray-400 italic">Selecione a coluna de status ou use "🚫 Desativado (Off)".</p>)}</div></div>);
     };
 
     return (
@@ -181,6 +200,32 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                                         value={settings.companyName} 
                                         onChange={e => setSettings(prev => ({...prev, companyName: e.target.value}))}
                                         className="p-3 border rounded-xl text-sm bg-gray-50 focus:ring-2 focus:ring-blue-500 font-bold"
+                                    />
+                                </div>
+                            </div>
+                        </Section>
+
+                        <Section title="Opções de Exportação (Relatórios)" icon={<FileDown size={24} className="text-emerald-500" />}>
+                            <p className="text-xs text-slate-500 mb-4">Personalize o título e a logo que aparecerão nos relatórios exportados em PDF e PPTX.</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase">Título do Relatório</label>
+                                    <input 
+                                        type="text" 
+                                        value={settings.reportTitle || ''} 
+                                        onChange={e => setSettings(prev => ({...prev, reportTitle: e.target.value}))}
+                                        placeholder="Ex: Relatório Financeiro Estratégico"
+                                        className="p-3 border rounded-xl text-sm bg-gray-50 focus:ring-2 focus:ring-emerald-500 font-bold"
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                    <label className="text-[10px] font-black text-gray-400 uppercase">Logo (URL ou Base64)</label>
+                                    <input 
+                                        type="text" 
+                                        value={settings.reportLogoBase64 || ''} 
+                                        onChange={e => setSettings(prev => ({...prev, reportLogoBase64: e.target.value}))}
+                                        placeholder="Cole a URL da imagem (opcional)"
+                                        className="p-3 border rounded-xl text-sm bg-gray-50 focus:ring-2 focus:ring-emerald-500 font-bold"
                                     />
                                 </div>
                             </div>
@@ -251,20 +296,64 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                                     return (
                                     <div key={sector.id} className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm group hover:border-violet-300 transition-all">
                                         <div className="flex items-center justify-between">
-                                            <div className="flex flex-col">
-                                                <span className="text-sm font-black text-slate-800 uppercase">{sector.name}</span>
-                                                <span className="text-[10px] text-slate-400 font-bold uppercase">{sectorUsers.length} funcionário(s)</span>
-                                            </div>
-                                            <button 
-                                                onClick={() => {
-                                                    if (confirm(`Tem certeza que deseja excluir o setor "${sector.name}"? Isso pode afetar funcionários vinculados.`)) {
-                                                        onDeleteSector(sector.id);
-                                                    }
-                                                }}
-                                                className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                                            >
-                                                <Trash2 size={18} />
-                                            </button>
+                                            {editingSectorId === sector.id ? (
+                                                <div className="flex-1 flex gap-2 w-full">
+                                                    <input 
+                                                        type="text" 
+                                                        value={editingSectorName}
+                                                        onChange={(e) => setEditingSectorName(e.target.value)}
+                                                        className="flex-1 p-2 border border-violet-300 rounded-lg text-sm font-bold bg-violet-50 focus:outline-none"
+                                                        autoFocus
+                                                    />
+                                                    <button 
+                                                        onClick={async () => {
+                                                            if (!editingSectorName.trim() || !onEditSector) return;
+                                                            const success = await onEditSector(sector.id, editingSectorName.trim());
+                                                            if (success) setEditingSectorId(null);
+                                                        }}
+                                                        disabled={!editingSectorName.trim()}
+                                                        className="p-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50"
+                                                    >
+                                                        <Check size={16} />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => setEditingSectorId(null)}
+                                                        className="p-2 bg-slate-200 text-slate-600 rounded-lg hover:bg-slate-300"
+                                                    >
+                                                        <X size={16} />
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <div className="flex flex-col">
+                                                        <span className="text-sm font-black text-slate-800 uppercase">{sector.name}</span>
+                                                        <span className="text-[10px] text-slate-400 font-bold uppercase">{sectorUsers.length} funcionário(s)</span>
+                                                    </div>
+                                                    <div className="flex gap-1">
+                                                        <button 
+                                                            onClick={() => {
+                                                                setEditingSectorId(sector.id);
+                                                                setEditingSectorName(sector.name);
+                                                            }}
+                                                            className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                                                            title="Editar Setor"
+                                                        >
+                                                            <Edit2 size={18} />
+                                                        </button>
+                                                        <button 
+                                                            onClick={() => {
+                                                                if (confirm(`Tem certeza que deseja excluir o setor "${sector.name}"? Isso pode afetar funcionários vinculados.`)) {
+                                                                    onDeleteSector(sector.id);
+                                                                }
+                                                            }}
+                                                            className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                                            title="Excluir Setor"
+                                                        >
+                                                            <Trash2 size={18} />
+                                                        </button>
+                                                    </div>
+                                                </>
+                                            )}
                                         </div>
                                         {sectorUsers.length > 0 && (
                                             <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap gap-1.5">
@@ -407,64 +496,55 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                             </button>
                         </div>
 
-                        <div className={allExpanded ? 'grid grid-cols-1 lg:grid-cols-3 gap-6' : 'space-y-3'}>
-                            {/* --- MERCADO LIVRE --- */}
-                            <div className="bg-gray-50/50 rounded-2xl border overflow-hidden">
-                                <button onClick={() => togglePanel('ml')} className="w-full flex items-center justify-between p-4 hover:bg-gray-100 transition-colors">
-                                    <h3 className="font-bold text-gray-700 flex items-center gap-2">Mercado Livre</h3>
-                                    <div className="flex items-center gap-2 text-gray-400">
-                                        {expandedPanels.has('ml') ? <Eye size={18} className="text-blue-500"/> : <EyeOff size={18}/>}
-                                        {expandedPanels.has('ml') ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
-                                    </div>
-                                </button>
-                                {expandedPanels.has('ml') && (
-                                    <div className="p-4 pt-0 space-y-4 animate-in fade-in">
-                                        <div className="space-y-4"><MapRow label="N.º da Venda" field="orderId" canal="ml" /><MapRow label="SKU do Produto" field="sku" canal="ml" /><MapRow label="Quantidade" field="qty" canal="ml" /><MapRow label="Código de Rastreio" field="tracking" canal="ml" /><MapRow label="Data da Venda" field="date" canal="ml" /><MapRow label="Data de Envio Prev." field="dateShipping" canal="ml" /><MapRow label="Receita Bruta" field="priceGross" canal="ml" /><MapRow label="Total Pago pelo Comprador" field="buyerPaidTotal" canal="ml" /><MapRow label="Nome do Comprador" field="customerName" canal="ml" /></div>
-                                        <FeeSelector canal="ml" />
-                                        <StatusFilterSettings canal="ml" />
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* --- SHOPEE --- */}
-                            <div className="bg-gray-50/50 rounded-2xl border overflow-hidden">
-                                <button onClick={() => togglePanel('shopee')} className="w-full flex items-center justify-between p-4 hover:bg-gray-100 transition-colors">
-                                    <h3 className="font-bold text-gray-700 flex items-center gap-2">Shopee</h3>
-                                    <div className="flex items-center gap-2 text-gray-400">
-                                        {expandedPanels.has('shopee') ? <Eye size={18} className="text-blue-500"/> : <EyeOff size={18}/>}
-                                        {expandedPanels.has('shopee') ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
-                                    </div>
-                                </button>
-                                {expandedPanels.has('shopee') && (
-                                    <div className="p-4 pt-0 space-y-4 animate-in fade-in">
-                                        <div className="space-y-4"><MapRow label="N.º do Pedido" field="orderId" canal="shopee" /><MapRow label="Referência SKU" field="sku" canal="shopee" /><MapRow label="Quantidade" field="qty" canal="shopee" /><MapRow label="Código de Rastreio" field="tracking" canal="shopee" /><MapRow label="Data da Venda" field="date" canal="shopee" /><MapRow label="Data de Envio Prev." field="dateShipping" canal="shopee" /><MapRow label="Preço Acordado" field="priceGross" canal="shopee" /><MapRow label="Total Pago pelo Comprador" field="buyerPaidTotal" canal="shopee" /><MapRow label="Nome do Comprador" field="customerName" canal="shopee" /></div>
-                                        <FeeSelector canal="shopee" />
-                                        <StatusFilterSettings canal="shopee" />
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* --- TIKTOKSHOP / SITE --- */}
-                            <div className="bg-gray-50/50 rounded-2xl border overflow-hidden">
-                                <button onClick={() => togglePanel('site')} className="w-full flex items-center justify-between p-4 hover:bg-gray-100 transition-colors">
-                                    <h3 className="font-bold text-gray-700 flex items-center gap-2">
-                                        TikTok Shop / Site / Outros
-                                        <span className="text-[9px] font-normal text-pink-500 bg-pink-50 px-2 py-0.5 rounded-full">Inclui TikTok</span>
-                                    </h3>
-                                    <div className="flex items-center gap-2 text-gray-400">
-                                        {expandedPanels.has('site') ? <Eye size={18} className="text-blue-500"/> : <EyeOff size={18}/>}
-                                        {expandedPanels.has('site') ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
-                                    </div>
-                                </button>
-                                {expandedPanels.has('site') && (
-                                    <div className="p-4 pt-0 space-y-4 animate-in fade-in">
-                                        <p className="text-[10px] text-slate-400 italic">Configure o mapeamento de colunas para importações do TikTok Shop, Site próprio e outros canais. Digite o nome exato da coluna na sua planilha.</p>
-                                        <div className="space-y-4"><MapRow label="Nº do Pedido" field="orderId" canal="site" editable /><MapRow label="SKU" field="sku" canal="site" editable /><MapRow label="Quantidade" field="qty" canal="site" editable /><MapRow label="Código de Rastreio" field="tracking" canal="site" editable /><MapRow label="Data da Venda" field="date" canal="site" editable /><MapRow label="Data de Envio" field="dateShipping" canal="site" editable /><MapRow label="Receita Bruta" field="priceGross" canal="site" editable /><MapRow label="Valor Total" field="totalValue" canal="site" editable /><MapRow label="Total Pago pelo Comprador" field="buyerPaidTotal" canal="site" editable /><MapRow label="Taxa de Envio" field="shippingFee" canal="site" editable /><MapRow label="Nome do Cliente" field="customerName" canal="site" editable /><MapRow label="CPF" field="customerCpf" canal="site" editable /></div>
-                                        <FeeSelector canal="site" />
-                                        <StatusFilterSettings canal="site" />
-                                    </div>
-                                )}
-                            </div>
+                        <div className={allExpanded ? 'grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6' : 'space-y-3'}>
+                            {[
+                                { id: 'ml', name: 'Mercado Livre', type: 'system' },
+                                { id: 'shopee', name: 'Shopee', type: 'system' },
+                                { id: 'site', name: 'Padrão (Site/Outros)', type: 'system' },
+                                ...(settings.customStores || []).map(cs => ({ id: cs.id, name: cs.name, type: 'custom' }))
+                            ].map(canal => (
+                                <div key={canal.id} className="bg-gray-50/50 rounded-2xl border overflow-hidden">
+                                    <button onClick={() => togglePanel(canal.id)} className="w-full flex items-center justify-between p-4 hover:bg-gray-100 transition-colors">
+                                        <h3 className="font-bold text-gray-700 flex items-center gap-2">
+                                            {canal.name}
+                                            {canal.type === 'custom' && <span className="text-[9px] font-normal text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full uppercase tracking-wider border border-indigo-100">Personalizado</span>}
+                                        </h3>
+                                        <div className="flex items-center gap-2 text-gray-400">
+                                            {expandedPanels.has(canal.id) ? <Eye size={18} className="text-blue-500"/> : <EyeOff size={18}/>}
+                                            {expandedPanels.has(canal.id) ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
+                                        </div>
+                                    </button>
+                                    {expandedPanels.has(canal.id) && (
+                                        <div className="p-4 pt-0 space-y-4 animate-in fade-in">
+                                            {canal.id === 'site' && (
+                                                <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 mb-4">
+                                                    <div className="flex flex-col gap-1 w-full">
+                                                        <label className="text-[10px] font-black text-blue-700 uppercase">Nome de Exibição no Gráfico de Financeiro</label>
+                                                        <input
+                                                            type="text"
+                                                            value={settings.importer.site.storeName || ''}
+                                                            onChange={e => updateMapping('site', 'storeName', e.target.value)}
+                                                            placeholder="Ex: Minha Loja"
+                                                            className="p-2 border rounded-xl text-sm bg-white focus:ring-2 focus:ring-blue-500 font-bold outline-none"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+                                            
+                                            <div className="grid grid-cols-1 gap-4">
+                                                <MapRow label="Valor Bruto da Venda" field="priceGross" canalId={canal.id} />
+                                                <FeeSelector canalId={canal.id} />
+                                                <MapRow label="Frete / Envio / Dedutíveis (Opcional)" field="shippingFee" canalId={canal.id} />
+                                                <MapRow label="Valor Líquido Recebido" field="priceNet" canalId={canal.id} />
+                                            </div>
+                                            
+                                            <div className="border-t border-gray-200 mt-4 pt-4">
+                                                <StatusFilterSettings canalId={canal.id} />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
                         </div>
                     </Section>
                 )}
