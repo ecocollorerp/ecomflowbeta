@@ -83,6 +83,15 @@ const ProdutoCombinadoModal: React.FC<ProdutoCombinadoModalProps> = ({ isOpen, o
         setInsumoSearch(''); 
     };
 
+    const totalCost = useMemo(() => {
+        return editedItems.reduce((acc, item) => {
+            const insumo = insumos.find(i => i.code === item.stockItemCode);
+            return acc + (item.qty_per_pack * (insumo?.cost_price || 0));
+        }, 0);
+    }, [editedItems, insumos]);
+
+    const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
     if (!isOpen) return null;
 
     return (
@@ -107,12 +116,22 @@ const ProdutoCombinadoModal: React.FC<ProdutoCombinadoModalProps> = ({ isOpen, o
                                     <div className="flex items-center justify-between flex-wrap gap-2">
                                         <div className="flex-1">
                                             <p className="font-medium text-gray-800">{insumoDetails?.name || item.stockItemCode}</p>
-                                            <p className="text-xs text-gray-500">{item.stockItemCode}</p>
+                                            <div className="flex items-center gap-2">
+                                                <p className="text-xs text-gray-500">{item.stockItemCode}</p>
+                                                {insumoDetails?.cost_price && (
+                                                    <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">Custo: {fmt(insumoDetails.cost_price)} / {insumoDetails.unit}</span>
+                                                )}
+                                            </div>
                                         </div>
-                                        <div className="flex items-center gap-2">
-                                            <input type="number" step="0.01" value={item.qty_per_pack} onChange={(e) => handleQtyChange(item.stockItemCode, parseFloat(e.target.value))} className="w-24 text-right border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"/>
-                                            <span className="text-sm text-gray-500 w-8">{insumoDetails?.unit}</span>
-                                            <button onClick={() => handleRemoveItem(item.stockItemCode)} className="text-red-500 hover:text-red-700 p-1"><Trash2 size={16} /></button>
+                                        <div className="flex flex-col items-end gap-1">
+                                            <div className="flex items-center gap-2">
+                                                <input type="number" step="0.01" value={item.qty_per_pack} onChange={(e) => handleQtyChange(item.stockItemCode, parseFloat(e.target.value))} className="w-20 text-right border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"/>
+                                                <span className="text-sm text-gray-500 w-8">{insumoDetails?.unit}</span>
+                                                <button onClick={() => handleRemoveItem(item.stockItemCode)} className="text-red-300 hover:text-red-500 p-1"><Trash2 size={16} /></button>
+                                            </div>
+                                            {insumoDetails?.cost_price && (
+                                                <span className="text-[10px] font-black text-gray-400">Subtotal: {fmt(item.qty_per_pack * insumoDetails.cost_price)}</span>
+                                            )}
                                         </div>
                                     </div>
                                     <div className="mt-2 pt-2 border-t border-gray-200">
@@ -170,9 +189,15 @@ const ProdutoCombinadoModal: React.FC<ProdutoCombinadoModalProps> = ({ isOpen, o
                     </div>
                 </div>
 
-                <div className="mt-6 flex justify-end space-x-3 border-t pt-4">
-                    <button onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors">Cancelar</button>
-                    <button onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 transition-colors">Salvar Receita</button>
+                <div className="mt-6 flex items-center justify-between border-t pt-4">
+                    <div className="p-3 bg-slate-900 rounded-xl text-white">
+                        <p className="text-[10px] font-black uppercase text-slate-400 leading-none mb-1">Custo Total dos Insumos (CMV)</p>
+                        <p className="text-xl font-black text-emerald-400 leading-none">{fmt(totalCost)}</p>
+                    </div>
+                    <div className="flex space-x-3">
+                        <button onClick={onClose} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors font-bold uppercase text-xs">Cancelar</button>
+                        <button onClick={handleSave} className="px-6 py-2 bg-blue-600 text-white font-black rounded-md hover:bg-blue-700 transition-all active:scale-95 uppercase text-xs">Salvar Receita</button>
+                    </div>
                 </div>
             </div>
         </div>

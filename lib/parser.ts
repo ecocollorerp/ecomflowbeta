@@ -108,12 +108,16 @@ export const extractHeadersAndData = (fileBuffer: ArrayBuffer): { headers: strin
     const rawData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
 
     let headerRowIndex = 0;
-    // Procura a primeira linha com muitas (ex: > 2) colunas preenchidas
+    let maxCols = 0;
     for (let i = 0; i < Math.min(rawData.length, 50); i++) {
         const row = rawData[i];
-        if (Array.isArray(row) && row.length > 2) {
-            headerRowIndex = i;
-            break;
+        if (Array.isArray(row)) {
+            const filledCols = row.filter(c => String(c || '').trim() !== '').length;
+            if (filledCols > maxCols) {
+                maxCols = filledCols;
+                headerRowIndex = i;
+            }
+            if (filledCols >= 8) break; // Assume that a real header has at least 8 columns
         }
     }
 
@@ -185,12 +189,16 @@ export const extractShippingDates = (
             headerRowIndex = 0;
             detectedChannel = forcedCanal;
         } else {
-            // Tenta localizar a linha de cabeçalho por heurística semelhante a extractHeadersAndData
+            let maxCols = 0;
             for (let i = 0; i < Math.min(rawData.length, 50); i++) {
                 const row = rawData[i];
-                if (Array.isArray(row) && row.filter(c => String(c || '').trim()).length > 2) {
-                    headerRowIndex = i;
-                    break;
+                if (Array.isArray(row)) {
+                    const filledCols = row.filter(c => String(c || '').trim() !== '').length;
+                    if (filledCols > maxCols) {
+                        maxCols = filledCols;
+                        headerRowIndex = i;
+                    }
+                    if (filledCols >= 8) break;
                 }
             }
             if (headerRowIndex === -1) return [];
@@ -372,10 +380,17 @@ export const getParserInternals = (
         canalDetectado = forcedCanal as Canal;
         mappingToUse = settings.importer[canalDetectado.toLowerCase() as 'ml' | 'shopee' | 'site'];
     } else {
-        // heurística similar à extractHeadersAndData
+        let maxCols = 0;
         for (let i = 0; i < Math.min(rawData.length, 50); i++) {
             const row = rawData[i];
-            if (Array.isArray(row) && row.filter(c => String(c || '').trim()).length > 2) { headerRowIndex = i; break; }
+            if (Array.isArray(row)) {
+                const filledCols = row.filter(c => String(c || '').trim() !== '').length;
+                if (filledCols > maxCols) {
+                    maxCols = filledCols;
+                    headerRowIndex = i;
+                }
+                if (filledCols >= 8) break;
+            }
         }
         if (headerRowIndex !== -1) {
             const firstRowValues = (rawData[headerRowIndex] || []).map(c => normalizeHeaderToken(c));
@@ -503,9 +518,21 @@ export const parseExcelFile = (
             canalDetectado = forcedCanal;
             mappingToUse = settings.importer[forcedCanal.toLowerCase() as 'ml' | 'shopee' | 'site'];
             const isML = forcedCanal === 'ML';
-            headerRowIndex = (isML && rawData.length > 5 && Array.isArray(rawData[5])) ? 5 : 0;
-        } else {
-            throw new Error(`Não foi possível detectar o formato da planilha automaticamente.`);
+            let maxCols = 0;
+            for (let i = 0; i < Math.min(rawData.length, 50); i++) {
+                const row = rawData[i];
+                if (Array.isArray(row)) {
+                    const filledCols = row.filter(c => String(c || '').trim() !== '').length;
+                    if (filledCols > maxCols) {
+                        maxCols = filledCols;
+                        headerRowIndex = i;
+                    }
+                    if (filledCols >= 8) break;
+                }
+            }
+            if (headerRowIndex === -1) {
+                throw new Error(`Não foi possível detectar o formato da planilha automaticamente.`);
+            }
         }
     }
 

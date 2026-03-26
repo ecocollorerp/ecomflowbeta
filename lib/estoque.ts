@@ -74,6 +74,11 @@ export const calculateMaterialList = (
 
     return Array.from(materialQuantities.entries()).map(([code, quantity]) => {
         const item = stockMap.get(code);
-        return { name: item?.name || code, quantity, unit: item?.unit || 'un' };
+        return { 
+            name: item?.name || code, 
+            quantity, 
+            unit: item?.unit || 'un',
+            cost: (item?.cost_price || 0) * quantity
+        };
     }).sort((a,b) => a.name.localeCompare(b.name));
 };

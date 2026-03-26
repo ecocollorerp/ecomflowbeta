@@ -91,6 +91,29 @@ export const exportPdf = (
             });
 
             foot = [['TOTAL GERAL', '', '', '', totalGeralUnidades, '']];
+            
+            // Adiciona resumo de frequências para expedição rápida
+            const freq: Record<number, number> = {};
+            groups.forEach(group => {
+                const totalQty = group.reduce((s, o) => s + o.qty_final, 0);
+                freq[totalQty] = (freq[totalQty] || 0) + 1;
+            });
+
+            const freqRows = Object.entries(freq).sort((a,b) => Number(a[0]) - Number(b[0])).map(([q, count]) => [
+                `${q} ${Number(q) === 1 ? 'Unidade' : 'Unidades'}`,
+                `${count} ${count === 1 ? 'Pedido' : 'Pedidos'}`
+            ]);
+
+            autoTable(doc, {
+                head: [['Configuração da Carga', 'Quantidade de Pedidos']],
+                body: freqRows,
+                startY: 25,
+                theme: 'grid',
+                headStyles: { fillColor: '#10b981' }, // Verde esmeralda para destacar
+            });
+            tableOptions.startY = (doc as any).lastAutoTable.finalY + 12;
+            doc.setFontSize(14);
+            doc.text('Lista Detalhada de Separação', 14, tableOptions.startY - 3);
             break;
         }
         case 'resumida': {
@@ -201,7 +224,9 @@ export const exportFinanceReport = async (payload: {
     orders: OrderItem[]; taxes?: any[]; dailyChart?: { date: string, value: number }[]; 
     canalComparison?: { ml: number, shopee: number, site: number }; 
     deductPlatformFees?: boolean; deductShipping?: boolean; showCustomerPaid?: boolean;
-    reportTitle?: string; reportLogoBase64?: string; stockMovements?: StockMovement[];
+    reportTitle?: string; reportLogoBase64?: string; customReportImageBase64?: string; 
+    pptxTemplateBase64?: string; stockMovements?: StockMovement[];
+    prevStats?: any; prevNetProfit?: number; prevTicketMedio?: number; prevMargemPct?: number; prevTaxTotal?: number;
 }) => {
     const doc = new jsPDF();
     const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -234,9 +259,18 @@ export const exportFinanceReport = async (payload: {
     doc.setFont('helvetica', 'bold');
     doc.text(payload.reportTitle || 'Relatório Financeiro Estratégico', marginL, startY);
     
+    const translatePeriod = (p: string) => {
+        if (p === 'thisMonth') return 'Este Mês';
+        if (p === 'lastMonth') return 'Mês Passado';
+        if (p === 'today') return 'Hoje';
+        if (p === 'last7days') return 'Últimos 7 Dias';
+        if (p === 'ALL') return 'Todos os Canais';
+        return p;
+    };
+
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
-    const periodText = `Período: ${payload.period} | Canal: ${payload.canal} | Gerado em: ${new Date().toLocaleString()}`;
+    const periodText = `Período: ${translatePeriod(payload.period)} | Canal: ${translatePeriod(payload.canal)} | Gerado em: ${new Date().toLocaleString()}`;
     doc.text(periodText, marginL, startY + 7);
 
     // Reset margin para o resto do documento
@@ -255,24 +289,35 @@ export const exportFinanceReport = async (payload: {
     const totalDeductions = feesDeducted + shippingDeducted + taxTotal;
     const netFinal = payload.stats.gross - totalDeductions;
 
+    const getTrendStr = (curr: number, prev: number | undefined) => {
+        if (prev === undefined || prev === null || prev === 0) return '';
+        const pct = ((curr - prev) / prev) * 100;
+        return ` (${pct > 0 ? '+' : ''}${pct.toFixed(1)}% vs ant.)`;
+    };
+
+    const totalMaterialCost = payload.materialList?.reduce((s, m) => s + (m.cost || 0), 0) || 0;
+    const materialCostTrend = getTrendStr(totalMaterialCost, payload.prevStats?.materialCost); // Supondo que venha no prevStats
+
     const summaryBody: any[][] = [
-        ['Faturamento Bruto', fmt(payload.stats.gross)],
+        ['Faturamento Bruto (sem taxas)', fmt(payload.stats.gross) + getTrendStr(payload.stats.gross, payload.prevStats?.gross)],
     ];
     if (payload.deductPlatformFees !== false) {
-        summaryBody.push(['(-) Comissões Plataforma', fmt(payload.stats.fees)]);
+        summaryBody.push(['(-) Comissões Plataforma', fmt(payload.stats.fees) + getTrendStr(payload.stats.fees, payload.prevStats?.fees)]);
     }
     if (payload.deductShipping !== false) {
-        summaryBody.push(['(-) Frete / Taxa de Envio', fmt(payload.stats.shipping)]);
+        summaryBody.push(['(-) Frete / Taxa de Envio (Expedição)', fmt(payload.stats.shipping) + getTrendStr(payload.stats.shipping, payload.prevStats?.shipping)]);
+    }
+    if (totalMaterialCost > 0) {
+        summaryBody.push(['(-) Gasto de Materiais (CMV)', fmt(totalMaterialCost) + materialCostTrend]);
     }
     enabledTaxes.forEach((t: any) => {
         summaryBody.push([`(-) ${t.name}`, fmt(t.calculatedAmount)]);
     });
-    summaryBody.push(['(=) Líquido Final', fmt(netFinal)]);
-    summaryBody.push(['Total de Unidades Vendidas', String(payload.stats.units)]);
-    summaryBody.push(['Total de Pedidos Processados', String(payload.orders.length)]);
-    if (payload.showCustomerPaid && payload.stats.customerPaid) {
-        summaryBody.push(['ℹ Total Pago pelos Clientes (informativo)', fmt(payload.stats.customerPaid)]);
-    }
+    
+    summaryBody.push(['(=) Líquido Final', fmt(netFinal - totalMaterialCost) + getTrendStr(netFinal - totalMaterialCost, payload.prevNetProfit)]);
+    summaryBody.push(['Total de Unidades Vendidas', String(payload.stats.units) + getTrendStr(payload.stats.units, payload.prevStats?.units)]);
+    summaryBody.push(['Total de Pedidos Processados', String(payload.orders.length) + getTrendStr(payload.orders.length, payload.prevStats?.orders)]);
+    summaryBody.push(['Pago pelos Clientes (inc. Frete)', fmt(payload.stats.buyerTotal)]);
 
     autoTable(doc, {
         startY: secY + 4,
@@ -311,16 +356,17 @@ export const exportFinanceReport = async (payload: {
     secY = ensureSpace(50);
     doc.setFontSize(12);
     doc.setFont('helvetica', 'bold');
-    doc.text('3. Performance de Vendas por SKU', marginL, secY);
+    doc.text('3. Top 30 Produtos (Performance)', marginL, secY);
     
     autoTable(doc, {
         startY: secY + 4,
-        head: [['SKU', 'Produto', 'Qtd.', 'Receita', '% Part.']],
-        body: payload.stats.ranking.slice(0, 30).map((item: any) => [
-            item.code,
-            (item.name || '').substring(0, 35),
+        head: [['Pos', 'Produto', 'Qtd.', 'Faturado', 'Pago p/ Cliente', '% Part.']],
+        body: payload.stats.ranking.slice(0, 30).map((item: any, idx: number) => [
+            idx + 1,
+            (item.name || '').substring(0, 45),
             item.qty,
             fmt(item.revenue),
+            fmt(item.buyerPaid),
             `${((item.revenue / (payload.stats.gross || 1)) * 100).toFixed(1)}%`
         ]),
         theme: 'grid',
@@ -334,6 +380,63 @@ export const exportFinanceReport = async (payload: {
             3: { cellWidth: 30, halign: 'right' },
             4: { cellWidth: 18, halign: 'center' },
         }
+    });
+
+    // Glitter e Miúdos
+    const glitterItems = payload.stats.ranking.filter((i: any) => {
+        const n = String(i.name || '').toLowerCase();
+        return n.includes('glitter') || n.includes('miudo') || n.includes('miúdo');
+    });
+
+    if (glitterItems.length > 0) {
+        secY = ensureSpace(50);
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Performance de Menores (Glitter / Miúdos)', marginL, secY);
+
+        autoTable(doc, {
+            startY: secY + 4,
+            head: [['SKU', 'Produto', 'Qtd.', 'Receita']],
+            body: glitterItems.map((item: any) => [
+                item.code,
+                (item.name || '').substring(0, 45),
+                item.qty,
+                fmt(item.revenue)
+            ]),
+            theme: 'grid',
+            styles: { fontSize: 7, cellPadding: 2 },
+            headStyles: { fontSize: 7, fillColor: '#ec4899' },
+            margin: { left: marginL, right: marginR },
+            columnStyles: {
+                0: { cellWidth: 30 },
+                1: { cellWidth: 'auto' },
+                2: { cellWidth: 15, halign: 'center' },
+                3: { cellWidth: 30, halign: 'right' },
+            }
+        });
+    }
+
+    // Distribuição de Quantidades
+    secY = ensureSpace(40);
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Distribuição de Quantidades por Pedido', marginL, secY);
+
+    const qtyDist = new Map<number, number>();
+    payload.orders.forEach(o => {
+        const q = o.qty_final;
+        qtyDist.set(q, (qtyDist.get(q) || 0) + 1);
+    });
+    const distArray = Array.from(qtyDist.entries()).sort((a, b) => a[0] - b[0]);
+
+    autoTable(doc, {
+        startY: secY + 4,
+        head: [['Quantidade no Pedido', 'Frequência (Vezes no período)']],
+        body: distArray.map(([q, f]) => [`Foram vendidos de ${q} em ${q}`, f]),
+        theme: 'striped',
+        headStyles: { fillColor: '#3b82f6', fontSize: 8 },
+        styles: { fontSize: 8, cellPadding: 3 },
+        margin: { left: marginL, right: marginR },
     });
 
     // 4. Insumos Consumidos
@@ -573,7 +676,15 @@ export const exportFinanceReport = async (payload: {
     doc.save(`financeiro_detalhado_${payload.canal}_${new Date().toISOString().split('T')[0]}.pdf`);
 };
 
-export const exportFinancePptx = async (payload: { period: string, canal: string, stats: any, materialList: MaterialItem[], orders: OrderItem[], taxes?: any[], dailyChart?: { date: string, value: number }[], canalComparison?: { ml: number, shopee: number, site: number }, deductPlatformFees?: boolean, deductShipping?: boolean, showCustomerPaid?: boolean }) => {
+export const exportFinancePptx = async (payload: {
+    period: string; canal: string; stats: any; materialList: MaterialItem[];
+    orders: OrderItem[]; taxes?: any[]; dailyChart?: { date: string, value: number }[];
+    canalComparison?: { ml: number, shopee: number, site: number };
+    deductPlatformFees?: boolean; deductShipping?: boolean; showCustomerPaid?: boolean;
+    reportTitle?: string; reportLogoBase64?: string; customReportImageBase64?: string;
+    pptxTemplateBase64?: string; stockMovements?: StockMovement[];
+    prevStats?: any; prevNetProfit?: number; prevTicketMedio?: number; prevMargemPct?: number; prevTaxTotal?: number;
+}) => {
     const pptx = new PptxGenJS();
     pptx.author = 'EcomFlow';
     pptx.title = `Relatório Financeiro - ${payload.canal}`;
@@ -586,7 +697,8 @@ export const exportFinancePptx = async (payload: { period: string, canal: string
     const taxTotal = enabledTaxes.reduce((s: any, t: any) => s + (t.calculatedAmount || 0), 0);
     const feesDeducted = payload.deductPlatformFees !== false ? payload.stats.fees : 0;
     const shippingDeducted = payload.deductShipping !== false ? payload.stats.shipping : 0;
-    const totalDeductions = feesDeducted + shippingDeducted + taxTotal;
+    const totalMaterialCost = payload.materialList?.reduce((s, m) => s + (m.cost || 0), 0) || 0;
+    const totalDeductions = feesDeducted + shippingDeducted + taxTotal + totalMaterialCost;
     const netFinal = payload.stats.gross - totalDeductions;
 
     // Slide 1 — Capa
@@ -611,15 +723,21 @@ export const exportFinancePptx = async (payload: { period: string, canal: string
         s2.addText(k.value, { x, y: 1.7, w: 2.8, h: 0.7, fontSize: 18, bold: true, color: k.color, align: 'center' });
     });
 
+    const getTrendStr = (curr: number, prev: number | undefined) => {
+        if (prev === undefined || prev === null || prev === 0) return '';
+        const pct = ((curr - prev) / prev) * 100;
+        return ` (${pct > 0 ? '+' : ''}${pct.toFixed(1)}% vs ant.)`;
+    };
+
     // Tabela de deduções
     const rows: PptxGenJS.TableRow[] = [
         [{ text: 'Indicador', options: { bold: true, color: 'ffffff', fill: { color: GREEN } } }, { text: 'Valor', options: { bold: true, color: 'ffffff', fill: { color: GREEN } } }],
-        [{ text: 'Faturamento Bruto' }, { text: fmt(payload.stats.gross) }],
+        [{ text: 'Faturamento Bruto' }, { text: fmt(payload.stats.gross) + getTrendStr(payload.stats.gross, payload.prevStats?.gross) }],
     ];
-    if (payload.deductPlatformFees !== false) rows.push([{ text: '(-) Comissões' }, { text: fmt(payload.stats.fees) }]);
-    if (payload.deductShipping !== false) rows.push([{ text: '(-) Frete' }, { text: fmt(payload.stats.shipping) }]);
+    if (payload.deductPlatformFees !== false) rows.push([{ text: '(-) Comissões' }, { text: fmt(payload.stats.fees) + getTrendStr(payload.stats.fees, payload.prevStats?.fees) }]);
+    if (payload.deductShipping !== false) rows.push([{ text: '(-) Frete' }, { text: fmt(payload.stats.shipping) + getTrendStr(payload.stats.shipping, payload.prevStats?.shipping) }]);
     enabledTaxes.forEach((t: any) => rows.push([{ text: `(-) ${t.name}` }, { text: fmt(t.calculatedAmount) }]));
-    rows.push([{ text: '(=) Líquido Final', options: { bold: true } }, { text: fmt(netFinal), options: { bold: true } }]);
+    rows.push([{ text: '(=) Líquido Final', options: { bold: true } }, { text: fmt(netFinal) + getTrendStr(netFinal, payload.prevNetProfit), options: { bold: true } }]);
     rows.push([{ text: 'Unidades Vendidas' }, { text: String(payload.stats.units) }]);
     rows.push([{ text: 'Pedidos Processados' }, { text: String(payload.orders.length) }]);
     if (payload.showCustomerPaid && payload.stats.customerPaid) {
@@ -638,13 +756,12 @@ export const exportFinancePptx = async (payload: { period: string, canal: string
             { text: 'Produto', options: { bold: true, color: 'ffffff', fill: { color: '1f2937' } } },
             { text: 'Qtd.', options: { bold: true, color: 'ffffff', fill: { color: '1f2937' } } },
             { text: 'Receita', options: { bold: true, color: 'ffffff', fill: { color: '1f2937' } } },
-            { text: '%', options: { bold: true, color: 'ffffff', fill: { color: '1f2937' } } },
         ]
     ];
-    (payload.stats.ranking || []).slice(0, 15).forEach((item: any) => {
+    payload.stats.ranking.slice(0, 15).forEach((item: any) => {
         rankRows.push([
-            { text: item.code },
-            { text: (item.name || '').substring(0, 35) },
+            { text: item.code.substring(0, 20) },
+            { text: (item.name || '').substring(0, 45) },
             { text: String(item.qty) },
             { text: fmt(item.revenue) },
             { text: `${((item.revenue / (payload.stats.gross || 1)) * 100).toFixed(1)}%` },
@@ -747,13 +864,17 @@ export const exportFinancePptx = async (payload: { period: string, canal: string
         ]
     ];
     let totalOp = 0;
-    if (payload.deductPlatformFees !== false && payload.stats.fees > 0) {
-        dreRows.push([{ text: 'Comissões de Plataforma' }, { text: fmt(payload.stats.fees) }]);
-        totalOp += payload.stats.fees;
+    if (feesDeducted > 0) {
+        dreRows.push([{ text: 'Comissões de Plataforma' }, { text: fmt(feesDeducted) }]);
+        totalOp += feesDeducted;
     }
-    if (payload.deductShipping !== false && payload.stats.shipping > 0) {
-        dreRows.push([{ text: 'Fretes e Envios' }, { text: fmt(payload.stats.shipping) }]);
-        totalOp += payload.stats.shipping;
+    if (shippingDeducted > 0) {
+        dreRows.push([{ text: 'Fretes e Envios (Expedição)' }, { text: fmt(shippingDeducted) }]);
+        totalOp += shippingDeducted;
+    }
+    if (totalMaterialCost > 0) {
+        dreRows.push([{ text: 'Custo de Materiais (CMV)' }, { text: fmt(totalMaterialCost) }]);
+        totalOp += totalMaterialCost;
     }
     if (enabledTaxes.length > 0) {
         enabledTaxes.forEach((t: any) => {
@@ -765,6 +886,19 @@ export const exportFinancePptx = async (payload: { period: string, canal: string
     dreRows.push([{ text: 'TOTAL DEDUZIDO', options: { bold: true } }, { text: fmt(totalOp), options: { bold: true } }]);
 
     s7.addTable(dreRows, { x: 0.5, y: 1.2, w: 9, fontSize: 12, border: { type: 'solid', pt: 0.5, color: 'e5e7eb' }, colW: [6, 3] });
+
+    // Slide 8 — Análise Visual (Foto)
+    if (payload.customReportImageBase64) {
+        const s8 = pptx.addSlide();
+        s8.addText('Análise Visual de Performance', { x: 0.5, y: 0.3, w: 9, h: 0.6, fontSize: 22, bold: true, color: '1f2937' });
+        
+        try {
+            s8.addImage({ data: payload.customReportImageBase64, x: 1, y: 1.2, w: 8, h: 4.5 });
+            s8.addText(payload.period, { x: 0.5, y: 5.3, w: 9, fontSize: 10, color: '64748b', italic: true });
+        } catch(err) {
+            console.error(err);
+        }
+    }
 
     await pptx.writeFile({ fileName: `financeiro_${payload.canal}_${new Date().toISOString().split('T')[0]}.pptx` });
 };

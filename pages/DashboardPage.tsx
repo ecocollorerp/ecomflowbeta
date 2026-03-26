@@ -10,8 +10,9 @@ import ProductionSummary from '../components/ProductionSummary';
 import PackGroupModal from '../components/PackGroupModal';
 import PackGroupDetailModal from '../components/PackGroupDetailModal';
 import { ActionCardData, AlertItemData, DashboardFilters, AlertLevel, GeneralSettings, ScanLogItem, ActivityType, ActivityItemData, OrderItem, StockItem, User, Canal, UiSettings, AdminNotice, SkuLink, ProductionSummaryData, DeducedMaterial, ProdutoCombinado, Period, DashboardWidgetConfig, StockPackGroup, ProductionStats } from '../types';
-// Added DollarSign to the list of icons imported from lucide-react
+import DailyOverviewWidgets from '../components/DailyOverviewWidgets';
 import { Package, Scan, BarChart2, ShoppingCart, Archive, AlertTriangle, AlertCircle, ShieldCheck, Printer, CheckCheck, TrendingUp, Users, Factory, Box, Calendar, RefreshCw, Eye, Settings, DollarSign, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
+
 import { dbClient } from '../lib/supabaseClient';
 
 interface DashboardPageProps {
@@ -251,6 +252,8 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
 
             <div className="mt-4">
                 {currentUser.role !== 'OPERATOR' && <AdminNotices notices={adminNotices} currentUser={currentUser} onSaveNotice={onSaveNotice} onDeleteNotice={onDeleteNotice} />}
+
+                <DailyOverviewWidgets allOrders={allOrders} dateSourceMode={dateSourceMode} />
 
                 <ProductionSummary
                     olderData={productionSummary.main.total}

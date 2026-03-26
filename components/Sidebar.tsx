@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, ScanLine, Package, BarChart3, DollarSign, Printer, Settings, UserCircle, ArrowLeftToLine, ArrowRightFromLine, Weight, Factory, QrCode, Users, ShoppingCart, LogOut, ClipboardCheck, ListPlus, BookOpen, Recycle, HelpCircle, ChevronDown, Link as LinkIcon, Globe, PackageOpen } from 'lucide-react';
+import { LayoutDashboard, ScanLine, Package, BarChart3, DollarSign, Printer, Settings, UserCircle, ArrowLeftToLine, ArrowRightFromLine, Weight, Factory, QrCode, Users, ShoppingCart, LogOut, ClipboardCheck, ListPlus, BookOpen, Recycle, HelpCircle, ChevronDown, Link as LinkIcon, Globe, PackageOpen, ShieldAlert, Calculator } from 'lucide-react';
 import { User, GeneralSettings } from '../types';
 import DynamicIcon from './DynamicIcon';
 import { canAccessPage } from '../lib/accessControl';
@@ -147,6 +147,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, lowStock
         <NavSection title="Análise" isCollapsed={isCollapsed}>
           {canShow('financeiro') && <NavItem icon={<DollarSign size={20} />} text="Financeiro" page="financeiro" active={currentPage === 'financeiro'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
           {canShow('relatorios') && <NavItem icon={<BarChart3 size={20} />} text="Relatórios" page="relatorios" active={currentPage === 'relatorios'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
+          {canShow('calculadora') && <NavItem icon={<Calculator size={20} />} text="Calculadora" page="calculadora" active={currentPage === 'calculadora'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
         </NavSection>
 
         <NavSection title="Ferramentas" isCollapsed={isCollapsed}>
@@ -157,8 +158,11 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, lowStock
 
         <NavSection title="Administração" isCollapsed={isCollapsed}>
           {canShow('funcionarios') && <NavItem icon={<Users size={20} />} text="Funcionários" page="funcionarios" active={currentPage === 'funcionarios'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
+          {hasSettingsPermission && canShow('configuracoes-gerais') && (
+                <NavItem icon={<ShieldAlert size={20} />} text="Painel Admin Global" page="configuracoes-gerais" active={currentPage === 'configuracoes-gerais'} onClick={handlePageClick} isCollapsed={isCollapsed} />
+            )}
            {hasSettingsPermission && canShow('configuracoes') && (
-                <NavItem icon={<Settings size={20} />} text="Configurações" page="configuracoes" active={currentPage.startsWith('configuracoes')} onClick={handlePageClick} isCollapsed={isCollapsed} />
+                <NavItem icon={<Settings size={20} />} text="Setores e Prefixos" page="configuracoes" active={currentPage === 'configuracoes'} onClick={handlePageClick} isCollapsed={isCollapsed} />
             )}
         </NavSection>
 

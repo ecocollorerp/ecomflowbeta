@@ -44,6 +44,8 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
         statusColumn: '',
         acceptedStatusValues: ''
     });
+    
+    const [importToFiscal, setImportToFiscal] = useState(false);
 
     const resetState = () => {
         setFiles([]);
@@ -61,6 +63,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
         setConfigSaved(false);
         setNewCustomChannelName('');
         setShowAddChannel(false);
+        setImportToFiscal(false);
         setColumnMapping({ priceGross: '', platformFees: [], shippingFee: '', priceNet: '', statusColumn: '', acceptedStatusValues: '' });
     };
 
@@ -203,7 +206,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                     allOrders,
                     generalSettings,
                     {
-                        importCpf: false,
+                        importCpf: importToFiscal,
                         importName: true,
                         columnOverrides: {
                             ...(effectiveGross ? { priceGross: effectiveGross } : {}),
@@ -518,6 +521,21 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                                 <div><p className="font-bold text-xs uppercase">Nova Produção</p></div>
                             </button>
                         </div>
+
+                        {isExcel && selectedChannel === 'ML' && (
+                            <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-xl">
+                                <input 
+                                    type="checkbox" 
+                                    id="importToFiscalCheckbox" 
+                                    checked={importToFiscal} 
+                                    onChange={(e) => setImportToFiscal(e.target.checked)}
+                                    className="w-4 h-4 text-red-600 rounded bg-white border-red-300 focus:ring-red-500 cursor-pointer" 
+                                />
+                                <label htmlFor="importToFiscalCheckbox" className="text-xs font-bold text-red-800 cursor-pointer">
+                                    Importar também para o Fiscal (Incluir CPF / CNPJ do Cliente)
+                                </label>
+                            </div>
+                        )}
 
                         {error && <div className="p-3 bg-red-50 text-red-700 rounded-lg text-xs font-bold border border-red-100 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
 

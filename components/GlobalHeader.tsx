@@ -69,9 +69,9 @@ const NoticeBanner: React.FC<{ notice: AdminNotice; onDismiss: (id: string) => v
 
 const GlobalHeader: React.FC<GlobalHeaderProps> = ({ currentPage, onMenuClick, lowStockItems, setCurrentPage, bannerNotice, isAutoBipagemActive, onToggleAutoBipagem, currentUser, onDismissNotice, isProcessingLabels, labelProgressMessage, labelProcessingProgress, generalSettings, navMode }) => {
   
-  const headerContainerClasses = `flex-shrink-0 bg-[var(--color-surface)] sticky top-0 z-[9999] shadow-sm`;
+  const headerContainerClasses = `flex-shrink-0 bg-[var(--color-surface)] sticky top-0 z-[2147483647] shadow-sm relative`;
 
-  const headerClasses = `flex items-center justify-between p-4 border-b border-[var(--color-border)] text-[var(--color-text-primary)]`;
+  const headerClasses = `flex items-center justify-between p-4 border-b border-[var(--color-border)] text-[var(--color-text-primary)] relative z-[2147483647]`;
   
   const canDismissBanner = !!currentUser && (currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'ADMIN');
 
@@ -171,7 +171,7 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({ currentPage, onMenuClick, l
       </div>
 
       {/* Top Navigation Menu with hover dropdowns — só mostra no modo topnav */}
-      {navMode !== 'sidebar' && <nav className="hidden md:flex items-center gap-1 px-4 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] overflow-x-auto relative z-[100]">
+      {navMode !== 'sidebar' && <nav className="hidden md:flex items-center gap-1 px-4 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex-wrap relative z-[2147483647]">
         <button
           onClick={() => setCurrentPage('dashboard')}
           className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-1.5 ${currentPage === 'dashboard' ? 'bg-blue-100 text-blue-700' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]'}`}
@@ -182,11 +182,11 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({ currentPage, onMenuClick, l
           const visibleItems = section.items.filter(item => canShow(item.page));
           if (visibleItems.length === 0) return null;
           return (
-            <div key={section.label} className="relative group">
+            <div key={section.label} className="relative group z-[2147483647]">
               <button className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-1 ${visibleItems.some(i => currentPage === i.page) ? 'bg-blue-100 text-blue-700' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]'}`}>
                 {section.label} <ChevronDown size={10} className="opacity-50" />
               </button>
-              <div className="absolute top-full left-0 mt-0.5 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 min-w-[180px] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-[9999]">
+              <div className="absolute top-full left-0 mt-0.5 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 min-w-[180px] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-[2147483647]">
                 {visibleItems.map(item => (
                   <button
                     key={item.page}

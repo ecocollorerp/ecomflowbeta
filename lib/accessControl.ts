@@ -21,6 +21,7 @@ export type AppPage =
   | 'powerbi'
   | 'powerbi-templates'
   | 'configuracoes'
+  | 'calculadora'
   | 'configuracoes-gerais';
 
 export const ALL_APP_PAGES: { id: AppPage, label: string }[] = [
@@ -35,6 +36,7 @@ export const ALL_APP_PAGES: { id: AppPage, label: string }[] = [
     { id: 'estoque', label: 'Estoque' },
     { id: 'funcionarios', label: 'Funcionários' },
     { id: 'relatorios', label: 'Relatórios' },
+    { id: 'calculadora', label: 'Calculadora' },
     { id: 'financeiro', label: 'Financeiro' },
     { id: 'etiquetas', label: 'Etiquetas' },
     { id: 'bling', label: 'Bling' },
@@ -61,6 +63,7 @@ export const PAGE_ACCESS_RULES: Record<AppPage, AccessRule> = {
   estoque: {},
   funcionarios: { roles: ['SUPER_ADMIN', 'ADMIN'] },
   relatorios: {},
+  calculadora: {},
   financeiro: {},
   etiquetas: {},
   bling: {},

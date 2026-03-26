@@ -104,6 +104,18 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
         updateMapping(canalId, 'acceptedStatusValues', newValues);
     };
 
+    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, field: 'reportLogoBase64' | 'customReportImageBase64' | 'pptxTemplateBase64') => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            setSettings(prev => ({ ...prev, [field]: reader.result as string }));
+            addToast(`Arquivo carregado com sucesso!`, 'success');
+        };
+        reader.readAsDataURL(file);
+    };
+
     const toggleFeeColumn = (canalId: string, header: string) => {
         const current = getMappingForChannel(canalId).fees || [];
         const newFees = current.includes(header) ? current.filter((f: string) => f !== header) : [...current, header];
@@ -176,8 +188,20 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
     return (
         <div className="max-w-6xl mx-auto pb-32">
             <div className="flex items-center gap-4 mb-8">
-                <button onClick={() => setCurrentPage('configuracoes')} className="p-3 bg-white border rounded-2xl shadow-sm hover:bg-gray-50"><ArrowLeft size={24}/></button>
-                <h1 className="text-3xl font-black text-slate-900 tracking-tighter uppercase">Painel de Administração Global</h1>
+                <button onClick={() => setCurrentPage('configuracoes')} className="p-3 bg-white border rounded-2xl shadow-sm hover:bg-gray-50 transition-all active:scale-95 group">
+                    <ArrowLeft size={24} className="group-hover:-translate-x-1 transition-transform" />
+                </button>
+                <div>
+                    <div className="flex items-center gap-2 mb-1">
+                        <div className="p-1.5 bg-blue-600 rounded-lg text-white">
+                            <ShieldAlert size={18} />
+                        </div>
+                        <h1 className="text-3xl font-black text-slate-900 tracking-tighter uppercase leading-none">
+                            Painel de Administração Global
+                        </h1>
+                    </div>
+                    <p className="text-gray-500 font-bold uppercase text-[9px] tracking-[0.2em]">Configurações Unificadas de Mapeamento, Sistema e Manutenção</p>
+                </div>
             </div>
             
             <div className="bg-white border border-gray-200 rounded-t-2xl">
@@ -206,27 +230,85 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                         </Section>
 
                         <Section title="Opções de Exportação (Relatórios)" icon={<FileDown size={24} className="text-emerald-500" />}>
-                            <p className="text-xs text-slate-500 mb-4">Personalize o título e a logo que aparecerão nos relatórios exportados em PDF e PPTX.</p>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="flex flex-col gap-1">
-                                    <label className="text-[10px] font-black text-gray-400 uppercase">Título do Relatório</label>
-                                    <input 
-                                        type="text" 
-                                        value={settings.reportTitle || ''} 
-                                        onChange={e => setSettings(prev => ({...prev, reportTitle: e.target.value}))}
-                                        placeholder="Ex: Relatório Financeiro Estratégico"
-                                        className="p-3 border rounded-xl text-sm bg-gray-50 focus:ring-2 focus:ring-emerald-500 font-bold"
-                                    />
+                            <p className="text-xs text-slate-500 mb-4">Personalize o título, a logo, fotos e templates que aparecerão nos relatórios exportados em PDF e PPTX.</p>
+                            <div className="space-y-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] font-black text-gray-400 uppercase">Título do Relatório</label>
+                                        <input 
+                                            type="text" 
+                                            value={settings.reportTitle || ''} 
+                                            onChange={e => setSettings(prev => ({...prev, reportTitle: e.target.value}))}
+                                            placeholder="Ex: Relatório Financeiro Estratégico"
+                                            className="p-3 border rounded-xl text-sm bg-gray-50 focus:ring-2 focus:ring-emerald-500 font-bold"
+                                        />
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] font-black text-gray-400 uppercase">Logo Principal (PDF/PPTX)</label>
+                                        <div className="flex items-center gap-2">
+                                            <input 
+                                                type="file" 
+                                                accept="image/*"
+                                                onChange={e => handleImageUpload(e, 'reportLogoBase64')}
+                                                className="hidden" 
+                                                id="upload-logo" 
+                                            />
+                                            <label htmlFor="upload-logo" className="flex-1 p-2.5 border-2 border-dashed rounded-xl text-xs font-bold text-slate-500 hover:border-emerald-500 hover:text-emerald-600 cursor-pointer text-center bg-slate-50">
+                                                {settings.reportLogoBase64 ? 'Alterar Logo' : 'Clique para subir LOGO'}
+                                            </label>
+                                            {settings.reportLogoBase64 && (
+                                                <div className="w-12 h-12 rounded-lg border overflow-hidden bg-white flex items-center justify-center p-1">
+                                                    <img src={settings.reportLogoBase64} alt="Preview" className="max-w-full max-h-full object-contain" />
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
-                                <div className="flex flex-col gap-1">
-                                    <label className="text-[10px] font-black text-gray-400 uppercase">Logo (URL ou Base64)</label>
-                                    <input 
-                                        type="text" 
-                                        value={settings.reportLogoBase64 || ''} 
-                                        onChange={e => setSettings(prev => ({...prev, reportLogoBase64: e.target.value}))}
-                                        placeholder="Cole a URL da imagem (opcional)"
-                                        className="p-3 border rounded-xl text-sm bg-gray-50 focus:ring-2 focus:ring-emerald-500 font-bold"
-                                    />
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t pt-6">
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] font-black text-gray-400 uppercase">Subir Foto para os Slides (Opcional)</label>
+                                        <p className="text-[10px] text-slate-400 mb-2">Esta foto aparecerá em uma página dedicada à análise visual no PPTX/PDF.</p>
+                                        <div className="flex items-center gap-2">
+                                            <input 
+                                                type="file" 
+                                                accept="image/*"
+                                                onChange={e => handleImageUpload(e, 'customReportImageBase64')}
+                                                className="hidden" 
+                                                id="upload-custom-img" 
+                                            />
+                                            <label htmlFor="upload-custom-img" className="flex-1 p-2.5 border-2 border-dashed rounded-xl text-xs font-bold text-slate-500 hover:border-blue-500 hover:text-blue-600 cursor-pointer text-center bg-slate-50">
+                                                {settings.customReportImageBase64 ? 'Alterar Foto' : 'Subir FOTO ANALÍTICA'}
+                                            </label>
+                                            {settings.customReportImageBase64 && (
+                                                <div className="w-12 h-12 rounded-lg border overflow-hidden bg-white flex items-center justify-center p-1">
+                                                    <img src={settings.customReportImageBase64} alt="Preview" className="max-w-full max-h-full object-contain" />
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="flex flex-col gap-1">
+                                        <label className="text-[10px] font-black text-gray-400 uppercase">Template de PowerPoint (.pptx)</label>
+                                        <p className="text-[10px] text-slate-400 mb-2">Importante: O sistema tentará adaptar as cores e o layout ao seu modelo base.</p>
+                                        <div className="flex items-center gap-2">
+                                            <input 
+                                                type="file" 
+                                                accept=".pptx"
+                                                onChange={e => handleImageUpload(e, 'pptxTemplateBase64')}
+                                                className="hidden" 
+                                                id="upload-pptx-template" 
+                                            />
+                                            <label htmlFor="upload-pptx-template" className={`flex-1 p-2.5 border-2 border-dashed rounded-xl text-xs font-bold cursor-pointer text-center ${settings.pptxTemplateBase64 ? 'border-orange-500 text-orange-600 bg-orange-50' : 'border-slate-300 text-slate-500 bg-slate-50 hover:border-orange-500 hover:text-orange-600'}`}>
+                                                {settings.pptxTemplateBase64 ? 'Modelo PPTX Carregado ✅' : 'Subir MODELO PPTX'}
+                                            </label>
+                                            {settings.pptxTemplateBase64 && (
+                                                <button onClick={() => setSettings(prev => ({...prev, pptxTemplateBase64: undefined}))} className="p-2 text-red-500 hover:bg-red-50 rounded-lg">
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </Section>
@@ -531,11 +613,35 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                                                 </div>
                                             )}
                                             
-                                            <div className="grid grid-cols-1 gap-4">
-                                                <MapRow label="Valor Bruto da Venda" field="priceGross" canalId={canal.id} />
-                                                <FeeSelector canalId={canal.id} />
-                                                <MapRow label="Frete / Envio / Dedutíveis (Opcional)" field="shippingFee" canalId={canal.id} />
-                                                <MapRow label="Valor Líquido Recebido" field="priceNet" canalId={canal.id} />
+                                            <div className="space-y-6">
+                                                <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
+                                                    <h4 className="text-xs font-black text-blue-800 uppercase mb-4 flex items-center gap-2">
+                                                        <PackageOpen size={14}/> Dados do Pedido (Importação)
+                                                    </h4>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                                        <MapRow label="ID do Pedido (Loja/Bling)" field="orderId" canalId={canal.id} />
+                                                        <MapRow label="Código do Produto (SKU)" field="sku" canalId={canal.id} />
+                                                        <MapRow label="Quantidade" field="qty" canalId={canal.id} />
+                                                        <MapRow label="Rastreio / Tracking" field="tracking" canalId={canal.id} />
+                                                        <MapRow label="Data da Venda" field="date" canalId={canal.id} />
+                                                        <MapRow label="Nome do Cliente" field="customerName" canalId={canal.id} />
+                                                        <MapRow label="CPF/CNPJ do Cliente" field="customerCpf" canalId={canal.id} />
+                                                    </div>
+                                                </div>
+
+                                                <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100">
+                                                    <h4 className="text-xs font-black text-emerald-800 uppercase mb-4 flex items-center gap-2">
+                                                        <Database size={14}/> Dados Financeiros (Relatórios e DRE)
+                                                    </h4>
+                                                    <div className="space-y-4">
+                                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                                            <MapRow label="Valor Bruto da Venda" field="priceGross" canalId={canal.id} />
+                                                            <MapRow label="Frete / Envio / Dedutíveis (Opcional)" field="shippingFee" canalId={canal.id} />
+                                                            <MapRow label="Valor Líquido Recebido" field="priceNet" canalId={canal.id} />
+                                                        </div>
+                                                        <FeeSelector canalId={canal.id} />
+                                                    </div>
+                                                </div>
                                             </div>
                                             
                                             <div className="border-t border-gray-200 mt-4 pt-4">

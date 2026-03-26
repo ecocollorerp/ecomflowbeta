@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { StockItem, StockMovement, ProdutoCombinado, WeighingBatch, WeighingType, StockMovementOrigin, StockItemKind, User, GeneralSettings, ParsedNfeItem, SkuLink, StockPackGroup } from '../types';
 import { skuMatchesTerm, buildParentMap, skuCodeMatches } from '../utils/skuHelpers';
-import { Package, Factory, History, Search, PlusCircle, Weight, Cog, SlidersHorizontal, Edit3, Trash2, ChevronDown, ChevronRight, FileUp, ArrowLeft, Settings, Box, Plus, Save, X, Link, ArrowRight, Loader2, ChevronUp, AlertTriangle, ArrowDownCircle, ArrowUpCircle, Layers, TrendingUp, TrendingDown, BarChart2, Filter, Calendar, RefreshCw, FileText } from 'lucide-react';
+import { Package, Factory, History, Search, PlusCircle, Weight, Cog, SlidersHorizontal, Edit3, Trash2, ChevronDown, ChevronRight, FileUp, ArrowLeft, Settings, Box, Plus, Save, X, Link, ArrowRight, Loader2, ChevronUp, AlertTriangle, ArrowDownCircle, ArrowUpCircle, Layers, TrendingUp, TrendingDown, BarChart2, Filter, Calendar, RefreshCw, FileText, Calculator } from 'lucide-react';
 import { MaquinasPage } from './MaquinasPage';
 import { dbClient } from '../lib/supabaseClient';
 import jsPDF from 'jspdf';
@@ -231,7 +231,7 @@ const TransferSkuModal: React.FC<TransferSkuModalProps> = ({ isOpen, onClose, sk
     );
 };
 
-interface EstoquePageProps {
+export interface EstoquePageProps {
     stockItems: StockItem[];
     stockMovements: StockMovement[];
     onStockAdjustment: (stockItemCode: string, quantityDelta: number, ref: string) => Promise<boolean>;
@@ -258,6 +258,9 @@ interface EstoquePageProps {
     skuLinks: SkuLink[];
     onLinkSku: (importedSku: string, masterProductSku: string) => Promise<boolean>;
     onUnlinkSku: (importedSku: string) => Promise<boolean>;
+    addToast?: (message: string, type: 'success' | 'error' | 'info' | 'warning') => void;
+    hideTabs?: boolean;
+    setCurrentPage?: (page: string) => void;
 }
 
 type Tab = 'insumos' | 'processados' | 'produtos' | 'pacotes' | 'ensacamento' | 'movimentacoes';
@@ -291,10 +294,29 @@ const TabButton: React.FC<{ tab: Tab, activeTab: Tab, label: string, icon: React
 );
 
 const EstoquePage: React.FC<EstoquePageProps> = (props) => {
-    const { onBulkDeleteItems, onDeleteItem, generalSettings, setGeneralSettings, onSaveExpeditionItems, users, onConfirmImportFromXml, onEditItem, onUpdateInsumoCategory, onBulkInventoryUpdate, skuLinks, onLinkSku, onUnlinkSku } = props;
+    const { onBulkDeleteItems, onDeleteItem, generalSettings, setGeneralSettings, onSaveExpeditionItems, users, onConfirmImportFromXml, onEditItem, onUpdateInsumoCategory, onBulkInventoryUpdate, skuLinks, onLinkSku, onUnlinkSku, initialTab } = props;
     const { stockItems, stockMovements, produtosCombinados, onSaveProdutoCombinado, onAddNewItem, weighingBatches, onAddNewWeighing, onProductionRun, onRegisterReadyStock, currentUser, onDeleteMovement, onStockAdjustment, onDeleteWeighingBatch } = props;
 
-    const [activeTab, setActiveTab] = useState<Tab>('insumos');
+    // Persistência de aba
+    const [activeTab, setActiveTab] = useState<Tab>(() => {
+        if (props.hideTabs) return 'pacotes';
+        if (initialTab) return initialTab;
+        const saved = localStorage.getItem('estoque_active_tab');
+        return (saved as Tab) || 'insumos';
+    });
+
+    useEffect(() => {
+        if (props.hideTabs) {
+            setActiveTab('pacotes');
+        } else if (initialTab) {
+            setActiveTab(initialTab);
+        }
+    }, [initialTab, props.hideTabs]);
+
+    const handleTabChange = (tab: Tab) => {
+        setActiveTab(tab);
+        localStorage.setItem('estoque_active_tab', tab);
+    };
     const [searchTerm, setSearchTerm] = useState('');
     const [packGroups, setPackGroups] = useState<StockPackGroup[]>([]);
     // Estado para modal de movimentação volátil
@@ -1314,46 +1336,63 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
     };
 
     return (
-        <div className="min-h-screen bg-slate-50/50 p-4 md:p-8">
+        <div className={`min-h-screen bg-slate-50/50 ${props.hideTabs ? 'p-0' : 'p-4 md:p-8'}`}>
             {activeTab !== 'ensacamento' && (
                 <>
-                    <div className="flex justify-between items-start mb-6 flex-wrap gap-4"><div><h1 className="text-3xl font-black text-slate-800 uppercase tracking-tighter">Gestão de Estoque e Almoxarifado</h1><p className="text-gray-500 font-bold uppercase text-[10px] tracking-widest mt-1">Insumos, Produtos Acabados e Pronta Entrega</p></div></div>
-                    <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-xl w-full">
-                        <div className="flex justify-between items-center mb-6 flex-wrap gap-4">
-                            <div className="relative flex-grow max-w-sm"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" /><input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Buscar por nome, SKU ou localização..." className="w-full pl-9 pr-3 py-2 text-sm border-gray-200 rounded-xl focus:ring-blue-500 focus:border-blue-500 bg-slate-50 font-bold" /></div>
-                            <div className="flex items-center gap-2">
-                                {activeTab === 'pacotes' && (
-                                    <button onClick={() => setModalState(prev => ({ ...prev, isPackModalOpen: true, packGroup: null }))} className="flex items-center text-xs font-black bg-blue-600 text-white px-4 py-2.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 uppercase tracking-widest"><PlusCircle size={16} className="mr-2" />Novo Grupo de Pacotes</button>
-                                )}
-                                {activeTab === 'insumos' && (
-                                    <button onClick={() => setModalState(prev => ({ ...prev, manageInsumoCategories: true }))} className="flex items-center text-[10px] font-black bg-gray-100 text-gray-700 px-4 py-2.5 rounded-xl hover:bg-gray-200 transition-all uppercase tracking-widest"><Settings size={16} className="mr-2" />Categorias</button>
-                                )}
-                                {activeTab === 'produtos' && (
-                                    <button onClick={() => setModalState(prev => ({ ...prev, manageProductCategories: true }))} className="flex items-center text-[10px] font-black bg-gray-100 text-gray-700 px-4 py-2.5 rounded-xl hover:bg-gray-200 transition-all uppercase tracking-widest"><Settings size={16} className="mr-2" />Categorias</button>
-                                )}
-                                {(activeTab === 'produtos' || activeTab === 'processados') && (
-                                    <button onClick={() => setModalState(prev => ({ ...prev, bulkUpdate: { isOpen: true, title: 'Lançar Entrada de Estoque' } }))} className="flex items-center text-[10px] font-black bg-emerald-600 text-white px-4 py-2.5 rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 uppercase tracking-widest"><ArrowDownCircle size={16} className="mr-2" />Atualizar Estoque</button>
-                                )}
-                                {selectedIds.size > 0 && activeTab === 'produtos' && (
-                                    <div className="flex gap-2">
-                                        <button onClick={() => setModalState(prev => ({ ...prev, bulkAssignCategory: true }))} className="flex items-center text-[10px] font-black bg-blue-500 text-white px-4 py-2.5 rounded-xl hover:bg-blue-600 transition-all shadow-lg shadow-blue-100 uppercase tracking-widest"><Layers size={16} className="mr-2" />Categorizar ({selectedIds.size})</button>
-                                        <button onClick={() => setIsDeleteModalOpen(true)} className="flex items-center text-[10px] font-black bg-red-600 text-white px-4 py-2.5 rounded-xl hover:bg-red-700 transition-all shadow-lg shadow-red-100 uppercase tracking-widest"><Trash2 size={16} className="mr-2" />Excluir Selecionados</button>
-                                    </div>
-                                )}
-                                {selectedIds.size === 0 && activeTab !== 'pacotes' && activeTab !== 'ensacamento' && activeTab !== 'movimentacoes' && (
-                                    <button onClick={() => setModalState(prev => ({ ...prev, addItem: true }))} className="flex items-center text-[10px] font-black bg-blue-600 text-white px-4 py-2.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 uppercase tracking-widest"><PlusCircle size={16} className="mr-2" />Adicionar Item</button>
-                                )}
+                    {!props.hideTabs && (
+                        <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
+                            <div>
+                                <h1 className="text-3xl font-black text-slate-800 uppercase tracking-tighter">Gestão de Estoque e Almoxarifado</h1>
+                                <p className="text-gray-500 font-bold uppercase text-[10px] tracking-widest mt-1">Insumos, Produtos Acabados e Pronta Entrega</p>
                             </div>
                         </div>
-                        <div className="border-b border-gray-100"><div className="flex -mb-px flex-wrap gap-2">
-                            <TabButton tab="insumos" activeTab={activeTab} label="Insumos" icon={<Package size={16} />} onClick={setActiveTab} />
-                            <TabButton tab="processados" activeTab={activeTab} label="Processados" icon={<Factory size={16} />} onClick={setActiveTab} />
-                            <TabButton tab="produtos" activeTab={activeTab} label="Produtos (SKU)" icon={<Package size={16} />} onClick={setActiveTab} />
-                            <TabButton tab="pacotes" activeTab={activeTab} label="Pacotes Prontos" icon={<Box size={16} />} onClick={setActiveTab} />
-                            <TabButton tab="ensacamento" activeTab={activeTab} label="Máquinas" icon={<Weight size={16} />} onClick={setActiveTab} />
-                            <TabButton tab="movimentacoes" activeTab={activeTab} label="Histórico" icon={<History size={16} />} onClick={setActiveTab} />
-                        </div></div>
-                        <div className="mt-6">{renderContent()}</div>
+                    )}
+                    <div className={`${props.hideTabs ? 'bg-transparent' : 'bg-white p-6 rounded-3xl border border-gray-200 shadow-xl'} w-full`}>
+                        {!props.hideTabs && (
+                            <div className="flex justify-between items-center mb-6 flex-wrap gap-4">
+                                <div className="relative flex-grow max-w-sm">
+                                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                                    <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Buscar por nome, SKU ou localização..." className="w-full pl-9 pr-3 py-2 text-sm border-gray-200 rounded-xl focus:ring-blue-500 focus:border-blue-500 bg-slate-50 font-bold" />
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button onClick={() => props.setCurrentPage?.('calculadora')} className="flex items-center text-[10px] font-black bg-emerald-600 text-white px-4 py-2.5 rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 uppercase tracking-widest"><Calculator size={16} className="mr-2" />Calculadora de Margem</button>
+                                    {activeTab === 'pacotes' && (
+                                        <button onClick={() => setModalState(prev => ({ ...prev, isPackModalOpen: true, packGroup: null }))} className="flex items-center text-xs font-black bg-blue-600 text-white px-4 py-2.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 uppercase tracking-widest"><PlusCircle size={16} className="mr-2" />Novo Grupo de Pacotes</button>
+                                    )}
+                                    {activeTab === 'insumos' && (
+                                        <button onClick={() => setModalState(prev => ({ ...prev, manageInsumoCategories: true }))} className="flex items-center text-[10px] font-black bg-gray-100 text-gray-700 px-4 py-2.5 rounded-xl hover:bg-gray-200 transition-all uppercase tracking-widest"><Settings size={16} className="mr-2" />Categorias</button>
+                                    )}
+                                    {activeTab === 'produtos' && (
+                                        <button onClick={() => setModalState(prev => ({ ...prev, manageProductCategories: true }))} className="flex items-center text-[10px] font-black bg-gray-100 text-gray-700 px-4 py-2.5 rounded-xl hover:bg-gray-200 transition-all uppercase tracking-widest"><Settings size={16} className="mr-2" />Categorias</button>
+                                    )}
+                                    {(activeTab === 'produtos' || activeTab === 'processados') && (
+                                        <button onClick={() => setModalState(prev => ({ ...prev, bulkUpdate: { isOpen: true, title: 'Lançar Entrada de Estoque' } }))} className="flex items-center text-[10px] font-black bg-emerald-600 text-white px-4 py-2.5 rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 uppercase tracking-widest"><ArrowDownCircle size={16} className="mr-2" />Atualizar Estoque</button>
+                                    )}
+                                    {selectedIds.size > 0 && activeTab === 'produtos' && (
+                                        <div className="flex gap-2">
+                                            <button onClick={() => setModalState(prev => ({ ...prev, bulkAssignCategory: true }))} className="flex items-center text-[10px] font-black bg-blue-500 text-white px-4 py-2.5 rounded-xl hover:bg-blue-600 transition-all shadow-lg shadow-blue-100 uppercase tracking-widest"><Layers size={16} className="mr-2" />Categorizar ({selectedIds.size})</button>
+                                            <button onClick={() => setIsDeleteModalOpen(true)} className="flex items-center text-[10px] font-black bg-red-600 text-white px-4 py-2.5 rounded-xl hover:bg-red-700 transition-all shadow-lg shadow-red-100 uppercase tracking-widest"><Trash2 size={16} className="mr-2" />Excluir Selecionados</button>
+                                        </div>
+                                    )}
+                                    {selectedIds.size === 0 && activeTab !== 'pacotes' && activeTab !== 'ensacamento' && activeTab !== 'movimentacoes' && (
+                                        <button onClick={() => setModalState(prev => ({ ...prev, addItem: true }))} className="flex items-center text-[10px] font-black bg-blue-600 text-white px-4 py-2.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 uppercase tracking-widest"><PlusCircle size={16} className="mr-2" />Adicionar Item</button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                        {!props.hideTabs && (
+                            <div className="border-b border-gray-100">
+                                <div className="flex -mb-px flex-wrap gap-2">
+                                    <TabButton tab="insumos" activeTab={activeTab} label="Insumos" icon={<Package size={16} />} onClick={handleTabChange} />
+                                    <TabButton tab="processados" activeTab={activeTab} label="Processados" icon={<Factory size={16} />} onClick={handleTabChange} />
+                                    <TabButton tab="produtos" activeTab={activeTab} label="Produtos (SKU)" icon={<Package size={16} />} onClick={handleTabChange} />
+                                    <TabButton tab="pacotes" activeTab={activeTab} label="Pacotes Prontos" icon={<Box size={16} />} onClick={handleTabChange} />
+                                    <TabButton tab="ensacamento" activeTab={activeTab} label="Máquinas" icon={<Weight size={16} />} onClick={handleTabChange} />
+                                    <TabButton tab="movimentacoes" activeTab={activeTab} label="Histórico" icon={<History size={16} />} onClick={handleTabChange} />
+                                </div>
+                            </div>
+                        )}
+                        <div className={props.hideTabs ? '' : 'mt-6'}>{renderContent()}</div>
                     </div>
                 </>
             )}

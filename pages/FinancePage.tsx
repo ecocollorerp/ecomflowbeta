@@ -3,7 +3,7 @@ import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react'
 import { OrderItem, Canal, StockItem, ProdutoCombinado, SkuLink, GeneralSettings, MaterialItem, TaxEntry, FinanceCardConfig, StockMovement } from '../types';
 import {
     DollarSign, TrendingUp,
-    FileUp, FileDown, Calendar, ArrowRight, Loader2, ShoppingBag, Box, Trash2, Settings, CheckCircle, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, FileSpreadsheet, AlertCircle, Percent, PieChart, Landmark, Plus, Minus, FileCode, AlertTriangle, Edit2, X, Save, BarChart3
+    FileUp, FileDown, Calendar, ArrowRight, Loader2, ShoppingBag, Box, Trash2, Settings, CheckCircle, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, FileSpreadsheet, AlertCircle, Percent, PieChart, Landmark, Plus, Minus, FileCode, AlertTriangle, Edit2, X, Save, BarChart3, Lock, Unlock, CalendarClock, Calculator
 } from 'lucide-react';
 import { calculateMaterialList } from '../lib/estoque';
 import { exportFinanceReport, exportFinancePptx } from '../lib/export';
@@ -21,6 +21,7 @@ interface FinancePageProps {
     onLaunchOrders: (orders: OrderItem[]) => Promise<void>;
     onSaveSettings?: (settings: GeneralSettings) => void;
     onNavigateToSettings: () => void;
+    setCurrentPage: (page: string) => void;
 }
 
 interface FinanceStatCardProps {
@@ -29,10 +30,51 @@ interface FinanceStatCardProps {
     color: 'blue' | 'red' | 'orange' | 'emerald' | 'slate' | 'purple';
     sub?: string;
     highlight?: boolean;
-    breakdown?: { label: string; value: string; colorClass?: string }[];
+    trend?: { value: number; label: string };
 }
 
-const FinanceStatCard: React.FC<FinanceStatCardProps> = ({ label, value, color, sub, highlight, breakdown }) => {
+const SimplePieChart = ({ data, size = 150, title }: { data: { label: string, value: number, color: string }[], size?: number, title: string }) => {
+    const total = data.reduce((s, d) => s + d.value, 0);
+    if (total <= 0) return null;
+    
+    let cum = 0;
+    const gradient = data.map(d => {
+        const start = (cum / total) * 100;
+        cum += d.value;
+        const end = (cum / total) * 100;
+        return `${d.color} ${start}% ${end}%`;
+    }).join(', ');
+
+    return (
+        <div className="flex flex-col items-center w-full">
+            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-4 w-full border-b pb-2">{title}</h4>
+            <div 
+                style={{ 
+                    width: size, height: size, 
+                    borderRadius: '50%', 
+                    background: `conic-gradient(${gradient})`,
+                    boxShadow: 'inset 0 0 20px rgba(0,0,0,0.05)'
+                }} 
+            />
+            <div className="mt-5 w-full space-y-2">
+                {data.map((d, i) => (
+                    <div key={i} className="flex justify-between items-center text-xs">
+                        <div className="flex items-center gap-2">
+                            <div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: d.color }}></div>
+                            <span className="font-bold text-slate-600 line-clamp-1 max-w-[120px]" title={d.label}>{d.label}</span>
+                        </div>
+                        <div className="text-right flex flex-col">
+                            <span className="font-black text-slate-800">{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(d.value)}</span>
+                            <span className="text-[9px] font-bold text-slate-400">{((d.value/total)*100).toFixed(1)}%</span>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
+const FinanceStatCard: React.FC<FinanceStatCardProps> = ({ label, value, color, sub, highlight, breakdown, trend }) => {
     const colors = {
         blue: 'bg-blue-50 text-blue-700 border-blue-100',
         red: 'bg-red-50 text-red-700 border-red-100',
@@ -48,7 +90,15 @@ const FinanceStatCard: React.FC<FinanceStatCardProps> = ({ label, value, color, 
     return (
         <div className={`${baseClass} ${highlightClass}`}>
             <div className="z-10 relative w-full">
-                <p className="text-[10px] font-black uppercase tracking-widest opacity-70 mb-1">{label}</p>
+                <div className="flex justify-between items-start mb-1">
+                    <p className="text-[10px] font-black uppercase tracking-widest opacity-70">{label}</p>
+                    {trend && (
+                        <div className={`flex items-center gap-0.5 text-[9px] font-black px-1.5 py-0.5 rounded-md ${trend.value > 0 ? 'bg-emerald-100 text-emerald-700' : trend.value < 0 ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'}`}>
+                            <TrendingUp size={10} className={trend.value < 0 ? 'transform rotate-180' : ''} />
+                            <span>{trend.value > 0 ? '+' : ''}{trend.value.toFixed(1)}% {trend.label}</span>
+                        </div>
+                    )}
+                </div>
                 <p className="text-2xl font-black tracking-tight">{value}</p>
 
                 {breakdown ? (
@@ -74,10 +124,12 @@ const FinancePage: React.FC<FinancePageProps> = ({
     skuLinks,
     produtosCombinados,
     generalSettings,
+    stockMovements,
     onDeleteOrders,
     onLaunchOrders,
     onSaveSettings,
-    onNavigateToSettings
+    onNavigateToSettings,
+    setCurrentPage
 }) => {
     const [activeTab, setActiveTab] = useState<'overview' | 'reports' | 'materials'>('overview');
 
@@ -117,6 +169,12 @@ const FinancePage: React.FC<FinancePageProps> = ({
         setCardsDirty(true);
     };
     const [cardsDirty, setCardsDirty] = useState(false);
+    const [isCardsLocked, setIsCardsLocked] = useState(() => localStorage.getItem('erp_finance_cards_locked') !== 'false');
+    const toggleCardsLock = () => {
+        const newVal = !isCardsLocked;
+        setIsCardsLocked(newVal);
+        localStorage.setItem('erp_finance_cards_locked', String(newVal));
+    };
     const handleSaveCards = () => {
         if (onSaveSettings) onSaveSettings({ ...generalSettings, financeCards: financeCards });
         setCardsDirty(false);
@@ -129,12 +187,20 @@ const FinancePage: React.FC<FinancePageProps> = ({
     const handleUpdateCard = (id: string, field: keyof FinanceCardConfig, value: any) => saveCards(financeCards.map(c => c.id === id ? { ...c, [field]: value } : c));
 
     const [editingCardId, setEditingCardId] = useState<string | null>(null);
-    const [cardColumns, setCardColumns] = useState<3 | 4>(3);
+
+    const canaisDisponiveis = useMemo(() => {
+        const setCanais = new Set<string>();
+        allOrders.forEach(o => { if (o.canal) setCanais.add(o.canal); });
+        (generalSettings.customStores || []).forEach(s => setCanais.add(s.id));
+        return Array.from(setCanais).sort();
+    }, [allOrders, generalSettings.customStores]);
 
     const [rankingMetric, setRankingMetric] = useState<'revenue' | 'quantity'>('revenue');
     const [period, setPeriod] = useState<'today' | 'last7days' | 'thisMonth' | 'lastMonth' | 'custom' | 'last_upload'>('thisMonth');
     const [canalFilter, setCanalFilter] = useState<Canal | 'ALL'>('ALL');
     const [customDates, setCustomDates] = useState({ start: '', end: '' });
+    const [compareMode, setCompareMode] = useState<'prev_period' | 'same_month_last_year' | 'same_day_last_month' | 'custom'>('prev_period');
+    const [compareCustomDates, setCompareCustomDates] = useState({ start: '', end: '' });
     const [considerarInvalidos, setConsiderarInvalidos] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [isExportingPptx, setIsExportingPptx] = useState(false);
@@ -174,7 +240,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
         return null;
     };
 
-    const { stats, canalComparison, taxTotal, finalNetProfit, filteredOrders, taxBreakdown, dailyChart, totalPedidos, ticketMedio, margemPct, storeProfitability } = useMemo(() => {
+    const { stats, canalComparison, taxTotal, finalNetProfit, filteredOrders, taxBreakdown, dailyChart, totalPedidos, ticketMedio, margemPct, storeProfitability, materialList, totalMaterialCost, prevStats, prevTaxTotal, prevFinalNetProfit, prevTicketMedio, prevMargemPct, prevTotalMaterialCost } = useMemo(() => {
         const now = new Date();
         let startLimit: Date | null = null;
         let endLimit: Date | null = null;
@@ -194,119 +260,171 @@ const FinancePage: React.FC<FinancePageProps> = ({
             endLimit = new Date(customDates.end + "T23:59:59");
         }
 
-        const filtered = allOrders.filter(order => {
-            if (canalFilter !== 'ALL' && order.canal !== canalFilter) return false;
-            // Garantindo que pedidos com status de erro, devolução ou cancelamento sejam filtrados
-            if (!considerarInvalidos && (order.status === 'ERRO' || order.status === 'DEVOLVIDO' || order.status === 'CANCELADO')) return false;
-            const d = parseOrderDate(order);
-            if (!d) return false;
-            if (startLimit && d < startLimit) return false;
-            if (endLimit && d > endLimit) return false;
-            return true;
-        });
+        let prevStartLimit: Date | null = null;
+        let prevEndLimit: Date | null = null;
 
-        const base = { gross: 0, fees: 0, shipping: 0, customerPaid: 0, buyerTotal: 0, net: 0, units: 0, ranking: [] as any[] };
-        const comparison = { ml: 0, shopee: 0, site: 0 };
-        const storeProfit: Record<string, { gross: number, fees: number, shipping: number }> = {};
-        const skuMap = new Map<string, { revenue: number, qty: number, name: string, commissions: number, buyerPaid: number }>();
+        if (compareMode === 'custom' && compareCustomDates.start && compareCustomDates.end) {
+            prevStartLimit = new Date(compareCustomDates.start + "T00:00:00");
+            prevEndLimit = new Date(compareCustomDates.end + "T23:59:59");
+        } else if (compareMode === 'same_month_last_year' && startLimit) {
+            prevStartLimit = new Date(startLimit.getFullYear() - 1, startLimit.getMonth(), 1, 0, 0, 0);
+            prevEndLimit = new Date(startLimit.getFullYear() - 1, startLimit.getMonth() + 1, 0, 23, 59, 59);
+        } else if (compareMode === 'same_day_last_month' && startLimit && endLimit) {
+            const daysOffset = Math.round((endLimit.getTime() - startLimit.getTime()) / 86400000);
+            prevStartLimit = new Date(startLimit.getFullYear(), startLimit.getMonth() - 1, startLimit.getDate(), 0, 0, 0);
+            prevEndLimit = new Date(prevStartLimit.getFullYear(), prevStartLimit.getMonth(), prevStartLimit.getDate() + daysOffset, 23, 59, 59);
+        } else {
+            // prev_period
+            if (startLimit && endLimit && period !== 'thisMonth' && period !== 'lastMonth' && period !== 'today') {
+                const diff = endLimit.getTime() - startLimit.getTime();
+                prevStartLimit = new Date(startLimit.getTime() - diff - 1000);
+                prevEndLimit = new Date(endLimit.getTime() - diff - 1000);
+            } else if (startLimit && period === 'thisMonth') {
+                prevStartLimit = new Date(startLimit.getFullYear(), startLimit.getMonth() - 1, 1, 0, 0, 0);
+                prevEndLimit = new Date(startLimit.getFullYear(), startLimit.getMonth(), 0, 23, 59, 59);
+            } else if (startLimit && period === 'last7days') {
+                prevStartLimit = new Date(startLimit.getTime() - 7 * 86400000);
+                prevEndLimit = new Date(startLimit.getTime() - 1);
+            } else if (period === 'today') {
+                prevStartLimit = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 0, 0, 0);
+                prevEndLimit = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59);
+            } else if (period === 'lastMonth') {
+                prevStartLimit = new Date(now.getFullYear(), now.getMonth() - 2, 1, 0, 0, 0);
+                prevEndLimit = new Date(now.getFullYear(), now.getMonth() - 1, 0, 23, 59, 59);
+            }
+        }
 
-        const groups = new Map<string, OrderItem[]>();
-        filtered.forEach(o => {
-            const key = o.orderId || o.tracking;
-            if (!groups.has(key)) groups.set(key, []);
-            groups.get(key)!.push(o);
-        });
-
-        groups.forEach((group) => {
-            const first = group[0];
-            const isRep = generalSettings.isRepeatedValue;
-
-            // Helper para centavos evitando erro de ponto flutuante
-            const toCents = (v: any) => Math.round((Number(v) || 0) * 100);
-
-            const gGross = isRep ? toCents(first.price_total) : group.reduce((s, i) => s + toCents(i.price_total), 0);
-            const gFees = isRep ? toCents(first.platform_fees) : group.reduce((s, i) => s + toCents(i.platform_fees), 0);
-            const gShip = isRep ? toCents(first.shipping_fee) : group.reduce((s, i) => s + toCents(i.shipping_fee), 0);
-            const gCustomerShip = isRep ? toCents(first.shipping_paid_by_customer) : group.reduce((s, i) => s + toCents(i.shipping_paid_by_customer), 0);
-            const gNet = isRep ? toCents(first.price_net) : group.reduce((s, i) => s + toCents(i.price_net), 0);
-
-            base.gross += gGross / 100;
-            base.fees += gFees / 100;
-            base.shipping += gShip / 100;
-            base.customerPaid += gCustomerShip / 100;
-            // buyerTotal = valor líquido recebido pelo comprador (price_net), separado do faturamento bruto
-            base.buyerTotal += (gNet > 0 ? gNet : (gGross + gCustomerShip)) / 100;
-            base.net += gGross / 100;
-
-            if (first.canal === 'ML') comparison.ml += gGross / 100;
-            else if (first.canal === 'SHOPEE') comparison.shopee += gGross / 100;
-            else comparison.site += gGross / 100;
-
-            // Lucratividade por loja
-            const storeKey = first.canal || 'SITE';
-            if (!storeProfit[storeKey]) storeProfit[storeKey] = { gross: 0, fees: 0, shipping: 0 };
-            storeProfit[storeKey].gross += gGross / 100;
-            storeProfit[storeKey].fees += gFees / 100;
-            storeProfit[storeKey].shipping += gShip / 100;
-
-            group.forEach(o => {
-                base.units += o.qty_final;
-                const entry = skuMap.get(o.sku) || { revenue: 0, qty: 0, name: o.sku, commissions: 0, buyerPaid: 0 };
-                entry.revenue += toCents(o.price_gross) / 100;
-                entry.qty += o.qty_final;
-                // Comissão proporcional: fees alocadas para este item pelo peso no bruto do pedido
-                const orderGrossSum = group.reduce((s, i) => s + toCents(i.price_gross), 0) / 100;
-                entry.commissions += orderGrossSum > 0 ? ((toCents(o.price_gross) / 100) / orderGrossSum) * (gFees / 100) : 0;
-                entry.buyerPaid += toCents(o.price_total) / 100;
-                skuMap.set(o.sku, entry);
+        const computePeriodStats = (sLimit: Date | null, eLimit: Date | null) => {
+            const filtered = allOrders.filter(order => {
+                if (canalFilter !== 'ALL' && order.canal !== canalFilter) return false;
+                if (!considerarInvalidos && (order.status === 'ERRO' || order.status === 'DEVOLVIDO' || order.status === 'CANCELADO')) return false;
+                const d = parseOrderDate(order);
+                if (!d) return false;
+                if (sLimit && d < sLimit) return false;
+                if (eLimit && d > eLimit) return false;
+                return true;
             });
-        });
 
-        // Cálculo Detalhado de Impostos (somente os habilitados)
-        let totalTaxCalculated = 0;
-        const breakdown = taxes.map(t => {
-            let taxBase = Math.round(base.gross * 100);
-            if (t.appliesTo === 'after_fees') taxBase = Math.max(0, Math.round(base.gross * 100) - Math.round(base.fees * 100));
-            else if (t.appliesTo === 'after_ship') taxBase = Math.max(0, Math.round(base.gross * 100) - Math.round(base.shipping * 100));
-            else if (t.appliesTo === 'after_both') taxBase = Math.max(0, Math.round(base.gross * 100) - Math.round(base.fees * 100) - Math.round(base.shipping * 100));
-            
-            const amt = t.type === 'percent' ? Math.round(taxBase * t.value / 100) : Math.round(t.value * 100);
-            const amtInReal = amt / 100;
-            if (t.enabled !== false) totalTaxCalculated += amtInReal;
-            return { ...t, calculatedAmount: amtInReal, taxBase: taxBase / 100 };
-        });
+            const base = { gross: 0, fees: 0, shipping: 0, customerPaid: 0, buyerTotal: 0, net: 0, units: 0, ranking: [] as any[], orders: 0 };
+            const comparison = { ml: 0, shopee: 0, site: 0 };
+            const storeProfit: Record<string, { gross: number, fees: number, shipping: number }> = {};
+            const skuMap = new Map<string, { revenue: number, qty: number, name: string, commissions: number, buyerPaid: number }>();
 
-        // Deduções controladas pelos toggles
-        let totalDeductions = 0;
-        if (deductPlatformFees) totalDeductions += base.fees;
-        if (deductShipping) totalDeductions += base.shipping;
-        totalDeductions += totalTaxCalculated;
+            const groups = new Map<string, OrderItem[]>();
+            filtered.forEach(o => {
+                const key = o.orderId || o.tracking;
+                if (!groups.has(key)) groups.set(key, []);
+                groups.get(key)!.push(o);
+            });
 
-        const finalNetProfit = base.gross - totalDeductions;
+            groups.forEach((group) => {
+                const first = group[0];
+                const isRep = generalSettings.isRepeatedValue;
+                const toCents = (v: any) => Math.round((Number(v) || 0) * 100);
 
-        base.ranking = Array.from(skuMap.entries()).map(([code, d]) => ({ code, ...d }))
-            .sort((a, b) => rankingMetric === 'revenue' ? b.revenue - a.revenue : b.qty - a.qty);
+                const gGross = isRep ? toCents(first.price_gross) : group.reduce((s, i) => s + toCents(i.price_gross), 0);
+                const gTotal = isRep ? toCents(first.price_total) : group.reduce((s, i) => s + toCents(i.price_total), 0);
+                const gFees = isRep ? toCents(first.platform_fees) : group.reduce((s, i) => s + toCents(i.platform_fees), 0);
+                const gShip = isRep ? toCents(first.shipping_fee) : group.reduce((s, i) => s + toCents(i.shipping_fee), 0);
+                const gCustomerShip = isRep ? toCents(first.shipping_paid_by_customer) : group.reduce((s, i) => s + toCents(i.shipping_paid_by_customer), 0);
+                const gNet = isRep ? toCents(first.price_net) : group.reduce((s, i) => s + toCents(i.price_net), 0);
 
-        const dailyMap = new Map<string, number>();
-        groups.forEach((group) => {
-            const first = group[0];
-            const isRep = generalSettings.isRepeatedValue;
-            const gGross = isRep ? Number(first.price_total || 0) : group.reduce((s, i) => s + (i.price_total || 0), 0);
-            const d = parseOrderDate(first);
-            if (!d) return;
-            const key = d.toISOString().split('T')[0];
-            dailyMap.set(key, (dailyMap.get(key) || 0) + gGross);
-        });
-        const dailyChart = Array.from(dailyMap.entries())
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([date, value]) => ({ date, value }));
+                base.gross += gGross / 100;
+                base.fees += gFees / 100;
+                base.shipping += gShip / 100;
+                base.customerPaid += gCustomerShip / 100;
+                base.buyerTotal += (gTotal + gCustomerShip) / 100;
+                base.net += gGross / 100;
 
-        const totalPedidos = groups.size;
-        const ticketMedio = totalPedidos > 0 ? base.gross / totalPedidos : 0;
-        const margemPct = base.gross > 0 ? (finalNetProfit / base.gross) * 100 : 0;
+                if (first.canal === 'ML') comparison.ml += gGross / 100;
+                else if (first.canal === 'SHOPEE') comparison.shopee += gGross / 100;
+                else comparison.site += gGross / 100;
 
-        return { stats: base, canalComparison: comparison, taxTotal: totalTaxCalculated, finalNetProfit, filteredOrders: filtered, taxBreakdown: breakdown, dailyChart, totalPedidos, ticketMedio, margemPct, storeProfitability: storeProfit };
-    }, [allOrders, period, canalFilter, customDates, considerarInvalidos, dateSourceMode, rankingMetric, generalSettings.isRepeatedValue, taxes, deductPlatformFees, deductShipping]);
+                const storeKey = first.canal || 'SITE';
+                if (!storeProfit[storeKey]) storeProfit[storeKey] = { gross: 0, fees: 0, shipping: 0 };
+                storeProfit[storeKey].gross += gGross / 100;
+                storeProfit[storeKey].fees += gFees / 100;
+                storeProfit[storeKey].shipping += gShip / 100;
+
+                group.forEach(o => {
+                    base.units += o.qty_final;
+                    const linkedSku = skuLinks.find(l => l.importedSku.toUpperCase() === o.sku.toUpperCase());
+                    const masterCode = linkedSku ? linkedSku.masterProductSku : o.sku;
+                    const product = stockItems.find(i => i.code.toUpperCase() === masterCode.toUpperCase());
+                    const productName = product?.name || o.sku;
+
+                    const entry = skuMap.get(masterCode) || { revenue: 0, qty: 0, name: productName, commissions: 0, buyerPaid: 0 };
+                    entry.revenue += toCents(o.price_gross) / 100;
+                    entry.qty += o.qty_final;
+                    const orderGrossSum = group.reduce((s, i) => s + toCents(i.price_gross), 0) / 100;
+                    entry.commissions += orderGrossSum > 0 ? ((toCents(o.price_gross) / 100) / orderGrossSum) * (gFees / 100) : 0;
+                    entry.buyerPaid += toCents(o.price_total) / 100;
+                    skuMap.set(masterCode, entry);
+                });
+            });
+
+            base.ranking = Array.from(skuMap.entries()).map(([code, d]) => ({ code, ...d }))
+                .sort((a, b) => rankingMetric === 'revenue' ? b.revenue - a.revenue : b.qty - a.qty);
+
+            base.orders = groups.size;
+
+            let taxCalculated = 0;
+            const breakdown = taxes.map(t => {
+                let taxBase = Math.round(base.gross * 100);
+                if (t.appliesTo === 'after_fees') taxBase = Math.max(0, Math.round(base.gross * 100) - Math.round(base.fees * 100));
+                else if (t.appliesTo === 'after_ship') taxBase = Math.max(0, Math.round(base.gross * 100) - Math.round(base.shipping * 100));
+                else if (t.appliesTo === 'after_both') taxBase = Math.max(0, Math.round(base.gross * 100) - Math.round(base.fees * 100) - Math.round(base.shipping * 100));
+                
+                const amt = t.type === 'percent' ? Math.round(taxBase * t.value / 100) : Math.round(t.value * 100);
+                const amtInReal = amt / 100;
+                if (t.enabled !== false) taxCalculated += amtInReal;
+                return { ...t, calculatedAmount: amtInReal, taxBase: taxBase / 100 };
+            });
+
+            let totalDeductions = 0;
+            if (deductPlatformFees) totalDeductions += base.fees;
+            if (deductShipping) totalDeductions += base.shipping;
+            totalDeductions += taxCalculated;
+
+            const finalNet = base.gross - totalDeductions;
+            const ticketMedio = base.orders > 0 ? base.gross / base.orders : 0;
+            const margemPct = base.gross > 0 ? (finalNet / base.gross) * 100 : 0;
+
+            const dailyMap = new Map<string, number>();
+            groups.forEach((group) => {
+                const first = group[0];
+                const isRep = generalSettings.isRepeatedValue;
+                const gGross = isRep ? Number(first.price_total || 0) : group.reduce((s, i) => s + (i.price_total || 0), 0);
+                const d = parseOrderDate(first);
+                if (!d) return;
+                const key = d.toISOString().split('T')[0];
+                dailyMap.set(key, (dailyMap.get(key) || 0) + gGross);
+            });
+            const dChart = Array.from(dailyMap.entries())
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([date, value]) => ({ date, value }));
+
+            return { base, comparison, storeProfit, breakdown, taxCalculated, finalNet, ticketMedio, margemPct, dChart, filtered };
+        };
+
+        const current = computePeriodStats(startLimit, endLimit);
+        const prev = computePeriodStats(prevStartLimit, prevEndLimit);
+
+        const currentMaterialList = calculateMaterialList(current.filtered, skuLinks, stockItems, produtosCombinados, generalSettings.expeditionRules, generalSettings);
+        const totalMaterialCost = currentMaterialList.reduce((s, m) => s + (m.cost || 0), 0);
+        
+        const prevMaterialList = calculateMaterialList(prev.filtered, skuLinks, stockItems, produtosCombinados, generalSettings.expeditionRules, generalSettings);
+        const prevTotalMaterialCost = prevMaterialList.reduce((s, m) => s + (m.cost || 0), 0);
+
+        return { 
+            stats: current.base, canalComparison: current.comparison, taxTotal: current.taxCalculated, finalNetProfit: current.finalNet - totalMaterialCost, 
+            filteredOrders: current.filtered, taxBreakdown: current.breakdown, dailyChart: current.dChart, totalPedidos: current.base.orders, 
+            ticketMedio: current.ticketMedio, margemPct: current.base.gross > 0 ? ((current.finalNet - totalMaterialCost) / current.base.gross) * 100 : 0, 
+            storeProfitability: current.storeProfit, materialList: currentMaterialList, totalMaterialCost,
+            prevStats: prev.base, prevTaxTotal: prev.taxCalculated, prevFinalNetProfit: prev.finalNet - prevTotalMaterialCost, prevTicketMedio: prev.ticketMedio,
+            prevMargemPct: prev.base.gross > 0 ? ((prev.finalNet - prevTotalMaterialCost) / prev.base.gross) * 100 : 0, prevTotalMaterialCost
+        };
+    }, [allOrders, period, canalFilter, customDates, compareMode, compareCustomDates, considerarInvalidos, dateSourceMode, rankingMetric, generalSettings.isRepeatedValue, taxes, deductPlatformFees, deductShipping, skuLinks, stockItems]);
 
     const handleAddTax = () => {
         const updated = [...taxes, { id: Date.now().toString(), name: 'Nova Despesa', type: 'percent' as const, value: 0, enabled: true, category: 'outro' as const, appliesTo: 'gross' as const }];
@@ -351,7 +469,8 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 showCustomerPaid: false,
                 reportTitle: generalSettings.reportTitle,
                 reportLogoBase64: generalSettings.reportLogoBase64,
-                stockMovements: stockMovements
+                stockMovements: stockMovements,
+                prevStats, prevNetProfit: prevFinalNetProfit, prevTicketMedio, prevMargemPct, prevTaxTotal
             });
         } catch (e) {
             console.error("Erro ao exportar:", e);
@@ -379,7 +498,8 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 showCustomerPaid: false,
                 reportTitle: generalSettings.reportTitle,
                 reportLogoBase64: generalSettings.reportLogoBase64,
-                stockMovements: stockMovements
+                stockMovements: stockMovements,
+                prevStats, prevNetProfit: prevFinalNetProfit, prevTicketMedio, prevMargemPct, prevTaxTotal
             });
         } catch (e) {
             console.error('Erro ao exportar PPTX:', e);
@@ -423,6 +543,9 @@ const FinancePage: React.FC<FinancePageProps> = ({
                     </h1>
                 </div>
                 <div className="flex items-center gap-3">
+                    <button onClick={() => setCurrentPage('calculadora')} className="bg-emerald-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-emerald-100 hover:bg-emerald-700 transition-all flex items-center gap-2">
+                        <Calculator size={16} /> Calculadora de Margem
+                    </button>
                     <button onClick={() => setIsImportModalOpen(true)} className="bg-indigo-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center gap-2">
                         <FileCode size={16} /> Importar XML (NFe)
                     </button>
@@ -592,14 +715,69 @@ const FinancePage: React.FC<FinancePageProps> = ({
                             )}
                             <select value={canalFilter} onChange={e => setCanalFilter(e.target.value as any)} className="w-full p-3 bg-slate-50 border rounded-xl text-xs font-black outline-none focus:ring-2 focus:ring-blue-500">
                                 <option value="ALL">Todos os Canais</option>
-                                <option value="ML">Mercado Livre</option>
-                                <option value="SHOPEE">Shopee</option>
-                                {(generalSettings.customStores || []).map(s => (
-                                    <option key={s.id} value={s.id}>{s.name}</option>
+                                {canaisDisponiveis.map(c => (
+                                    <option key={c} value={c}>{c}</option>
                                 ))}
                             </select>
                         </div>
                     </div>
+
+                    <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4 mt-6">
+                        <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2">
+                            <CalendarClock size={14} className="text-orange-500" /> Comparar Período
+                        </h3>
+                        <div className="space-y-3">
+                            <select value={compareMode} onChange={e => setCompareMode(e.target.value as any)} className="w-full p-3 bg-slate-50 border rounded-xl text-xs font-black outline-none focus:ring-2 focus:ring-orange-500">
+                                <option value="prev_period">Período Anterior Imediato</option>
+                                <option value="same_month_last_year">Mesmo Mês do Ano Anterior</option>
+                                <option value="same_day_last_month">Mesmo Dia, Mês Anterior</option>
+                                <option value="custom">Comparação Customizada</option>
+                            </select>
+                            {compareMode === 'custom' && (
+                                <div className="space-y-2">
+                                    <div>
+                                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Comparar a Partir de</label>
+                                        <input type="date" value={compareCustomDates.start} onChange={e => setCompareCustomDates(p => ({ ...p, start: e.target.value }))} className="w-full p-2 bg-slate-50 border rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-orange-500 mt-1" />
+                                    </div>
+                                    <div>
+                                        <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Comparar Até</label>
+                                        <input type="date" value={compareCustomDates.end} onChange={e => setCompareCustomDates(p => ({ ...p, end: e.target.value }))} className="w-full p-2 bg-slate-50 border rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-orange-500 mt-1" />
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Gráficos de Pizza (Apenas se houver receita) */}
+                    {stats.gross > 0 && (
+                        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-6">
+                            <SimplePieChart 
+                                title="Despesas vs Lucro Líquido" 
+                                data={[
+                                    { label: 'Lucro Líquido', value: Math.max(0, finalNetProfit), color: '#10b981' },
+                                    ...(deductPlatformFees ? [{ label: 'Comissões', value: stats.fees, color: '#f59e0b' }] : []),
+                                    ...(deductShipping ? [{ label: 'Frete Empresa', value: stats.shipping, color: '#3b82f6' }] : []),
+                                    ...taxBreakdown.filter(t => t.enabled !== false && t.calculatedAmount > 0).map((t, i) => ({ label: t.name, value: t.calculatedAmount, color: ['#8b5cf6', '#ec4899', '#ef4444', '#14b8a6', '#f97316'][i % 5] }))
+                                ]} 
+                            />
+                            {Object.keys(storeProfitability).length > 0 && (
+                                <SimplePieChart 
+                                    title="Distribuição por Canal" 
+                                    data={Object.entries(storeProfitability).map(([key, val]: [string, any], i) => {
+                                        let label = key;
+                                        if (key === 'ML') label = 'Mercado Livre';
+                                        if (key === 'SHOPEE') label = 'Shopee';
+                                        if (key === 'SITE') label = generalSettings.importer.site.storeName || 'Loja Própria';
+                                        
+                                        return { 
+                                            label: label, value: val.gross, 
+                                            color: key === 'ML' ? '#eab308' : key === 'SHOPEE' ? '#ee4d2d' : ['#3b82f6', '#8b5cf6', '#10b981', '#ec4899'][i % 4] 
+                                        };
+                                    })} 
+                                />
+                            )}
+                        </div>
+                    )}
 
                     {/* Botões de Limpeza */}
                     <div className="space-y-3">
@@ -624,24 +802,23 @@ const FinancePage: React.FC<FinancePageProps> = ({
                     <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
                             <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Cards</span>
-                            {cardsDirty && (
+                            <button onClick={toggleCardsLock} className={`p-1 rounded transition-colors ${isCardsLocked ? 'text-emerald-600 bg-emerald-50' : 'text-slate-500 hover:bg-slate-200'}`} title={isCardsLocked ? "Desbloquear cards para edição" : "Travar edição de cards"}>
+                                {isCardsLocked ? <Lock size={12} /> : <Unlock size={12} />}
+                            </button>
+                            {!isCardsLocked && cardsDirty && (
                                 <button onClick={handleSaveCards} className="px-3 py-1 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-emerald-700 transition-all flex items-center gap-1 shadow-sm">
                                     <Save size={10} /> Salvar
                                 </button>
                             )}
                         </div>
-                        <div className="flex bg-slate-200 p-0.5 rounded-lg">
-                            <button onClick={() => setCardColumns(3)} className={`px-2 py-1 text-[9px] font-black rounded-md transition-all ${cardColumns === 3 ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>3 cols</button>
-                            <button onClick={() => setCardColumns(4)} className={`px-2 py-1 text-[9px] font-black rounded-md transition-all ${cardColumns === 4 ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>4 cols</button>
-                        </div>
                     </div>
-                    <div className={`grid grid-cols-1 md:grid-cols-2 ${cardColumns === 4 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-4`}>
+                    <div className="flex flex-wrap items-stretch gap-4">
                         {financeCards.filter(c => c.enabled).map(card => {
                             // Variáveis disponíveis para fórmulas
                             const formulaVars: Record<string, number> = {
                                 gross: stats.gross, net: finalNetProfit, buyerTotal: stats.buyerTotal,
                                 fees: stats.fees, shipping: stats.shipping, customerPaid: stats.customerPaid,
-                                taxTotal, deductions: (deductPlatformFees ? stats.fees : 0) + (deductShipping ? stats.shipping : 0) + taxTotal,
+                                taxTotal, cmv: totalMaterialCost, deductions: (deductPlatformFees ? stats.fees : 0) + (deductShipping ? stats.shipping : 0) + taxTotal + totalMaterialCost,
                                 units: stats.units, totalPedidos, ticketMedio, margemPct
                             };
                             const evalFormula = (formula: string): number => {
@@ -662,37 +839,49 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                 } catch { return 0; }
                             };
 
-                            const metricMap: Record<string, { value: string; sub?: string; highlight?: boolean; breakdown?: { label: string; value: string; colorClass?: string }[] }> = {
-                                gross: { value: fmt(stats.gross), sub: `${stats.units} un · ${totalPedidos} pedidos` },
+                            const getTrend = (curr: number, prev: number) => {
+                                if (!prev) return undefined;
+                                const val = ((curr - prev) / prev) * 100;
+                                return { value: val, label: 'vs ant.' };
+                            };
+
+                            const prevDeductions = (deductPlatformFees ? prevStats.fees : 0) + (deductShipping ? prevStats.shipping : 0) + prevTaxTotal + prevTotalMaterialCost;
+
+                            const metricMap: Record<string, { value: string; sub?: string; highlight?: boolean; breakdown?: { label: string; value: string; colorClass?: string }[]; trend?: { value: number; label: string } }> = {
+                                gross: { value: fmt(stats.gross), sub: `Faturado sem taxas (${stats.units} un · ${totalPedidos} pedidos)`, trend: getTrend(stats.gross, prevStats.gross) },
                                 net: {
-                                    value: fmt(finalNetProfit), highlight: true,
+                                    value: fmt(finalNetProfit), highlight: true, trend: getTrend(finalNetProfit, prevFinalNetProfit),
                                     breakdown: [
                                         { label: 'Margem sobre bruto', value: fmtPct(margemPct), colorClass: margemPct >= 0 ? 'text-emerald-600' : 'text-red-600' },
                                         ...(deductPlatformFees ? [{ label: 'Comissões', value: fmt(stats.fees) }] : []),
-                                        ...(deductShipping ? [{ label: 'Frete', value: fmt(stats.shipping) }] : []),
+                                        ...(deductShipping ? [{ label: 'Frete/Expedição', value: fmt(stats.shipping) }] : []),
+                                        { label: 'Materiais (CMV)', value: fmt(totalMaterialCost) },
                                         ...taxBreakdown.filter(t => t.enabled !== false).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) })),
                                     ]
                                 },
-                                buyerTotal: { value: fmt(stats.buyerTotal), sub: 'Valor líquido recebido pelo comprador' },
-                                fees: { value: fmt(stats.fees), sub: 'Comissões da plataforma' },
-                                shipping: { value: fmt(stats.shipping), sub: 'Frete pago pela empresa' },
-                                customerPaid: { value: fmt(stats.customerPaid), sub: 'Frete pago pelo comprador' },
+                                buyerTotal: { value: fmt(stats.buyerTotal), sub: 'Pago pelos Clientes + Frete deles', trend: getTrend(stats.buyerTotal, prevStats.buyerTotal) },
+                                fees: { value: fmt(stats.fees), sub: 'Comissões da plataforma', trend: getTrend(stats.fees, prevStats.fees) },
+                                shipping: { value: fmt(stats.shipping), sub: 'Frete pago pela empresa', trend: getTrend(stats.shipping, prevStats.shipping) },
+                                customerPaid: { value: fmt(stats.customerPaid), sub: 'Frete pago pelo comprador', trend: getTrend(stats.customerPaid, prevStats.customerPaid) },
+                                cmv: { value: fmt(totalMaterialCost), sub: 'Custo de materiais (BOM)', trend: getTrend(totalMaterialCost, prevTotalMaterialCost) },
                                 taxTotal: {
-                                    value: fmt(taxTotal),
+                                    value: fmt(taxTotal), trend: getTrend(taxTotal, prevTaxTotal),
                                     breakdown: taxBreakdown.filter(t => t.enabled !== false).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) }))
                                 },
                                 deductions: {
-                                    value: fmt((deductPlatformFees ? stats.fees : 0) + (deductShipping ? stats.shipping : 0) + taxTotal),
+                                    value: fmt((deductPlatformFees ? stats.fees : 0) + (deductShipping ? stats.shipping : 0) + taxTotal + totalMaterialCost),
+                                    trend: getTrend((deductPlatformFees ? stats.fees : 0) + (deductShipping ? stats.shipping : 0) + taxTotal + totalMaterialCost, prevDeductions),
                                     breakdown: [
-                                        ...(deductPlatformFees ? [{ label: 'Comissões Plataforma', value: fmt(stats.fees) }] : []),
-                                        ...(deductShipping ? [{ label: 'Frete Empresa', value: fmt(stats.shipping) }] : []),
+                                        ...(deductPlatformFees ? [{ label: 'Comissões', value: fmt(stats.fees) }] : []),
+                                        ...(deductShipping ? [{ label: 'Frete/Expedição', value: fmt(stats.shipping) }] : []),
+                                        { label: 'Materiais (CMV)', value: fmt(totalMaterialCost) },
                                         ...taxBreakdown.filter(t => t.enabled !== false).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) })),
                                     ]
                                 },
-                                units: { value: `${stats.units}`, sub: `${totalPedidos} pedidos` },
-                                totalPedidos: { value: `${totalPedidos}`, sub: `${stats.units} unidades` },
-                                ticketMedio: { value: fmt(ticketMedio), sub: 'Média por pedido' },
-                                margemPct: { value: fmtPct(margemPct), sub: 'Margem líquida sobre bruto' },
+                                units: { value: `${stats.units}`, sub: `${totalPedidos} pedidos`, trend: getTrend(stats.units, prevStats.units) },
+                                totalPedidos: { value: `${totalPedidos}`, sub: `${stats.units} unidades`, trend: getTrend(totalPedidos, prevStats.orders) },
+                                ticketMedio: { value: fmt(ticketMedio), sub: 'Média por pedido', trend: getTrend(ticketMedio, prevTicketMedio) },
+                                margemPct: { value: fmtPct(margemPct), sub: 'Margem líquida sobre bruto', trend: getTrend(margemPct, prevMargemPct) },
                             };
 
                             // Se metric=custom e há fórmula, calcula
@@ -705,14 +894,20 @@ const FinancePage: React.FC<FinancePageProps> = ({
 
                             const m = metricMap[card.metric] || { value: '-' };
                             return (
-                                <div key={card.id} className="relative group">
-                                    <FinanceStatCard label={card.label} value={m.value} color={card.color} sub={m.sub} highlight={m.highlight} breakdown={m.breakdown} />
-                                    <button onClick={() => setEditingCardId(editingCardId === card.id ? null : card.id)} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white/80 p-1 rounded-lg shadow-sm z-10" title="Configurar card">
-                                        <Edit2 size={12} className="text-slate-500" />
-                                    </button>
-                                    <button onClick={() => handleRemoveCard(card.id)} className="absolute top-2 right-8 opacity-0 group-hover:opacity-100 transition-opacity bg-white/80 p-1 rounded-lg shadow-sm z-10" title="Remover card">
-                                        <X size={12} className="text-red-500" />
-                                    </button>
+                                <div key={card.id} className="relative group flex-1 min-w-[240px] flex">
+                                    <div className="w-full">
+                                        <FinanceStatCard label={card.label} value={m.value} color={card.color} sub={m.sub} highlight={m.highlight} breakdown={m.breakdown} trend={m.trend} />
+                                    </div>
+                                    {!isCardsLocked && (
+                                        <>
+                                            <button onClick={() => setEditingCardId(editingCardId === card.id ? null : card.id)} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white/80 p-1 rounded-lg shadow-sm z-10" title="Configurar card">
+                                                <Edit2 size={12} className="text-slate-500" />
+                                            </button>
+                                            <button onClick={() => handleRemoveCard(card.id)} className="absolute top-2 right-8 opacity-0 group-hover:opacity-100 transition-opacity bg-white/80 p-1 rounded-lg shadow-sm z-10" title="Remover card">
+                                                <X size={12} className="text-red-500" />
+                                            </button>
+                                        </>
+                                    )}
                                     {editingCardId === card.id && (
                                         <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg p-3 z-20 space-y-2">
                                             <input type="text" value={card.label} onChange={e => handleUpdateCard(card.id, 'label', e.target.value)} className="w-full p-1.5 border rounded-lg text-xs font-bold outline-none" placeholder="Nome do card" />
@@ -751,9 +946,11 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                 </div>
                             );
                         })}
-                        <button onClick={handleAddCard} className="min-h-[120px] border-2 border-dashed border-slate-200 rounded-2xl flex items-center justify-center gap-2 text-slate-400 text-xs font-black uppercase hover:bg-slate-50 hover:border-blue-200 transition-all">
-                            <Plus size={16} /> Adicionar Card
-                        </button>
+                        {!isCardsLocked && (
+                            <button onClick={handleAddCard} className="flex-1 min-w-[240px] border-2 border-dashed border-slate-200 rounded-2xl flex items-center justify-center gap-2 text-slate-400 text-xs font-black uppercase hover:bg-slate-50 hover:border-blue-200 transition-all min-h-[120px]">
+                                <Plus size={16} /> Adicionar Card
+                            </button>
+                        )}
                     </div>
 
                     {/* Stats secundárias */}
@@ -908,7 +1105,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
                     <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden">
                         <div className="p-6 border-b flex justify-between items-center bg-slate-50/50">
                             <h3 className="font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
-                                <TrendingUp size={20} className="text-blue-600" /> Performance de Vendas por SKU
+                                <TrendingUp size={20} className="text-blue-600" /> Top 15 Produtos
                             </h3>
                             <div className="flex bg-slate-200 p-1 rounded-xl">
                                 <button onClick={() => setRankingMetric('revenue')} className={`px-4 py-1.5 text-[9px] font-black uppercase rounded-lg transition-all ${rankingMetric === 'revenue' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Por Receita</button>
@@ -922,9 +1119,9 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                         <th className="px-4 py-4 text-left">Pos</th>
                                         <th className="px-4 py-4 text-left">Produto Mestre</th>
                                         <th className="px-4 py-4 text-center">Unid.</th>
-                                        <th className="px-4 py-4 text-right">Bruto Acordado</th>
+                                        <th className="px-4 py-4 text-right">Faturado s/ Taxas</th>
                                         <th className="px-4 py-4 text-right">Comissão Aprox.</th>
-                                        <th className="px-4 py-4 text-right">Pago pelo Comprador</th>
+                                        <th className="px-4 py-4 text-right">Pago p/ Clientes + Frete</th>
                                         <th className="px-4 py-4 text-right">% Peso</th>
                                     </tr>
                                 </thead>

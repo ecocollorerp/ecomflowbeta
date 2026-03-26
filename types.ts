@@ -218,8 +218,12 @@ export interface StockMovement {
   id: string;
   /** Código do produto */
   stockItemCode: string;
+  /** Nome do produto (display) */
+  stockItemName?: string;
   /** Operador/Usuário que registrou a movimentação */
-  operatorName: string;
+  operatorName?: string;
+  /** Usuário que criou o registro (mapeado de created_by_name) */
+  createdBy?: string;
   /** Diferença na quantidade (positivo para entrada, negativo para saída) */
   qty_delta: number;
   /** Dados do item no momento da movimentação (snapshot repassado pelo DB) */
@@ -1016,6 +1020,7 @@ export interface MaterialItem {
   name: string;
   quantity: number;
   unit: string;
+  cost?: number;
 }
 
 export interface ProcessedData {
@@ -1166,6 +1171,10 @@ export interface GeneralSettings {
   reportTitle?: string;
   /** Logo em Base64 para incluir nos relatórios exportados */
   reportLogoBase64?: string;
+  /** Foto personalizada enviada pelo usuário para sair no relatório */
+  customReportImageBase64?: string;
+  /** Template de PowerPoint em Base64 para adaptar a exportação */
+  pptxTemplateBase64?: string;
 }
 
 /** Configuração de um card customizável no painel financeiro */
@@ -1283,9 +1292,9 @@ export const defaultGeneralSettings: GeneralSettings = {
   navMode: 'sidebar',
   deductions: [],
   financeCards: [
-    { id: 'card_1', label: 'Faturado', metric: 'gross', color: 'blue', enabled: true },
+    { id: 'card_1', label: 'Faturado (sem taxas)', metric: 'gross', color: 'blue', enabled: true },
     { id: 'card_2', label: 'Líquido Final', metric: 'net', color: 'emerald', enabled: true },
-    { id: 'card_3', label: 'Pago pelos Clientes', metric: 'buyerTotal', color: 'purple', enabled: true },
+    { id: 'card_3', label: 'Pago pelos Clientes + Frete', metric: 'buyerTotal', color: 'purple', enabled: true },
   ]
 };
 
