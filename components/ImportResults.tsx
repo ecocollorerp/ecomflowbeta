@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import { ProcessedData, OrderItem, StockItem, SkuLink, ProdutoCombinado, GeneralSettings, MaterialItem, ResumidaItem, User } from '../types';
 import { FileDown, Database, AlertCircle, ChevronDown, ChevronRight, Package, Box, Info, ArrowDownAZ, ArrowDown, Link as LinkIcon, CheckCircle2, User as UserIcon, Printer, Search } from 'lucide-react';
-import { exportPdf, Tab } from '../lib/export';
+import { exportPdf, exportExcel, Tab } from '../lib/export';
 import { calculateMaterialList } from '../lib/estoque';
 import ProductionSummary from './ProductionSummary';
 
@@ -229,8 +229,11 @@ const ImportResults: React.FC<ImportResultsProps> = (props) => {
                                 <ChevronDown size={16} /> Expandir Todos
                             </button>
                         )}
-                        <button onClick={() => exportPdf(activeTab, data, skuLinks, stockItems, resumidaSortMode)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2 font-black text-xs">
+                        <button onClick={() => exportPdf(activeTab, data, skuLinks, stockItems, resumidaSortMode)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg flex items-center gap-2 font-black text-xs transition-all">
                             <FileDown size={20} /> PDF Completo
+                        </button>
+                        <button onClick={() => exportExcel(data, skuLinks, stockItems)} className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg flex items-center gap-2 font-black text-xs transition-all">
+                            <FileDown size={20} /> Excel
                         </button>
                     </div>
                 </div>

@@ -41,6 +41,7 @@ export const exportPdf = (
     let foot: (string | number)[][] = [];
     let subTitle = '';
     let tableOptions: any = { startY: 25 };
+    const stockMap = new Map<string, StockItem>(stockItems.map(i => [i.code.toUpperCase(), i]));
 
     switch (activeTab) {
         case 'completa': {
@@ -86,7 +87,16 @@ export const exportPdf = (
                 } else {
                     const order = items[0];
                     const isLinked = linkedSkusMap.has(order.sku);
+                    const masterSku = linkedSkusMap.get(order.sku);
+                    const product = masterSku ? stockMap.get(masterSku.toUpperCase()) : undefined;
+                    
                     body.push([isLinked ? 'Pronto' : 'Pendente', order.orderId, order.tracking, order.sku, order.qty_final, order.color]);
+                    
+                    if (product && product.expedition_items && product.expedition_items.length > 0) {
+                        product.expedition_items.forEach(miudo => {
+                            body.push(['', '', '', `  * CX: ${miudo.stockItemCode}`, miudo.qty_per_pack * order.qty_final, '']);
+                        });
+                    }
                 }
             });
 
@@ -143,6 +153,8 @@ export const exportPdf = (
                 entry.total_units += qty;
                 distributionMap.set(compositeKey, entry);
             });
+            
+            // Re-agrupar miúdos se necessário (Opcional, mas vamos mostrar os miúdos na lista completa por enquanto)
 
             // Filtering based on selection
             let sortedList = Array.from(distributionMap.entries())
@@ -920,21 +932,32 @@ export const exportProductionPlanToPdf = (planItems: any[], params: any) => {
     doc.save(`plano_de_producao_${new Date().toISOString().split('T')[0]}.pdf`);
 };
 
-export const exportExcel = (data: ProcessedData, skuLinks: SkuLink[]) => {
+export const exportExcel = (data: ProcessedData, skuLinks: SkuLink[], stockItems: StockItem[] = []) => {
     const wb = XLSX.utils.book_new();
     const linkedSkusMap = new Map(skuLinks.map(link => [link.importedSku, link.masterProductSku]));
-    const completaData = data.lists.completa.map(o => ({
-        'Status Vínculo': linkedSkusMap.has(o.sku) ? 'Vinculado' : 'PENDENTE',
-        'Pedido': o.orderId,
-        'Rastreio': o.tracking,
-        'SKU Importado': o.sku,
-        'SKU Mestre': linkedSkusMap.get(o.sku) || '',
-        'Qtd Original': o.qty_original,
-        'Multiplicador': o.multiplicador,
-        'Qtd Final': o.qty_final,
-        'Cor': o.color,
-        'Canal': o.canal,
-    }));
+    const stockMap = new Map(stockItems.map(i => [i.code.toUpperCase(), i]));
+
+    const completaData: any[] = [];
+    
+    data.lists.completa.forEach(o => {
+        const masterSku = linkedSkusMap.get(o.sku);
+        const product = masterSku ? stockMap.get(masterSku.toUpperCase()) : undefined;
+        
+        completaData.push({
+            'Status Vínculo': linkedSkusMap.has(o.sku) ? 'Vinculado' : 'PENDENTE',
+            'Pedido': o.orderId,
+            'Rastreio': o.tracking,
+            'SKU Importado': o.sku,
+            'SKU Mestre': masterSku || '',
+            'Qtd Original': o.qty_original,
+            'Multiplicador': o.multiplicador,
+            'Qtd Final': o.qty_final,
+            'Cor': o.color,
+            'Canal': o.canal,
+            'Miúdos/Expedição': product?.expedition_items?.map(m => `${m.stockItemCode} (x${m.qty_per_pack})`).join(', ') || ''
+        });
+    });
+
     const wsCompleta = XLSX.utils.json_to_sheet(completaData);
     XLSX.utils.book_append_sheet(wb, wsCompleta, 'Lista Completa');
     XLSX.writeFile(wb, `importacao_${data.canal}_${new Date().toISOString().split('T')[0]}.xlsx`);

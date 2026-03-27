@@ -30,79 +30,12 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
     
     const [activeTab, setActiveTab] = useState<ConfigTab>('sistema');
     const [settings, setSettings] = useState<GeneralSettings>(generalSettings);
-    const [detectedHeaders, setDetectedHeaders] = useState<string[]>([]);
-    const [sampleData, setSampleData] = useState<any[]>([]);
-    
     const [isResetModalOpen, setIsResetModalOpen] = useState(false);
     const [isClearHistoryModalOpen, setIsClearHistoryModalOpen] = useState(false);
     const [newSectorName, setNewSectorName] = useState('');
     const [isAddingSector, setIsAddingSector] = useState(false);
     const [editingSectorId, setEditingSectorId] = useState<string | null>(null);
     const [editingSectorName, setEditingSectorName] = useState('');
-    const [expandedPanels, setExpandedPanels] = useState<Set<string>>(new Set());
-
-    const togglePanel = (canal: string) => {
-        setExpandedPanels(prev => {
-            const next = new Set(prev);
-            if (next.has(canal)) next.delete(canal); else next.add(canal);
-            return next;
-        });
-    };
-    const allChannelsList = useMemo(() => ['ml', 'shopee', 'site', ...(settings.customStores || []).map(cs => cs.id)], [settings.customStores]);
-    const showAllPanels = () => setExpandedPanels(new Set(allChannelsList));
-    const hideAllPanels = () => setExpandedPanels(new Set());
-    const allExpanded = expandedPanels.size > 0 && expandedPanels.size === allChannelsList.length;
-
-    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        
-        try {
-            const buffer = await file.arrayBuffer();
-            const workbook = XLSX.read(buffer, { type: 'array' });
-            const sheet = workbook.Sheets[workbook.SheetNames[0]];
-            
-            const isML = file.name.toLowerCase().includes('vendas') || file.name.toLowerCase().includes('mercado');
-            const isTikTok = file.name.toLowerCase().includes('tiktok') || file.name.toLowerCase().includes('tik_tok');
-            const startRow = isML ? 5 : 0;
-
-            const headers = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, range: startRow })[0] || [];
-            setDetectedHeaders(headers);
-
-            const data = XLSX.utils.sheet_to_json(sheet, { range: startRow });
-            setSampleData(data.slice(0, 1000));
-
-            // Auto-expand o painel correspondente
-            const detectedCanal = isML ? 'ml' : isTikTok ? 'site' : 'shopee';
-            setExpandedPanels(new Set([detectedCanal]));
-
-            addToast(`${headers.length} colunas detectadas (${isML ? 'Mercado Livre' : isTikTok ? 'TikTok Shop' : 'Shopee'}). Configure os filtros abaixo.`, 'info');
-        } catch (error) {
-            addToast('Erro ao ler planilha.', 'error');
-        }
-    };
-
-    const getMappingForChannel = (canalId: string): any => {
-        const key = canalId.toLowerCase();
-        if (['ml', 'shopee', 'site'].includes(key)) return settings.importer[key as 'ml' | 'shopee' | 'site'] || {};
-        return (settings as any)[`importer_${key}`] || {};
-    };
-
-    const updateMapping = (canalId: string, field: string, value: any) => {
-        const key = canalId.toLowerCase();
-        if (['ml', 'shopee', 'site'].includes(key)) {
-            setSettings(prev => ({...prev, importer: {...prev.importer, [key]: { ...prev.importer[key as 'ml' | 'shopee' | 'site'], [field]: value }}}));
-        } else {
-            setSettings(prev => ({...prev, [`importer_${key}`]: { ...((prev as any)[`importer_${key}`] || {}), [field]: value }}));
-        }
-    };
-
-    const toggleStatusValue = (canalId: string, value: string) => {
-        const current = getMappingForChannel(canalId).acceptedStatusValues || [];
-        const valueTrimmed = value.trim();
-        const newValues = current.includes(valueTrimmed) ? current.filter((v: string) => v !== valueTrimmed) : [...current, valueTrimmed];
-        updateMapping(canalId, 'acceptedStatusValues', newValues);
-    };
 
     const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, field: 'reportLogoBase64' | 'customReportImageBase64' | 'pptxTemplateBase64') => {
         const file = e.target.files?.[0];
@@ -114,12 +47,6 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
             addToast(`Arquivo carregado com sucesso!`, 'success');
         };
         reader.readAsDataURL(file);
-    };
-
-    const toggleFeeColumn = (canalId: string, header: string) => {
-        const current = getMappingForChannel(canalId).fees || [];
-        const newFees = current.includes(header) ? current.filter((f: string) => f !== header) : [...current, header];
-        updateMapping(canalId, 'fees', newFees);
     };
 
     const Section: React.FC<{title: string, icon: ReactNode, children: ReactNode, className?: string}> = ({title, icon, children, className}) => (
@@ -138,57 +65,10 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
         </button>
     );
 
-    const MapRow = ({ label, field, canalId, editable }: { label: string, field: string, canalId: string, editable?: boolean }) => {
-        const val = getMappingForChannel(canalId)[field] as string;
-        const OFF_VALUE = '__OFF__';
-        return (
-            <div className="flex flex-col gap-1 w-full">
-                <label className="text-[10px] font-black text-gray-400 uppercase">{label}</label>
-                {editable ? (
-                    <input
-                        type="text"
-                        value={val || ''}
-                        onChange={e => updateMapping(canalId, field, e.target.value)}
-                        placeholder="Nome da coluna (opcional)"
-                        className="p-2 border rounded-xl text-xs bg-gray-50 focus:ring-2 focus:ring-blue-500 font-bold outline-none"
-                    />
-                ) : (
-                    <select value={val || ''} onChange={e => updateMapping(canalId, field, e.target.value)} className={`p-2 border rounded-xl w-full text-xs font-bold ${val === OFF_VALUE ? 'bg-red-50 text-red-500 border-red-200' : 'bg-gray-50 border-gray-200 focus:ring-2 focus:ring-blue-500'}`}>
-                        <option value="">-- Selecione ou Auto --</option>
-                        <option value={OFF_VALUE}>🚫 Desativado (Off)</option>
-                        {detectedHeaders.map(h => <option key={h} value={h}>{h}</option>)}
-                        {val && val !== OFF_VALUE && !detectedHeaders.includes(val) && (<option value={val}>{val} (Salvo)</option>)}
-                    </select>
-                )}
-            </div>
-        );
-    };
-
-    const FeeSelector = ({ canalId }: { canalId: string }) => {
-        const fees = getMappingForChannel(canalId).fees || [];
-        return (
-            <div className="mt-4">
-                <label className="text-[10px] font-black text-gray-400 uppercase mb-2 block">Taxas e Descontos a Abater (Múltiplos)</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-3 border rounded-2xl bg-slate-50 border-slate-100">
-                    {detectedHeaders.length > 0 ? detectedHeaders.map(h => (<button key={h} onClick={() => toggleFeeColumn(canalId, h)} className={`flex items-center gap-3 p-2.5 rounded-xl border transition-all text-left ${fees.includes(h) ? 'bg-blue-600 border-blue-600 text-white shadow-lg shadow-blue-100' : 'bg-white border-slate-200 text-slate-600 hover:border-blue-300'}`}><div className="flex-shrink-0">{fees.includes(h) ? <CheckSquare size={18}/> : <Square size={18} className="text-slate-300"/>}</div><span className="text-[11px] font-bold uppercase truncate">{h}</span></button>)) : (<div className="col-span-full py-6 text-center"><p className="text-xs text-slate-400 font-medium uppercase italic">Suba uma planilha de exemplo para listar as colunas de taxas.</p></div>)}
-                </div>
-            </div>
-        );
-    };
-
-    const StatusFilterSettings = ({ canalId }: { canalId: string }) => {
-        const OFF_VALUE = '__OFF__';
-        const statusCol = getMappingForChannel(canalId).statusColumn;
-        const savedValues = getMappingForChannel(canalId).acceptedStatusValues || [];
-        const uniqueValuesInFile = useMemo(() => { if (!statusCol || statusCol === OFF_VALUE || sampleData.length === 0) return []; const values = new Set<string>(); sampleData.forEach(row => { const val = row[statusCol]; if (val) values.add(String(val).trim()); }); return Array.from(values).sort(); }, [statusCol, sampleData]);
-        const allDisplayValues = Array.from(new Set([...savedValues, ...uniqueValuesInFile])).sort();
-        return (<div className="mt-6 p-4 bg-purple-50 rounded-2xl border border-purple-100"><h4 className="text-xs font-black text-purple-800 uppercase mb-3 flex items-center gap-2"><Filter size={14}/> Filtro de Validação de Venda</h4><div className="space-y-4"><MapRow label="Coluna de Status na Planilha" field="statusColumn" canalId={canalId} />{statusCol && statusCol !== OFF_VALUE ? (<div><label className="text-[10px] font-black text-gray-400 uppercase mb-2 block">Selecione os Status Válidos (Venda Concluída)</label>{allDisplayValues.length > 0 ? (<div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto bg-white p-2 rounded-xl border border-purple-100">{allDisplayValues.map(val => (<button key={val} onClick={() => toggleStatusValue(canalId, val)} className={`flex items-center gap-2 p-2 rounded-lg border text-left transition-all ${savedValues.includes(val) ? 'bg-purple-600 border-purple-600 text-white' : 'bg-gray-50 border-gray-100 text-gray-600 hover:bg-gray-100'}`}>{savedValues.includes(val) ? <CheckSquare size={16}/> : <Square size={16}/>}<span className="text-xs font-bold truncate">{val}</span></button>))}</div>) : (<div className="flex items-center gap-2"><input type="text" value={savedValues.join(', ')} onChange={(e) => updateMapping(canalId, 'acceptedStatusValues', e.target.value.split(',').map(s=>s.trim()).filter(Boolean))} placeholder="ex: concluído, pago" className="flex-1 p-2 border border-slate-300 rounded text-xs bg-white outline-none focus:ring-1 focus:ring-purple-500" /><p className="text-[10px] text-gray-400">Separe por vírgulas</p></div>)}<p className="text-[9px] text-purple-600 mt-2 font-medium flex items-center gap-1"><Info size={12}/> Apenas linhas com os status marcados serão contabilizadas. O restante será desconsiderado.</p></div>) : (<p className="text-xs text-gray-400 italic">Selecione a coluna de status ou use "🚫 Desativado (Off)".</p>)}</div></div>);
-    };
-
     return (
         <div className="max-w-6xl mx-auto pb-32">
             <div className="flex items-center gap-4 mb-8">
-                <button onClick={() => setCurrentPage('configuracoes')} className="p-3 bg-white border rounded-2xl shadow-sm hover:bg-gray-50 transition-all active:scale-95 group">
+                <button onClick={() => setCurrentPage('dashboard')} className="p-3 bg-white border rounded-2xl shadow-sm hover:bg-gray-50 transition-all active:scale-95 group">
                     <ArrowLeft size={24} className="group-hover:-translate-x-1 transition-transform" />
                 </button>
                 <div>
@@ -200,14 +80,13 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                             Painel de Administração Global
                         </h1>
                     </div>
-                    <p className="text-gray-500 font-bold uppercase text-[9px] tracking-[0.2em]">Configurações Unificadas de Mapeamento, Sistema e Manutenção</p>
+                    <p className="text-gray-500 font-bold uppercase text-[9px] tracking-[0.2em]">Configurações Unificadas de Sistema e Manutenção</p>
                 </div>
             </div>
             
             <div className="bg-white border border-gray-200 rounded-t-2xl">
                 <div className="flex border-b">
-                    <TabButton tabId="sistema" label="Geral e Setores" icon={<Settings2 size={16}/>} />
-                    <TabButton tabId="mapeamento" label="Mapeamento de Planilhas" icon={<FileSpreadsheet size={16}/>} />
+                    <TabButton tabId="sistema" label="Geral e Integrações" icon={<Settings2 size={16}/>} />
                     <TabButton tabId="manutencao" label="Manutenção do Sistema" icon={<Terminal size={16}/>} />
                 </div>
             </div>
@@ -341,117 +220,6 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                             </div>
                         </Section>
 
-                        <Section title="Gerenciamento de Setores" icon={<Users size={24} className="text-violet-500" />}>
-                            <p className="text-xs text-slate-500 mb-6 font-medium">Configure os setores da fábrica. Funcionários podem ser vinculados a múltiplos setores.</p>
-                            
-                            <div className="flex gap-2 mb-8">
-                                <input 
-                                    type="text" 
-                                    value={newSectorName}
-                                    onChange={(e) => setNewSectorName(e.target.value)}
-                                    placeholder="Novo setor (ex: Produção, Expedição...)"
-                                    className="flex-1 p-3 border rounded-xl text-sm font-bold bg-white focus:ring-2 focus:ring-violet-500"
-                                />
-                                <button 
-                                    onClick={async () => {
-                                        if (!newSectorName.trim()) return;
-                                        setIsAddingSector(true);
-                                        const success = await onAddSector(newSectorName.trim());
-                                        setIsAddingSector(false);
-                                        if (success) setNewSectorName('');
-                                    }}
-                                    disabled={isAddingSector || !newSectorName.trim()}
-                                    className="px-6 py-2 bg-violet-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-violet-700 disabled:opacity-50"
-                                >
-                                    {isAddingSector ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
-                                    ADICIONAR SETOR
-                                </button>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                {sectors.length === 0 ? (
-                                    <div className="col-span-full py-12 text-center bg-slate-50 rounded-2xl border-2 border-dashed">
-                                        <p className="text-slate-400 font-bold">Nenhum setor cadastrado. Adicione um acima.</p>
-                                    </div>
-                                ) : sectors.map((sector) => {
-                                    const sectorUsers = users.filter(u => Array.isArray(u.setor) && (u.setor.includes(sector.name) || u.setor.includes(sector.id)));
-                                    return (
-                                    <div key={sector.id} className="p-4 bg-white rounded-2xl border border-slate-200 shadow-sm group hover:border-violet-300 transition-all">
-                                        <div className="flex items-center justify-between">
-                                            {editingSectorId === sector.id ? (
-                                                <div className="flex-1 flex gap-2 w-full">
-                                                    <input 
-                                                        type="text" 
-                                                        value={editingSectorName}
-                                                        onChange={(e) => setEditingSectorName(e.target.value)}
-                                                        className="flex-1 p-2 border border-violet-300 rounded-lg text-sm font-bold bg-violet-50 focus:outline-none"
-                                                        autoFocus
-                                                    />
-                                                    <button 
-                                                        onClick={async () => {
-                                                            if (!editingSectorName.trim() || !onEditSector) return;
-                                                            const success = await onEditSector(sector.id, editingSectorName.trim());
-                                                            if (success) setEditingSectorId(null);
-                                                        }}
-                                                        disabled={!editingSectorName.trim()}
-                                                        className="p-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50"
-                                                    >
-                                                        <Check size={16} />
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => setEditingSectorId(null)}
-                                                        className="p-2 bg-slate-200 text-slate-600 rounded-lg hover:bg-slate-300"
-                                                    >
-                                                        <X size={16} />
-                                                    </button>
-                                                </div>
-                                            ) : (
-                                                <>
-                                                    <div className="flex flex-col">
-                                                        <span className="text-sm font-black text-slate-800 uppercase">{sector.name}</span>
-                                                        <span className="text-[10px] text-slate-400 font-bold uppercase">{sectorUsers.length} funcionário(s)</span>
-                                                    </div>
-                                                    <div className="flex gap-1">
-                                                        <button 
-                                                            onClick={() => {
-                                                                setEditingSectorId(sector.id);
-                                                                setEditingSectorName(sector.name);
-                                                            }}
-                                                            className="p-2 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
-                                                            title="Editar Setor"
-                                                        >
-                                                            <Edit2 size={18} />
-                                                        </button>
-                                                        <button 
-                                                            onClick={() => {
-                                                                if (confirm(`Tem certeza que deseja excluir o setor "${sector.name}"? Isso pode afetar funcionários vinculados.`)) {
-                                                                    onDeleteSector(sector.id);
-                                                                }
-                                                            }}
-                                                            className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                                                            title="Excluir Setor"
-                                                        >
-                                                            <Trash2 size={18} />
-                                                        </button>
-                                                    </div>
-                                                </>
-                                            )}
-                                        </div>
-                                        {sectorUsers.length > 0 && (
-                                            <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap gap-1.5">
-                                                {sectorUsers.map(u => (
-                                                    <span key={u.id} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-violet-50 border border-violet-100 text-violet-700 flex items-center gap-1">
-                                                        <Users size={10} /> {u.name}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                    );
-                                })}
-                            </div>
-                        </Section>
-
                         {/* TikTok Shop Configurações */}
                         <Section title="TikTok Shop — Integração" icon={<Globe className="text-pink-500" />}>
                             <p className="text-xs text-slate-500 mb-4">Configure as credenciais do TikTok Shop para sincronização de pedidos.</p>
@@ -558,109 +326,12 @@ export const ConfiguracoesGeraisPage: React.FC<ConfiguracoesGeraisPageProps> = (
                     </div>
                 )}
 
-                {activeTab === 'mapeamento' && (
-                     <Section title="Mapeamento de Planilhas" icon={<FileSpreadsheet className="text-emerald-500" />}>
-                        <div className="p-6 bg-emerald-50 rounded-2xl border-2 border-dashed border-emerald-200 text-center mb-6 group hover:bg-emerald-100 transition-all">
-                            <input type="file" id="sample-upload" className="hidden" onChange={handleFileUpload} />
-                            <label htmlFor="sample-upload" className="cursor-pointer flex flex-col items-center gap-2">
-                                <UploadCloud size={24} className="text-emerald-500 group-hover:scale-110 transition-transform" />
-                                <div>
-                                    <p className="font-bold text-emerald-900 text-sm">Subir Planilha de Exemplo</p>
-                                    <p className="text-xs text-emerald-600">Para extrair e ticar as colunas de taxas dinamicamente</p>
-                                </div>
-                            </label>
-                        </div>
-
-                        <div className="flex justify-end mb-4">
-                            <button onClick={allExpanded ? hideAllPanels : showAllPanels} className="flex items-center gap-2 px-4 py-2 text-xs font-black uppercase tracking-wider rounded-xl border transition-all hover:shadow-md bg-white text-gray-600 border-gray-200 hover:border-blue-400 hover:text-blue-600">
-                                {allExpanded ? <EyeOff size={16}/> : <Eye size={16}/>}
-                                {allExpanded ? 'Recolher Todos' : 'Exibir Todos'}
-                            </button>
-                        </div>
-
-                        <div className={allExpanded ? 'grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6' : 'space-y-3'}>
-                            {[
-                                { id: 'ml', name: 'Mercado Livre', type: 'system' },
-                                { id: 'shopee', name: 'Shopee', type: 'system' },
-                                { id: 'site', name: 'Padrão (Site/Outros)', type: 'system' },
-                                ...(settings.customStores || []).map(cs => ({ id: cs.id, name: cs.name, type: 'custom' }))
-                            ].map(canal => (
-                                <div key={canal.id} className="bg-gray-50/50 rounded-2xl border overflow-hidden">
-                                    <button onClick={() => togglePanel(canal.id)} className="w-full flex items-center justify-between p-4 hover:bg-gray-100 transition-colors">
-                                        <h3 className="font-bold text-gray-700 flex items-center gap-2">
-                                            {canal.name}
-                                            {canal.type === 'custom' && <span className="text-[9px] font-normal text-indigo-500 bg-indigo-50 px-2 py-0.5 rounded-full uppercase tracking-wider border border-indigo-100">Personalizado</span>}
-                                        </h3>
-                                        <div className="flex items-center gap-2 text-gray-400">
-                                            {expandedPanels.has(canal.id) ? <Eye size={18} className="text-blue-500"/> : <EyeOff size={18}/>}
-                                            {expandedPanels.has(canal.id) ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
-                                        </div>
-                                    </button>
-                                    {expandedPanels.has(canal.id) && (
-                                        <div className="p-4 pt-0 space-y-4 animate-in fade-in">
-                                            {canal.id === 'site' && (
-                                                <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 mb-4">
-                                                    <div className="flex flex-col gap-1 w-full">
-                                                        <label className="text-[10px] font-black text-blue-700 uppercase">Nome de Exibição no Gráfico de Financeiro</label>
-                                                        <input
-                                                            type="text"
-                                                            value={settings.importer.site.storeName || ''}
-                                                            onChange={e => updateMapping('site', 'storeName', e.target.value)}
-                                                            placeholder="Ex: Minha Loja"
-                                                            className="p-2 border rounded-xl text-sm bg-white focus:ring-2 focus:ring-blue-500 font-bold outline-none"
-                                                        />
-                                                    </div>
-                                                </div>
-                                            )}
-                                            
-                                            <div className="space-y-6">
-                                                <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
-                                                    <h4 className="text-xs font-black text-blue-800 uppercase mb-4 flex items-center gap-2">
-                                                        <PackageOpen size={14}/> Dados do Pedido (Importação)
-                                                    </h4>
-                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                                        <MapRow label="ID do Pedido (Loja/Bling)" field="orderId" canalId={canal.id} />
-                                                        <MapRow label="Código do Produto (SKU)" field="sku" canalId={canal.id} />
-                                                        <MapRow label="Quantidade" field="qty" canalId={canal.id} />
-                                                        <MapRow label="Rastreio / Tracking" field="tracking" canalId={canal.id} />
-                                                        <MapRow label="Data da Venda" field="date" canalId={canal.id} />
-                                                        <MapRow label="Nome do Cliente" field="customerName" canalId={canal.id} />
-                                                        <MapRow label="CPF/CNPJ do Cliente" field="customerCpf" canalId={canal.id} />
-                                                    </div>
-                                                </div>
-
-                                                <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100">
-                                                    <h4 className="text-xs font-black text-emerald-800 uppercase mb-4 flex items-center gap-2">
-                                                        <Database size={14}/> Dados Financeiros (Relatórios e DRE)
-                                                    </h4>
-                                                    <div className="space-y-4">
-                                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                                            <MapRow label="Valor Bruto da Venda" field="priceGross" canalId={canal.id} />
-                                                            <MapRow label="Frete / Envio / Dedutíveis (Opcional)" field="shippingFee" canalId={canal.id} />
-                                                            <MapRow label="Valor Líquido Recebido" field="priceNet" canalId={canal.id} />
-                                                        </div>
-                                                        <FeeSelector canalId={canal.id} />
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            
-                                            <div className="border-t border-gray-200 mt-4 pt-4">
-                                                <StatusFilterSettings canalId={canal.id} />
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-                    </Section>
-                )}
-
                 {activeTab === 'manutencao' && (
                     <Section title="Manutenção do Banco de Dados" icon={<Terminal className="text-slate-800" />}>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                             <button onClick={async () => { await syncDatabase(); addToast('Banco de dados sincronizado!', 'success'); }} className="flex flex-col items-center p-4 bg-blue-50 border rounded-xl hover:bg-blue-100"><RefreshCw size={20} className="mb-2 text-blue-600" /><span className="text-xs font-bold text-blue-800">Sincronizar Estrutura</span></button>
                             <button onClick={onBackupData} className="flex flex-col items-center p-4 bg-green-50 border rounded-xl hover:bg-green-100"><Download size={20} className="mb-2 text-green-600" /><span className="text-xs font-bold text-green-800">Backup dos Dados</span></button>
-                            <button onClick={() => setIsClearHistoryModalOpen(true)} className="flex flex-col items-center p-4 bg-orange-50 border rounded-xl hover:bg-orange-100"><History size={20} className="mb-2 text-orange-600" /><span className="text-xs font-bold text-orange-800">Limpar Bipagens</span></button>
+                            <button onClick={() => setIsClearHistoryModalOpen(true)} className="flex flex-col items-center p-4 bg-orange-50 border rounded-xl hover:bg-orange-100"><RefreshCw size={20} className="mb-2 text-orange-600" /><span className="text-xs font-bold text-orange-800">Limpar Bipagens</span></button>
                             <button onClick={() => setIsResetModalOpen(true)} className="sm:col-span-3 flex items-center justify-center gap-3 p-4 bg-red-50 border border-red-200 rounded-xl hover:bg-red-100"><AlertTriangle size={20} className="text-red-600" /><span className="text-sm font-bold text-red-800">Resetar Banco de Dados (Apagar TUDO)</span></button>
                         </div>
                     </Section>

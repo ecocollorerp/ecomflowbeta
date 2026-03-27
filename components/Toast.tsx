@@ -27,52 +27,82 @@ const Toast: React.FC<ToastProps> = ({ toast, removeToast }) => {
 
     const typeInfo = {
         success: {
-            icon: <CheckCircle className="h-5 w-5 text-green-500" />,
-            bg: 'bg-[var(--color-success-bg)] border-[var(--color-success-border)]',
-            text: 'text-[var(--color-success-text)]',
+            icon: <CheckCircle className="h-6 w-6 text-emerald-500" />,
+            bg: 'bg-white/80 dark:bg-slate-900/80',
+            border: 'border-emerald-100 dark:border-emerald-900/50',
+            progress: 'bg-emerald-500',
+            shadow: 'shadow-emerald-200/50',
+            accent: 'text-emerald-700 dark:text-emerald-400'
         },
         error: {
-            icon: <AlertTriangle className="h-5 w-5 text-red-500" />,
-            bg: 'bg-[var(--color-danger-bg)] border-[var(--color-danger-border)]',
-            text: 'text-[var(--color-danger-text)]',
+            icon: <AlertTriangle className="h-6 w-6 text-rose-500" />,
+            bg: 'bg-white/80 dark:bg-slate-900/80',
+            border: 'border-rose-100 dark:border-rose-900/50',
+            progress: 'bg-rose-500',
+            shadow: 'shadow-rose-200/50',
+            accent: 'text-rose-700 dark:text-rose-400'
         },
         info: {
-            icon: <Info className="h-5 w-5 text-blue-500" />,
-            bg: 'bg-[var(--color-info-bg)] border-[var(--color-info-border)]',
-            text: 'text-[var(--color-info-text)]',
+            icon: <Info className="h-6 w-6 text-blue-500" />,
+            bg: 'bg-white/80 dark:bg-slate-900/80',
+            border: 'border-blue-100 dark:border-blue-900/50',
+            progress: 'bg-blue-500',
+            shadow: 'shadow-blue-200/50',
+            accent: 'text-blue-700 dark:text-blue-400'
         },
         warning: {
-            icon: <AlertCircle className="h-5 w-5 text-amber-500" />,
-            bg: 'bg-amber-50 border-amber-200',
-            text: 'text-amber-800',
+            icon: <AlertCircle className="h-6 w-6 text-amber-500" />,
+            bg: 'bg-white/80 dark:bg-slate-900/80',
+            border: 'border-amber-100 dark:border-amber-900/50',
+            progress: 'bg-amber-500',
+            shadow: 'shadow-amber-200/50',
+            accent: 'text-amber-700 dark:text-amber-400'
         },
     };
 
-    const { icon, bg, text } = typeInfo[toast.type] || typeInfo.info;
+    const { icon, bg, border, progress, shadow, accent } = typeInfo[toast.type] || typeInfo.info;
 
     return (
         <div
-            className={`w-full max-w-sm rounded-lg shadow-lg pointer-events-auto ring-1 ring-black ring-opacity-5 overflow-hidden border ${bg} transition-all duration-300 ease-in-out transform ${
-                exiting ? 'opacity-0 translate-x-full' : 'opacity-100 translate-x-0'
+            className={`w-full max-w-sm rounded-[2rem] border-2 backdrop-blur-xl ${bg} ${border} ${shadow} pointer-events-auto overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)] transform shadow-2xl ${
+                exiting ? 'opacity-0 translate-x-12 scale-90' : 'opacity-100 translate-x-0 scale-100 animate-in fade-in slide-in-from-right-10'
             }`}
         >
-            <div className="p-4">
-                <div className="flex items-start">
-                    <div className="flex-shrink-0">{icon}</div>
-                    <div className="ml-3 w-0 flex-1 pt-0.5">
-                        <p className={`text-sm font-medium ${text}`}>{toast.message}</p>
+            <div className="p-6">
+                <div className="flex items-center gap-4">
+                    <div className="flex-shrink-0 bg-white dark:bg-slate-800 p-2 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-700">
+                        {icon}
                     </div>
-                    <div className="ml-4 flex-shrink-0 flex">
-                        <button
-                            onClick={handleClose}
-                            className={`inline-flex rounded-md text-gray-400 hover:text-gray-500 focus:outline-none`}
-                        >
-                            <span className="sr-only">Close</span>
-                            <X className="h-5 w-5" />
-                        </button>
+                    <div className="flex-1">
+                        <p className={`text-xs font-black uppercase tracking-widest ${accent}`}>{toast.type}</p>
+                        <p className="text-sm font-bold text-slate-600 dark:text-slate-300 mt-0.5 leading-tight">{toast.message}</p>
                     </div>
+                    <button
+                        onClick={handleClose}
+                        className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-all rounded-full hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                        <X size={18} />
+                    </button>
                 </div>
             </div>
+            
+            {/* Progress Bar Animation */}
+            <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800/50 overflow-hidden">
+                <div 
+                    className={`h-full ${progress} transition-all duration-[10000ms] ease-linear`}
+                    style={{ 
+                        width: exiting ? '0%' : '100%',
+                        animation: !exiting ? 'toast-progress 10s linear forwards' : 'none'
+                    }}
+                />
+            </div>
+            
+            <style>{`
+                @keyframes toast-progress {
+                    from { width: 100%; }
+                    to { width: 0%; }
+                }
+            `}</style>
         </div>
     );
 };

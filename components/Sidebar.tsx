@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, ScanLine, Package, BarChart3, DollarSign, Printer, Settings, UserCircle, ArrowLeftToLine, ArrowRightFromLine, Weight, Factory, QrCode, Users, ShoppingCart, LogOut, ClipboardCheck, ListPlus, BookOpen, Recycle, HelpCircle, ChevronDown, Link as LinkIcon, Globe, PackageOpen, ShieldAlert, Calculator } from 'lucide-react';
+import { LayoutDashboard, LayoutGrid, ScanLine, Package, BarChart3, DollarSign, Printer, Settings, UserCircle, ArrowLeftToLine, ArrowRightFromLine, Weight, Factory, QrCode, Users, ShoppingCart, LogOut, ClipboardCheck, ListPlus, BookOpen, Recycle, HelpCircle, ChevronDown, Link as LinkIcon, Globe, PackageOpen, ShieldAlert, Calculator } from 'lucide-react';
 import { User, GeneralSettings } from '../types';
 import DynamicIcon from './DynamicIcon';
 import { canAccessPage } from '../lib/accessControl';
@@ -157,6 +157,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, lowStock
         </NavSection>
 
         <NavSection title="Administração" isCollapsed={isCollapsed}>
+          {canShow('setores') && <NavItem icon={<LayoutGrid size={20} />} text="Setores" page="setores" active={currentPage === 'setores'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
           {canShow('funcionarios') && <NavItem icon={<Users size={20} />} text="Funcionários" page="funcionarios" active={currentPage === 'funcionarios'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
           {hasSettingsPermission && canShow('configuracoes-gerais') && (
                 <NavItem icon={<ShieldAlert size={20} />} text="Painel Admin Global" page="configuracoes-gerais" active={currentPage === 'configuracoes-gerais'} onClick={handlePageClick} isCollapsed={isCollapsed} />

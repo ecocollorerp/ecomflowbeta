@@ -1,4 +1,4 @@
-﻿
+
 import React, { useState, useEffect } from 'react';
 import FileUploader from '../components/FileUploader';
 import ImportResults from '../components/ImportResults';
@@ -8,9 +8,11 @@ import DateSelectionModal from '../components/DateSelectionModal';
 import { ProcessedData, OrderItem, SkuLink, StockItem, ProdutoCombinado, GeneralSettings, User, ImportHistoryItem, Canal } from '../types';
 import { parseExcelFile, extractShippingDates, extractHeadersAndData, getParserInternals } from '../lib/parser';
 import { verifyDatabaseSetup } from '../lib/supabaseClient';
-import { Loader2, Zap, History, Settings, X, ChevronLeft, Eye, AlertCircle, Copy, Check, Info, AlertTriangle, Trash2, List, Archive, Calendar, CheckSquare, Square } from 'lucide-react';
+import { Loader2, Zap, History, Settings, X, ChevronLeft, Eye, AlertCircle, Copy, Check, Info, AlertTriangle, Trash2, List, Archive, Calendar, CheckSquare, Square, FileSpreadsheet } from 'lucide-react';
 import { SETUP_SQL_STRING } from '../lib/sql';
 import ConfirmActionModal from '../components/ConfirmActionModal';
+import { MappingPanel } from '../components/MappingSettings';
+import * as XLSX from 'xlsx';
 
 interface ImporterPageProps {
     allOrders: OrderItem[];
@@ -48,7 +50,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         allOrders, selectedFile, setSelectedFile, processedData, setProcessedData,
         error, setError, isProcessing, setIsProcessing, onLaunchSuccess,
         skuLinks, onLinkSku, onUnlinkSku, products, onAddNewItem,
-        produtosCombinados, stockItems, generalSettings,
+        produtosCombinados, stockItems, generalSettings, setGeneralSettings, // Add setGeneralSettings
         currentUser, importHistory, addImportToHistory, clearImportHistory,
         onDeleteHistoryItem, onGetImportHistoryDetails, onBulkDeleteHistory,
         users, // Destructure new prop
@@ -83,6 +85,11 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
     const [selectedHistoryIds, setSelectedHistoryIds] = useState<Set<string>>(new Set());
     const [isDeletingBulk, setIsDeletingBulk] = useState(false);
     const [isConfirmBulkDeleteOpen, setIsConfirmBulkDeleteOpen] = useState(false);
+    
+    // Estados para Mapeamento
+    const [isMappingModalOpen, setIsMappingModalOpen] = useState(false);
+    const [detectedHeaders, setDetectedHeaders] = useState<string[]>([]);
+    const [mappingCanal, setMappingCanal] = useState<string>('shopee');
 
     useEffect(() => {
         verifyDatabaseSetup().then(res => {
@@ -102,6 +109,50 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         setCopiedSql(true);
         setTimeout(() => setCopiedSql(false), 2000);
     };
+
+    const handleUpdateMapping = (canalId: string, field: string, value: any) => {
+        const key = canalId.toLowerCase();
+        if (['ml', 'shopee', 'site'].includes(key)) {
+            setGeneralSettings(prev => ({
+                ...prev, 
+                importer: {
+                    ...prev.importer, 
+                    [key]: { ...prev.importer[key as 'ml' | 'shopee' | 'site'], [field]: value }
+                }
+            }));
+        } else {
+            setGeneralSettings(prev => ({
+                ...prev, 
+                [`importer_${key}`]: { ...((prev as any)[`importer_${key}`] || {}), [field]: value }
+            }));
+        }
+    };
+
+    const handleExtractHeaders = async () => {
+        if (!selectedFile) return;
+        try {
+            const buffer = await selectedFile.arrayBuffer();
+            const workbook = XLSX.read(buffer, { type: 'array' });
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const isML = selectedFile.name.toLowerCase().includes('vendas') || selectedFile.name.toLowerCase().includes('mercado');
+            const startRow = isML ? 5 : 0;
+            const headers = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, range: startRow })[0] || [];
+            setDetectedHeaders(headers);
+            
+            // Auto-seleciona o canal baseado no arquivo
+            if (isML) setMappingCanal('ml');
+            else if (selectedFile.name.toLowerCase().includes('shopee')) setMappingCanal('shopee');
+            else if (selectedFile.name.toLowerCase().includes('tiktok')) setMappingCanal('site');
+        } catch (e) {
+            console.error("Erro ao extrair cabeçalhos:", e);
+        }
+    };
+
+    useEffect(() => {
+        if (isMappingModalOpen && selectedFile && detectedHeaders.length === 0) {
+            handleExtractHeaders();
+        }
+    }, [isMappingModalOpen]);
 
     const handleConfirmLink = async (masterSku: string) => {
         console.log(`🔗 Iniciando vínc ulo de ${linkModalState.skus.length} SKU(s) com produto mestre: ${masterSku}`);
@@ -577,7 +628,18 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
 
                         {selectedFile && (
                             <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-6 animate-in fade-in zoom-in-95">
-                                <div className="flex items-center gap-2 border-b pb-3"><Settings size={20} className="text-blue-600" /><h3 className="font-black text-gray-800 uppercase tracking-tighter">Configuração de Importação</h3></div>
+                                <div className="flex items-center justify-between border-b pb-3">
+                                    <div className="flex items-center gap-2">
+                                        <Settings size={20} className="text-blue-600" />
+                                        <h3 className="font-black text-gray-800 uppercase tracking-tighter">Configuração de Importação</h3>
+                                    </div>
+                                    <button 
+                                        onClick={() => setIsMappingModalOpen(true)}
+                                        className="text-[10px] font-black uppercase text-blue-600 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 flex items-center gap-1.5 transition-all"
+                                    >
+                                        <FileSpreadsheet size={14} /> Mapear Colunas
+                                    </button>
+                                </div>
 
                                 {/* Seleção de Canal Manual */}
                                 <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
@@ -828,6 +890,69 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 fileName={selectedFile?.name || ''}
                 onRunDiagnostics={runDiagnostics}
             />
+            {/* Modal de Mapeamento de Colunas */}
+            {isMappingModalOpen && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+                    <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-4xl flex flex-col max-h-[90vh] overflow-hidden">
+                        <div className="p-8 border-b border-gray-100 flex justify-between items-center bg-slate-50">
+                            <div>
+                                <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3">
+                                    <FileSpreadsheet className="text-blue-600" />
+                                    Mapeamento de Colunas
+                                </h2>
+                                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Configure quais colunas da planilha correspondem aos dados do ERP</p>
+                            </div>
+                            <button onClick={() => setIsMappingModalOpen(false)} className="p-3 bg-white text-gray-400 hover:text-red-500 rounded-2xl transition-all shadow-sm">
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-8">
+                            <div className="flex gap-2 mb-8 bg-slate-100 p-1.5 rounded-2xl w-fit">
+                                {[
+                                    { id: 'ml', name: 'Mercado Livre' },
+                                    { id: 'shopee', name: 'Shopee' },
+                                    { id: 'site', name: 'Padrao / Site' }
+                                ].map(canal => (
+                                    <button
+                                        key={canal.id}
+                                        onClick={() => setMappingCanal(canal.id)}
+                                        className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                                            mappingCanal === canal.id ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+                                        }`}
+                                    >
+                                        {canal.name}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <MappingPanel
+                                canalId={mappingCanal}
+                                canalName={mappingCanal === 'ml' ? 'Mercado Livre' : mappingCanal === 'shopee' ? 'Shopee' : 'Padrão'}
+                                settings={generalSettings}
+                                onUpdateMapping={handleUpdateMapping}
+                                detectedHeaders={detectedHeaders}
+                                mode="import"
+                            />
+                        </div>
+
+                        <div className="p-8 bg-slate-50 border-t border-gray-100 flex justify-between items-center">
+                            <div className="flex items-center gap-2 text-xs font-bold text-slate-500">
+                                <Info size={16} className="text-blue-500" />
+                                {detectedHeaders.length > 0 
+                                    ? `${detectedHeaders.length} colunas detectadas no arquivo atual.` 
+                                    : 'Nenhum arquivo carregado para detecção automática.'}
+                            </div>
+                            <button 
+                                onClick={() => setIsMappingModalOpen(false)}
+                                className="px-10 py-4 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all"
+                            >
+                                Concluir Mapeamento
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

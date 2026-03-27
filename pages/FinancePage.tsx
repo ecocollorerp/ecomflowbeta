@@ -9,6 +9,7 @@ import { calculateMaterialList } from '../lib/estoque';
 import { exportFinanceReport, exportFinancePptx } from '../lib/export';
 import ConfirmActionModal from '../components/ConfirmActionModal';
 import FinanceImportModal from '../components/FinanceImportModal';
+import { MappingPanel } from '../components/MappingSettings';
 
 interface FinancePageProps {
     allOrders: OrderItem[];
@@ -219,16 +220,22 @@ const FinancePage: React.FC<FinancePageProps> = ({
     const [isDeleteAllModalOpen, setIsDeleteAllModalOpen] = useState(false); // Novo modal para apagar tudo
     const [isDeleting, setIsDeleting] = useState(false);
     const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-    const [dateSourceMode, setDateSourceMode] = useState<'sale_date' | 'import_date'>(generalSettings.dateSource || 'sale_date');
+    const [isMappingModalOpen, setIsMappingModalOpen] = useState(false);
+    const [mappingCanal, setMappingCanal] = useState<string>('shopee');
+    const [dateSourceMode, setDateSourceMode] = useState<'sale_date' | 'import_date' | 'shipping_date'>(generalSettings.dateSource === 'import_date' ? 'import_date' : 'sale_date');
 
     const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
     const fmtPct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
 
     const parseOrderDate = (order: OrderItem): Date | null => {
         if (dateSourceMode === 'import_date' && order.created_at) return new Date(order.created_at);
-        const dateStr = String(order.data || '');
+        
+        const dateStr = dateSourceMode === 'shipping_date' 
+            ? (order.data_prevista_envio || order.data || '') 
+            : (order.data || '');
+            
         if (!dateStr) return null;
-        const dateOnly = dateStr.split(' ')[0];
+        const dateOnly = String(dateStr).split(' ')[0];
         if (dateOnly.includes('-')) {
             const [y, m, d] = dateOnly.split('-');
             return new Date(Number(y), Number(m) - 1, Number(d), 12, 0, 0);
@@ -552,8 +559,14 @@ const FinancePage: React.FC<FinancePageProps> = ({
                     <button onClick={() => setIsImportModalOpen(true)} className="bg-blue-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center gap-2">
                         <FileUp size={16} /> Importar Planilha
                     </button>
-                    <button onClick={onNavigateToSettings} className="bg-slate-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-slate-100 hover:bg-slate-700 transition-all flex items-center gap-2">
-                        <Settings size={16} /> Configurar Importação
+                    <button 
+                        onClick={() => {
+                            setMappingCanal('shopee');
+                            setIsMappingModalOpen(true);
+                        }} 
+                        className="bg-slate-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-slate-100 hover:bg-slate-700 transition-all flex items-center gap-2"
+                    >
+                        <Settings size={16} /> Mapeamento Fiscal
                     </button>
                     <button onClick={handleExport} disabled={isExporting} className="bg-red-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-red-100 hover:bg-red-700 transition-all flex items-center gap-2 disabled:opacity-50">
                         {isExporting ? <Loader2 className="animate-spin" size={16} /> : <FileDown size={16} />} Exportar PDF
@@ -575,10 +588,10 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                 <br />Isso indica que as colunas financeiras (Valor Total, Preço) não foram mapeadas corretamente na importação.
                             </p>
                             <button
-                                onClick={onNavigateToSettings}
+                                onClick={() => setIsMappingModalOpen(true)}
                                 className="mt-2 text-sm font-black text-amber-800 underline hover:text-amber-900"
                             >
-                                Ir para Configurações Gerais corrigir o mapeamento
+                                Abrir Mapeamento para corrigir colunas
                             </button>
                         </div>
                     </div>
@@ -987,6 +1000,55 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                         <TrendingUp size={14} className="text-blue-500" /> Receita Bruta por Dia
                                         <span className="text-[9px] font-normal text-slate-400 ml-1">{periodLabel}</span>
                                     </h3>
+                                    <div className="space-y-4">
+                                        <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2">
+                                            <Calendar size={14} className="text-blue-500" /> Filtros Temporais
+                                        </h3>
+                                        
+                                        <div className="flex flex-col gap-3">
+                                            <div className="p-1.5 bg-slate-100 rounded-2xl flex gap-1">
+                                                {[
+                                                    { id: 'sale_date', label: 'Venda' },
+                                                    { id: 'shipping_date', label: 'Envio' },
+                                                    { id: 'import_date', label: 'Import' }
+                                                ].map(m => (
+                                                    <button
+                                                        key={m.id}
+                                                        onClick={() => setDateSourceMode(m.id as any)}
+                                                        className={`flex-1 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${dateSourceMode === m.id ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                                    >
+                                                        {m.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Período</label>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    {[
+                                                        { id: 'today', label: 'Hoje' },
+                                                        { id: 'last7days', label: '7 Dias' },
+                                                        { id: 'thisMonth', label: 'Este Mês' },
+                                                        { id: 'lastMonth', label: 'Mês Passado' },
+                                                        { id: 'custom', label: 'Personalizado' },
+                                                        { id: 'last_upload', label: 'Último Upload' }
+                                                    ].map((p) => (
+                                                        <button 
+                                                            key={p.id}
+                                                            onClick={() => setPeriod(p.id as any)}
+                                                            className={`px-3 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
+                                                                period === p.id 
+                                                                    ? 'bg-blue-600 text-white border-blue-700 shadow-md' 
+                                                                    : 'bg-slate-50 text-slate-500 border-slate-100 hover:border-blue-200'
+                                                            }`}
+                                                        >
+                                                            {p.label}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                     <div className="flex items-center gap-1">
                                         <button
                                             onClick={() => setChartPage(p => Math.min(p + 1, totalPages - 1))}
@@ -1185,6 +1247,75 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 confirmButtonText="Sim, Zerar Tudo"
                 isConfirming={isDeleting}
             />
+
+            {/* Modal de Mapeamento Fiscal */}
+            {isMappingModalOpen && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+                    <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-4xl flex flex-col max-h-[90vh] overflow-hidden">
+                        <div className="p-8 border-b border-gray-100 flex justify-between items-center bg-slate-50">
+                            <div>
+                                <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3">
+                                    <Landmark className="text-emerald-600" />
+                                    Mapeamento Fiscal & Financeiro
+                                </h2>
+                                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Configure colunas de preços, taxas e filtros de status</p>
+                            </div>
+                            <button onClick={() => setIsMappingModalOpen(false)} className="p-3 bg-white text-gray-400 hover:text-red-500 rounded-2xl transition-all shadow-sm">
+                                <X size={24} />
+                            </button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-8">
+                            <div className="flex gap-2 mb-8 bg-slate-100 p-1.5 rounded-2xl w-fit">
+                                {[
+                                    { id: 'ml', name: 'Mercado Livre' },
+                                    { id: 'shopee', name: 'Shopee' },
+                                    { id: 'site', name: 'Padrao / Site' }
+                                ].map(canal => (
+                                    <button
+                                        key={canal.id}
+                                        onClick={() => setMappingCanal(canal.id)}
+                                        className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                                            mappingCanal === canal.id ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'
+                                        }`}
+                                    >
+                                        {canal.name}
+                                    </button>
+                                ))}
+                            </div>
+
+                            <MappingPanel
+                                canalId={mappingCanal}
+                                canalName={mappingCanal === 'ml' ? 'Mercado Livre' : mappingCanal === 'shopee' ? 'Shopee' : 'Padrão'}
+                                settings={generalSettings}
+                                onUpdateMapping={(cid, f, v) => {
+                                    const key = cid.toLowerCase();
+                                    const newSettings = { ...generalSettings };
+                                    if (['ml', 'shopee', 'site'].includes(key)) {
+                                        newSettings.importer = {
+                                            ...newSettings.importer,
+                                            [key]: { ...(newSettings.importer as any)[key], [f]: v }
+                                        };
+                                    } else {
+                                        (newSettings as any)[`importer_${key}`] = { ...((newSettings as any)[`importer_${key}`] || {}), [f]: v };
+                                    }
+                                    if (onSaveSettings) onSaveSettings(newSettings);
+                                }}
+                                mode="fiscal"
+                            />
+                        </div>
+
+                        <div className="p-8 bg-slate-50 border-t border-gray-100 flex justify-end items-center">
+                            <button 
+                                onClick={() => setIsMappingModalOpen(false)}
+                                className="px-10 py-4 bg-emerald-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-emerald-100 hover:bg-emerald-700 transition-all"
+                            >
+                                Concluir Mapeamento
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
