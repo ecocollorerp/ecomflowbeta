@@ -1374,6 +1374,7 @@ export interface TaxEntry {
   appliesTo?: 'gross' | 'after_fees' | 'after_ship' | 'after_both';
   category?: 'imposto' | 'publicidade' | 'funcionarios' | 'insumos' | 'outro';
   appliesToChannels?: string[];
+  isMarketplaceCommission?: boolean;
 }
 
 export interface CustomStore {

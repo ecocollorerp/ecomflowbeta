@@ -431,8 +431,10 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 
                 const amt = t.type === 'percent' ? Math.round(taxBase * t.value / 100) : Math.round(t.value * 100);
                 const amtInReal = amt / 100;
-                if (t.enabled !== false) taxCalculated += amtInReal;
-                return { ...t, calculatedAmount: amtInReal, taxBase: taxBase / 100 };
+                // Se é comissão de marketplace e deductPlatformFees está ativo, pula (já descontado via platform_fees importado)
+                const skippedAsCommission = t.isMarketplaceCommission && deductPlatformFees;
+                if (t.enabled !== false && !skippedAsCommission) taxCalculated += amtInReal;
+                return { ...t, calculatedAmount: skippedAsCommission ? 0 : amtInReal, taxBase: taxBase / 100, _skippedAsCommission: skippedAsCommission };
             });
 
             // Frete líquido: shipping_fee - shipping_paid_by_customer (custo real do vendedor)
@@ -705,7 +707,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                 <input type="checkbox" checked={deductPlatformFees} onChange={e => setDeductPlatformFees(e.target.checked)} className="rounded text-blue-600" />
                                 <div className="flex-1">
                                     <span className="text-xs font-bold text-slate-700">Comissões Plataforma</span>
-                                    <span className="text-[9px] text-slate-400 block">Taxas do marketplace</span>
+                                    <span className="text-[9px] text-slate-400 block">Valor real da planilha importada (não adicione comissão nas despesas abaixo)</span>
                                 </div>
                                 <span className="text-xs font-black text-orange-600">{fmt(stats.fees)}</span>
                             </label>
@@ -813,6 +815,22 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                             })}
                                         </div>
                                         <p className="text-[8px] text-slate-400 mt-0.5">{(!tax.appliesToChannels || tax.appliesToChannels.length === 0) ? 'Nenhum selecionado = aplica em todos' : `Aplicado em: ${tax.appliesToChannels.join(', ')}`}</p>
+                                    </div>
+                                    <div>
+                                        <label className="flex items-center gap-2 cursor-pointer mt-1">
+                                            <input
+                                                type="checkbox"
+                                                checked={!!tax.isMarketplaceCommission}
+                                                onChange={e => handleUpdateTax(tax.id, 'isMarketplaceCommission', e.target.checked)}
+                                                className="rounded text-amber-600"
+                                            />
+                                            <span className="text-[9px] font-black text-amber-700">É comissão do marketplace</span>
+                                        </label>
+                                        {tax.isMarketplaceCommission && deductPlatformFees && (
+                                            <p className="text-[8px] text-amber-600 mt-0.5 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                                                Ignorada — comissão já vem da planilha importada (Comissões Plataforma ativo).
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
                             ))}
@@ -1005,7 +1023,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                         ...(deductPlatformFees ? [{ label: 'Comissões', value: fmt(stats.fees) }] : []),
                                         ...(deductShipping ? [{ label: 'Frete/Expedição', value: fmt(stats.shipping) }] : []),
                                         { label: 'Materiais (CMV)', value: fmt(totalMaterialCost) },
-                                        ...taxBreakdown.filter(t => t.enabled !== false).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) })),
+                                        ...taxBreakdown.filter(t => t.enabled !== false && !(t as any)._skippedAsCommission).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) })),
                                     ]
                                 },
                                 buyerTotal: { value: fmt(stats.buyerTotal), sub: 'Pago pelos Clientes + Frete deles', trend: getTrend(stats.buyerTotal, prevStats.buyerTotal) },
@@ -1015,7 +1033,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                 cmv: { value: fmt(totalMaterialCost), sub: 'Custo de materiais (BOM)', trend: getTrend(totalMaterialCost, prevTotalMaterialCost) },
                                 taxTotal: {
                                     value: fmt(taxTotal), trend: getTrend(taxTotal, prevTaxTotal),
-                                    breakdown: taxBreakdown.filter(t => t.enabled !== false).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) }))
+                                    breakdown: taxBreakdown.filter(t => t.enabled !== false && !(t as any)._skippedAsCommission).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) }))
                                 },
                                 deductions: {
                                     value: fmt((deductPlatformFees ? stats.fees : 0) + (deductShipping ? stats.shipping : 0) + taxTotal + totalMaterialCost),
@@ -1024,7 +1042,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                         ...(deductPlatformFees ? [{ label: 'Comissões', value: fmt(stats.fees) }] : []),
                                         ...(deductShipping ? [{ label: 'Frete/Expedição', value: fmt(stats.shipping) }] : []),
                                         { label: 'Materiais (CMV)', value: fmt(totalMaterialCost) },
-                                        ...taxBreakdown.filter(t => t.enabled !== false).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) })),
+                                        ...taxBreakdown.filter(t => t.enabled !== false && !(t as any)._skippedAsCommission).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) })),
                                     ]
                                 },
                                 units: { value: `${stats.units}`, sub: `${totalPedidos} pedidos`, trend: getTrend(stats.units, prevStats.units) },
