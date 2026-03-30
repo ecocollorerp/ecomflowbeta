@@ -22,7 +22,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
     const [files, setFiles] = useState<File[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const [importType, setImportType] = useState<ImportType>('finance_only');
-    const [resultSummary, setResultSummary] = useState<{ updated: number, created: number } | null>(null);
+    const [resultSummary, setResultSummary] = useState<{ updated: number, created: number, errors: { orderId: string, sku: string, reason: string }[] } | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [selectedChannel, setSelectedChannel] = useState<Canal | 'AUTO' | string>('AUTO');
     const [importStatus, setImportStatus] = useState<string>('');
@@ -43,7 +43,9 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
         shippingPaidByCustomer: '',
         priceNet: '',
         statusColumn: '',
-        acceptedStatusValues: ''
+        acceptedStatusValues: '',
+        importStartRow: undefined as number | undefined,
+        sumMultipleLines: false
     });
     
     const [importToFiscal, setImportToFiscal] = useState(false);
@@ -65,7 +67,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
         setNewCustomChannelName('');
         setShowAddChannel(false);
         setImportToFiscal(false);
-        setColumnMapping({ priceGross: '', platformFees: [], shippingFee: '', shippingPaidByCustomer: '', priceNet: '', statusColumn: '', acceptedStatusValues: '' });
+        setColumnMapping({ priceGross: '', platformFees: [], shippingFee: '', shippingPaidByCustomer: '', priceNet: '', statusColumn: '', acceptedStatusValues: '', importStartRow: undefined, sumMultipleLines: false });
     };
 
     const handleClose = () => {
@@ -91,7 +93,9 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
             shippingPaidByCustomer: config.shippingPaidByCustomer || '',
             priceNet: config.priceNet || '',
             statusColumn: config.statusColumn || '',
-            acceptedStatusValues: config.acceptedStatusValues ? config.acceptedStatusValues.join(', ') : ''
+            acceptedStatusValues: config.acceptedStatusValues ? config.acceptedStatusValues.join(', ') : '',
+            importStartRow: config.importStartRow,
+            sumMultipleLines: config.sumMultipleLines ?? false
         });
         setConfigSaved(false);
     }, [selectedChannel, generalSettings.importer]);
@@ -119,7 +123,9 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
             shippingPaidByCustomer: columnMapping.shippingPaidByCustomer === OFF_VALUE ? '' : columnMapping.shippingPaidByCustomer,
             priceNet: columnMapping.priceNet === OFF_VALUE ? '' : columnMapping.priceNet,
             statusColumn: columnMapping.statusColumn === OFF_VALUE ? '' : columnMapping.statusColumn,
-            acceptedStatusValues: columnMapping.acceptedStatusValues ? columnMapping.acceptedStatusValues.split(',').map(s => s.trim()) : []
+            acceptedStatusValues: columnMapping.acceptedStatusValues ? columnMapping.acceptedStatusValues.split(',').map(s => s.trim()) : [],
+            importStartRow: columnMapping.importStartRow,
+            sumMultipleLines: columnMapping.sumMultipleLines
         };
 
         if (knownKeys.includes(canalKey)) {
@@ -152,7 +158,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
             if (isExcel) {
                 try {
                     const buffer = await firstFile.arrayBuffer();
-                    const { headers, sheetData: data } = extractHeadersAndData(buffer);
+                    const { headers, sheetData: data } = extractHeadersAndData(buffer, columnMapping.importStartRow);
                     setAvailableHeaders(headers);
                     setSheetData(data);
                 } catch (err) {
@@ -260,16 +266,40 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
             const finalOrdersPayload: OrderItem[] = [];
             let updatedCount = 0;
             let createdCount = 0;
+            const importErrors: { orderId: string, sku: string, reason: string }[] = [];
 
             ordersToProcess.forEach(newOrder => {
                 const key = `${newOrder.orderId}|${newOrder.sku}`;
                 const existing = existingOrdersMap.get(key);
 
+                // Rastrear problemas financeiros
+                const hasNoGross = !newOrder.price_gross || newOrder.price_gross === 0;
+                const hasNoTotal = !newOrder.price_total || newOrder.price_total === 0;
+                
+                if (hasNoGross && hasNoTotal) {
+                    importErrors.push({ orderId: newOrder.orderId, sku: newOrder.sku, reason: 'Valor bruto e total zerados — verifique mapeamento de colunas' });
+                } else if (hasNoGross) {
+                    importErrors.push({ orderId: newOrder.orderId, sku: newOrder.sku, reason: 'Valor bruto (price_gross) zerado' });
+                }
+
+                if (newOrder.platform_fees === 0 && !isXml && !isZip) {
+                    const canalUp = (newOrder.canal || '').toUpperCase();
+                    if (canalUp === 'ML') {
+                        // ML com taxa zero = devolução/reembolso aprovado — apenas informativo
+                        importErrors.push({ orderId: newOrder.orderId, sku: newOrder.sku, reason: `Taxa zerada (ML) — possível devolução/reembolso aprovado` });
+                    } else if (canalUp === 'SHOPEE') {
+                        importErrors.push({ orderId: newOrder.orderId, sku: newOrder.sku, reason: `Taxas da plataforma zeradas (SHOPEE) — colunas de taxas podem não estar mapeadas` });
+                    }
+                }
+
                 if (existing) {
+                    // Se platform_fees veio como 0 e canal é ML, é válido (devolução/reembolso)
+                    const canalUp = (newOrder.canal || '').toUpperCase();
+                    const allowZeroFees = canalUp === 'ML';
                     finalOrdersPayload.push({
                         ...existing,
                         price_gross: newOrder.price_gross > 0 ? newOrder.price_gross : existing.price_gross,
-                        platform_fees: newOrder.platform_fees > 0 ? newOrder.platform_fees : existing.platform_fees,
+                        platform_fees: (newOrder.platform_fees > 0 || (allowZeroFees && newOrder.platform_fees === 0)) ? newOrder.platform_fees : existing.platform_fees,
                         shipping_fee: newOrder.shipping_fee > 0 ? newOrder.shipping_fee : existing.shipping_fee,
                         shipping_paid_by_customer: newOrder.shipping_paid_by_customer > 0 ? newOrder.shipping_paid_by_customer : existing.shipping_paid_by_customer,
                         price_net: newOrder.price_net > 0 ? newOrder.price_net : existing.price_net,
@@ -297,7 +327,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
 
             if (finalOrdersPayload.length > 0) {
                 await onLaunchOrders(finalOrdersPayload);
-                setResultSummary({ updated: updatedCount, created: createdCount });
+                setResultSummary({ updated: updatedCount, created: createdCount, errors: importErrors });
             } else {
                 setError("Nenhum dado válido encontrado para processar.");
             }
@@ -359,6 +389,31 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                                         <option key={s.id} value={s.id}>{s.name}</option>
                                     ))}
                                 </select>
+                                <div className="mt-2 flex flex-col gap-1">
+                                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                                        Linha Inicial (Cabeçalho)
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        value={columnMapping.importStartRow ?? ''}
+                                        onChange={e => {
+                                            const val = e.target.value === '' ? undefined : parseInt(e.target.value);
+                                            setColumnMapping(p => ({ ...p, importStartRow: val }));
+                                            // Trigger re-extraction of headers if a file is already selected
+                                            if (files.length > 0) {
+                                                const firstFile = files[0];
+                                                firstFile.arrayBuffer().then(buffer => {
+                                                    const { headers, sheetData: data } = extractHeadersAndData(buffer, val);
+                                                    setAvailableHeaders(headers);
+                                                    setSheetData(data);
+                                                });
+                                            }
+                                        }}
+                                        placeholder="Auto (ML=5, Outros=0)"
+                                        className="w-full p-2 bg-white border border-slate-300 rounded-lg text-sm font-bold focus:ring-2 focus:ring-blue-500 outline-none"
+                                    />
+                                </div>
                                 {!showAddChannel ? (
                                     <button onClick={() => setShowAddChannel(true)} className="text-[10px] font-bold text-blue-600 hover:text-blue-700 flex items-center gap-1">
                                         <Plus size={12} /> Adicionar Canal Personalizado
@@ -376,6 +431,20 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                                         <button onClick={() => { setShowAddChannel(false); setNewCustomChannelName(''); }} className="px-2 py-1 bg-slate-200 rounded-lg text-[10px] font-bold">×</button>
                                     </div>
                                 )}
+                                <div className="mt-3 flex items-center gap-2">
+                                    <label className="flex items-center gap-2 cursor-pointer group">
+                                        <input 
+                                            type="checkbox" 
+                                            checked={columnMapping.sumMultipleLines}
+                                            onChange={e => setColumnMapping(p => ({ ...p, sumMultipleLines: e.target.checked }))}
+                                            className="w-4 h-4 rounded border-blue-300 text-blue-600 focus:ring-blue-500 transition-all cursor-pointer"
+                                        />
+                                        <span className="text-[11px] font-black text-slate-600 uppercase tracking-tight group-hover:text-blue-600">Somar multilinha (Multi-SKU)</span>
+                                    </label>
+                                    <div className="text-[9px] text-blue-400 font-medium italic leading-tight">
+                                        Ative se as linhas do mesmo pedido devem ser somadas no financeiro.
+                                    </div>
+                                </div>
                             </div>
                         )}
 
@@ -560,10 +629,34 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                     <div className="text-center py-8">
                         <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6"><CheckCircle2 size={40} className="text-green-600" /></div>
                         <h3 className="text-2xl font-black text-slate-800 mb-2">Concluído!</h3>
-                        <div className="grid grid-cols-2 gap-4 mb-8">
+                        <div className="grid grid-cols-2 gap-4 mb-4">
                             <div className="p-4 bg-blue-50 rounded-xl"><p className="text-3xl font-black text-blue-600">{resultSummary.updated}</p><p className="text-[10px] font-bold uppercase text-blue-400">Atualizados</p></div>
                             <div className="p-4 bg-green-50 rounded-xl"><p className="text-3xl font-black text-green-600">{resultSummary.created}</p><p className="text-[10px] font-bold uppercase text-green-400">Novos</p></div>
                         </div>
+                        {resultSummary.errors && resultSummary.errors.length > 0 && (
+                            <div className="mb-4 text-left">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <AlertTriangle size={16} className="text-amber-600" />
+                                    <p className="text-xs font-black text-amber-700 uppercase">{resultSummary.errors.length} Aviso(s) na Importação</p>
+                                </div>
+                                <div className="max-h-48 overflow-y-auto border border-amber-200 rounded-xl bg-amber-50 divide-y divide-amber-100">
+                                    {resultSummary.errors.slice(0, 50).map((err, idx) => (
+                                        <div key={idx} className="px-3 py-2 text-[10px]">
+                                            <span className="font-black text-slate-700">{err.orderId}</span>
+                                            <span className="text-slate-400 mx-1">|</span>
+                                            <span className="font-bold text-slate-500">{err.sku}</span>
+                                            <span className="text-slate-400 mx-1">→</span>
+                                            <span className="font-bold text-amber-700">{err.reason}</span>
+                                        </div>
+                                    ))}
+                                    {resultSummary.errors.length > 50 && (
+                                        <div className="px-3 py-2 text-[10px] font-bold text-amber-600 text-center">
+                                            ... e mais {resultSummary.errors.length - 50} avisos
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                         <button onClick={handleClose} className="px-8 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-all">Fechar</button>
                     </div>
                 )}

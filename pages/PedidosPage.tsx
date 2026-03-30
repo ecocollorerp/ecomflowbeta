@@ -1,4 +1,4 @@
-﻿
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { OrderItem, User, Canal, OrderStatusValue, ScanLogItem, ReturnItem, GeneralSettings, OrderResolutionDetails, ORDER_STATUS_VALUES, StockItem, SkuLink } from '../types';
 // @ts-ignore
@@ -7,7 +7,7 @@ import ConfirmActionModal from '../components/ConfirmActionModal';
 import Pagination from '../components/Pagination';
 import LogErrorModal from '../components/LogErrorModal';
 import SolutionModal from '../components/SolutionModal';
-import { PLATFORM_SELECT_OPTIONS } from '../utils/platformLabels';
+// No dynamic import of PLATFORM_SELECT_OPTIONS here anymore
 
 // --- Helper Functions & Types ---
 
@@ -130,6 +130,7 @@ interface PedidosPageProps {
     users: User[];
     skuLinks: SkuLink[];
     stockItems: StockItem[];
+    initialFilter?: { status?: DisplayStatus | 'ALL'; search?: string };
 }
 
 type Tab = 'consultar' | 'conferencia' | 'devolucao';
@@ -164,7 +165,7 @@ const TabButton: React.FC<{ tab: Tab, activeTab: Tab, label: string, icon: React
 );
 
 const PedidosPage: React.FC<PedidosPageProps> = (props) => {
-    const { allOrders, scanHistory, returns, onLogError, onLogReturn, currentUser, onDeleteOrders, onBulkCancelBipagem, onUpdateStatus, onRemoveReturn, onSolveOrders, generalSettings, users, skuLinks, stockItems } = props;
+    const { allOrders, scanHistory, returns, onLogError, onLogReturn, currentUser, onDeleteOrders, onBulkCancelBipagem, onUpdateStatus, onRemoveReturn, onSolveOrders, generalSettings, users, skuLinks, stockItems, initialFilter } = props;
 
     const [activeTab, setActiveTab] = useState<Tab>('consultar');
     const [filters, setFilters] = useState({
@@ -200,10 +201,46 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
     const skuLinkMap = useMemo(() => new Map(skuLinks.map(l => [l.importedSku.toUpperCase(), l.masterProductSku.toUpperCase()])), [skuLinks]);
     const stockMap = useMemo(() => new Map(stockItems.map(i => [i.code.toUpperCase(), i])), [stockItems]);
 
+    const channelOptions = useMemo(() => {
+        const base = [{ value: 'ALL', label: 'Todos os Canais' }];
+        const importerChannels = Object.keys(generalSettings.importer).map(k => {
+            const value = k.toUpperCase();
+            let label = value;
+            if (value === 'ML') label = 'Mercado Livre';
+            else if (value === 'SHOPEE') label = 'Shopee';
+            else if (value === 'SITE') label = 'Site';
+            else if (value === 'TIKTOK') label = 'TikTok';
+            return { value, label };
+        });
+        const custom = (generalSettings.customStores || []).map(s => ({
+            value: s.id.toUpperCase(),
+            label: s.name
+        }));
+        
+        // Remove duplicates and combine
+        const seen = new Set(['ALL']);
+        const uniqueChannels = [...base];
+        
+        [...importerChannels, ...custom].forEach(c => {
+            if (!seen.has(c.value)) {
+                seen.add(c.value);
+                uniqueChannels.push(c);
+            }
+        });
+        
+        return uniqueChannels;
+    }, [generalSettings]);
+
     useEffect(() => {
         setSelectedIds(new Set());
         setCurrentPage(1);
     }, [activeTab, filters, itemsPerPage, dateSourceMode]);
+
+    useEffect(() => {
+        if (initialFilter) {
+            setFilters(prev => ({ ...prev, ...initialFilter }));
+        }
+    }, [initialFilter]);
 
     const handleFilterChange = (key: keyof typeof filters, value: string) => {
         setFilters(prev => ({ ...prev, [key]: value }));
@@ -598,7 +635,7 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                 <div className="flex flex-wrap gap-4 items-center">
                                     <div className="relative flex-grow min-w-[250px]"><Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" /><input type="text" placeholder="Buscar..." value={filters.search} onChange={e => handleFilterChange('search', e.target.value)} className="w-full pl-9 pr-3 py-2 text-sm border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md" /></div>
                                     <select value={filters.canal} onChange={e => handleFilterChange('canal', e.target.value)} className="p-2 text-sm border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800">
-                                        {PLATFORM_SELECT_OPTIONS.map(option => (
+                                        {channelOptions.map(option => (
                                             <option key={option.value} value={option.value}>{option.label}</option>
                                         ))}
                                     </select>
@@ -897,7 +934,9 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
                                     <input type="date" value={devolutionFilters.startDate} onChange={e => setDevolutionFilters(p => ({ ...p, startDate: e.target.value }))} className="p-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md text-sm" />
                                     <input type="date" value={devolutionFilters.endDate} onChange={e => setDevolutionFilters(p => ({ ...p, endDate: e.target.value }))} className="p-2 border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md text-sm" />
                                     <select value={devolutionFilters.canal} onChange={e => setDevolutionFilters(p => ({ ...p, canal: e.target.value as Canal }))} className="p-2 text-sm border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 rounded-md">
-                                        <option value="ALL">Todos Canais</option><option value="ML">Mercado Livre</option><option value="SHOPEE">Shopee</option>
+                                        {channelOptions.map(option => (
+                                            <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
                                     </select>
                                 </div>
                                 <RegisteredReturnsTable returns={filteredReturns} onRemove={handleRemoveReturnAction} />
@@ -930,6 +969,7 @@ const OrderCard: React.FC<{ item: AugmentedOrder; isSelected: boolean; onSelect:
     const canalColors: Record<Canal, string> = {
         'ML': 'bg-yellow-100 text-yellow-800',
         'SHOPEE': 'bg-orange-100 text-orange-800',
+        'TIKTOK': 'bg-pink-100 text-pink-800',
         'SITE': 'bg-blue-100 text-blue-800',
         'ALL': '',
         'AUTO': 'bg-gray-200 text-gray-800',

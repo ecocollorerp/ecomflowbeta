@@ -35,7 +35,8 @@ const ImportResults: React.FC<ImportResultsProps> = (props) => {
         generalSettings,
         isHistoryView = false,
         users,
-        blingLinkedIds
+        blingLinkedIds,
+        packGroups = []
     } = props;
 
     const [activeTab, setActiveTab] = useState<Tab>('completa');
@@ -299,6 +300,11 @@ const ImportResults: React.FC<ImportResultsProps> = (props) => {
                                         const product = stockMap.get(skuKey);
                                         const rowKey = `${item.sku}|${item.color}`;
                                         const isSelected = selectedResumidaKeys.has(rowKey);
+                                        
+                                        const packGroup = packGroups.find(g => 
+                                            g.item_codes.some(c => c.toUpperCase() === (item.sku as string).toUpperCase()) &&
+                                            (g.pack_size === 1 || g.name.toLowerCase().includes('1 un')) // Preferência por 1 un para saldo base
+                                        );
 
                                         return (
                                             <tr key={rowKey} onClick={() => toggleResumidaSelection(rowKey)} className={`cursor-pointer transition-colors ${isSelected ? 'bg-blue-50' : 'hover:bg-gray-50'} ${!product ? 'bg-red-50' : ''}`}>
@@ -312,8 +318,19 @@ const ImportResults: React.FC<ImportResultsProps> = (props) => {
                                                     />
                                                 </td>
                                                 <td className="p-4">
-                                                    <p className="font-black text-slate-800 uppercase">{product?.name || 'NÃO VINCULADO'}</p>
-                                                    <p className="text-[10px] font-mono text-gray-400">{item.sku}</p>
+                                                    <div className="flex items-center justify-between">
+                                                        <div>
+                                                            <p className="font-black text-slate-800 uppercase">{product?.name || 'NÃO VINCULADO'}</p>
+                                                            <p className="text-[10px] font-mono text-gray-400">{item.sku}</p>
+                                                        </div>
+                                                        {product && (
+                                                            <div className="text-right">
+                                                                <p className="text-[10px] font-black text-blue-600 uppercase">Saldo Real</p>
+                                                                <p className="text-xs font-black text-slate-700">Estoque: {product.current_qty} un</p>
+                                                                <p className="text-[9px] font-bold text-emerald-600">Prontos: {product.ready_qty} un</p>
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </td>
                                                 <td className="p-4 text-xs font-bold text-gray-600">
                                                     <span className="px-2 py-1 bg-white border rounded-md shadow-sm">{item.color}</span>
@@ -321,7 +338,25 @@ const ImportResults: React.FC<ImportResultsProps> = (props) => {
                                                 {allPackSizes.map((size: number) => (
                                                     <td key={String(size)} className="p-4 text-center font-bold">
                                                         {item.distribution[size] ? (
-                                                            <span className="bg-slate-200 text-slate-700 px-2 py-0.5 rounded-md text-xs">{item.distribution[size]}</span>
+                                                            <div className="flex flex-col items-center">
+                                                                <span className="bg-slate-200 text-slate-700 px-2 py-0.5 rounded-md text-xs">{item.distribution[size]} PD</span>
+                                                                {(() => {
+                                                                    const specificPack = packGroups.find(g => 
+                                                                        g.item_codes.some(c => c.toUpperCase() === (item.sku as string).toUpperCase()) &&
+                                                                        (g.pack_size === size || g.name.toLowerCase().includes(`${size} un`))
+                                                                    );
+                                                                    if (!specificPack) return null;
+                                                                    const qty = specificPack.tipo === 'volatil' 
+                                                                        ? (specificPack.quantidade_volatil || 0)
+                                                                        : stockItems.filter(i => specificPack.item_codes.includes(i.code)).reduce((s, i) => s + i.current_qty, 0);
+                                                                    
+                                                                    return (
+                                                                        <span className={`text-[9px] mt-1 font-black ${qty >= item.distribution[size] ? 'text-emerald-500' : 'text-orange-500'}`}>
+                                                                            Saldo: {qty}
+                                                                        </span>
+                                                                    );
+                                                                })()}
+                                                            </div>
                                                         ) : <span className="text-slate-300">-</span>}
                                                     </td>
                                                 ))}

@@ -79,6 +79,45 @@ export const MappingPanel: React.FC<MappingSettingsProps> = ({ canalId, canalNam
                         <PackageOpen size={14}/> Dados do Pedido (Importação)
                     </h4>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="flex flex-col gap-1 w-full sm:col-span-2 pb-2 mb-2 border-b border-blue-50">
+                            <label className="text-[10px] font-black text-blue-600 uppercase flex items-center gap-1">
+                                <Database size={10} /> Linha Inicial (Cabeçalho)
+                            </label>
+                            <div className="flex items-center gap-4">
+                                <input
+                                    type="number"
+                                    min="0"
+                                    value={mapping.importStartRow ?? ''}
+                                    onChange={e => handleUpdate('importStartRow', e.target.value === '' ? undefined : parseInt(e.target.value))}
+                                    placeholder="Detecção Automática (Padrão)"
+                                    className="max-w-[200px] p-2 border border-blue-200 rounded-xl text-xs bg-white focus:ring-2 focus:ring-blue-500 font-bold outline-none"
+                                />
+                                <div className="text-[9px] text-blue-400 font-medium italic">
+                                    Define a linha onde os nomes das colunas aparecem (ex: Mercado Livre costuma ser linha 5 ou 6).
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex flex-col gap-1 w-full sm:col-span-2 pb-2 mb-2 border-b border-blue-50">
+                            <label className="text-[10px] font-black text-blue-600 uppercase flex items-center gap-1">
+                                <Check size={10} /> Agregação Financeira (Multi-SKU)
+                            </label>
+                            <div className="flex items-center gap-4">
+                                <label className="flex items-center gap-2 cursor-pointer group">
+                                    <input
+                                        type="checkbox"
+                                        checked={mapping.sumMultipleLines ?? false}
+                                        onChange={e => handleUpdate('sumMultipleLines', e.target.checked)}
+                                        className="w-4 h-4 rounded border-blue-300 text-blue-600 focus:ring-blue-500 transition-all cursor-pointer"
+                                    />
+                                    <span className="text-xs font-bold text-slate-700 group-hover:text-blue-600 transition-colors">
+                                        Somar valores de pedidos com múltiplas linhas
+                                    </span>
+                                </label>
+                                <div className="text-[9px] text-blue-400 font-medium italic">
+                                    Se ativado, valores financeiros de cada linha do mesmo pedido serão somados. Desative se o marketplace repete o valor total em cada linha.
+                                </div>
+                            </div>
+                        </div>
                         <MapRow label="ID do Pedido (Loja/Bling)" field="orderId" canalId={canalId} val={mapping.orderId} onUpdate={handleUpdate} detectedHeaders={detectedHeaders} />
                         <MapRow label="Código do Produto (SKU)" field="sku" canalId={canalId} val={mapping.sku} onUpdate={handleUpdate} detectedHeaders={detectedHeaders} />
                         <MapRow label="Quantidade" field="qty" canalId={canalId} val={mapping.qty} onUpdate={handleUpdate} detectedHeaders={detectedHeaders} />

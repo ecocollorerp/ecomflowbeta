@@ -112,6 +112,7 @@ const App: React.FC = () => {
     const [currentPage, _setCurrentPage] = useState('dashboard');
     const [estoqueInitialTab, setEstoqueInitialTab] = useState<any>(undefined);
     const [calculadoraInitialSku, setCalculadoraInitialSku] = useState<string | undefined>(undefined);
+    const [pedidosInitialFilter, setPedidosInitialFilter] = useState<any>(undefined);
 
     const handlePageClick = (page: string) => {
         if (page === 'pacotes') {
@@ -121,6 +122,11 @@ const App: React.FC = () => {
         }
         if (page === 'estoque') {
             setEstoqueInitialTab(undefined);
+        }
+        if (page === 'pedidos-atrasados') {
+            setPedidosInitialFilter({ status: 'ATRASADO' });
+            setCurrentPage('pedidos');
+            return;
         }
         setCurrentPage(page);
     };
@@ -257,6 +263,11 @@ const App: React.FC = () => {
     };
 
     const setCurrentPage = (page: string) => {
+        if (page === 'pedidos-atrasados') {
+            setPedidosInitialFilter({ status: 'ATRASADO' });
+            page = 'pedidos';
+        }
+
         if (currentUser && !canAccessPage(currentUser, page, generalSettings)) {
             const fallbackPage = getFirstAccessiblePage(currentUser, 'dashboard', generalSettings);
             localStorage.setItem('erp_current_page', fallbackPage);
@@ -266,6 +277,9 @@ const App: React.FC = () => {
         }
 
         localStorage.setItem('erp_current_page', page);
+        if (page !== 'pedidos') {
+            setPedidosInitialFilter(undefined);
+        }
         _setCurrentPage(page);
     };
 
@@ -1191,8 +1205,18 @@ const App: React.FC = () => {
         else { addToast(`Erro ao registrar: ${error.message}`, 'error'); }
     }, [addToast, loadData]);
 
-    const handleAddNewGrinding = useCallback(async (data: { sourceCode: string, sourceQty: number, outputCode: string, outputName: string, outputQty: number, mode: 'manual' | 'automatico', userId?: string, userName: string }) => {
-        const { error } = await dbClient.rpc('record_grinding_run', { source_code: data.sourceCode, source_qty: data.sourceQty, output_code: data.outputCode, output_name: data.outputName, output_qty: data.outputQty, op_mode: data.mode, op_user_id: data.userId, op_user_name: data.userName });
+    const handleAddNewGrinding = useCallback(async (data: { sourceCode: string, sourceQty: number, outputCode: string, outputName: string, outputQty: number, mode: 'manual' | 'automatico', userId?: string, userName: string, batchName?: string }) => {
+        const { error } = await dbClient.rpc('record_grinding_run', { 
+            source_code: data.sourceCode, 
+            source_qty: data.sourceQty, 
+            output_code: data.outputCode, 
+            output_name: data.outputName, 
+            output_qty: data.outputQty, 
+            op_mode: data.mode, 
+            op_user_id: data.userId, 
+            op_user_name: data.userName,
+            p_batch_name: data.batchName
+        });
         if (!error) { loadData(); addToast('Moagem registrada!', 'success'); }
     }, [addToast, loadData]);
 
@@ -1693,7 +1717,7 @@ const App: React.FC = () => {
     }, [addToast, loadData]);
 
     // 🔗 Bulk Link SKUs - Criar novo produto e vincular múltiplos SKUs
-    const handleBulkLinkSKUsCreateNew = useCallback(async (selectedSkus: string[], newProductData: { name: string; code: string }) => {
+    const handleBulkLinkSKUsCreateNew = useCallback(async (selectedSkus: string[], newProductData: { name: string; code: string; category?: string; base_type?: string; product_type?: string }) => {
         if (!currentUser) return;
 
         try {
@@ -1711,7 +1735,9 @@ const App: React.FC = () => {
                 min_qty: 0,
                 sell_price: 0,
                 cost_price: 0,
-                category: 'Importado',
+                category: newProductData.category || 'Importado',
+                base_type: newProductData.base_type || 'BRANCA',
+                is_miudo: newProductData.product_type === 'miudos',
                 status: 'ATIVO',
             };
 
@@ -1958,7 +1984,6 @@ const App: React.FC = () => {
         setIsEditProductModalOpen(true);
     }, []);
 
-    // ✏️ Salvar alterações do produto
     const handleSaveProductEdit = useCallback(async (updates: Partial<StockItem>) => {
         if (!productToEdit) return;
         try {
@@ -1972,6 +1997,35 @@ const App: React.FC = () => {
             addToast('Erro ao salvar produto', 'error');
         }
     }, [productToEdit, handleEditItem, addToast]);
+
+    const handleUpdateProductPrices = useCallback(async (productSkus: string[], newCost?: number, newSell?: number) => {
+        if (!currentUser) return false;
+        try {
+            console.log(`💰 [handleUpdateProductPrices] Atualizando ${productSkus.length} produtos. Custo: ${newCost}, Venda: ${newSell}`);
+            
+            const updates = productSkus.map(sku => {
+                const item = stockItems.find(si => si.code.toUpperCase() === sku.toUpperCase());
+                if (!item) return null;
+                const up: any = { id: item.id };
+                if (newCost !== undefined) up.cost_price = newCost;
+                if (newSell !== undefined) up.sell_price = newSell;
+                return up;
+            }).filter(u => u !== null);
+
+            if (updates.length === 0) return false;
+
+            const { error } = await dbClient.from('stock_items').upsert(updates);
+            if (error) throw error;
+
+            addToast(`Preços de ${updates.length} produtos atualizados!`, 'success');
+            await loadData();
+            return true;
+        } catch (err: any) {
+            console.error('Erro ao atualizar preços:', err);
+            addToast(`Erro ao atualizar preços: ${err.message}`, 'error');
+            return false;
+        }
+    }, [currentUser, stockItems, addToast, loadData]);
 
     const handleAddImportToHistory = useCallback(async (item: any, processedData: any) => {
         try {
@@ -2142,8 +2196,8 @@ const App: React.FC = () => {
                 blingLinkedIds={blingLinkedIds}
             />
             case 'bipagem': return <BipagemPage isAutoBipagemActive={isAutoBipagemActive} allOrders={allOrders} onNewScan={handleNewScan} onBomDeduction={() => { }} scanHistory={scanHistory} onCancelBipagem={handleCancelBipagem} onBulkCancelBipagem={handleBulkCancelBipagem} products={stockItems} users={users} onAddNewUser={handleAddNewUser} onSaveUser={handleUpdateUser} uiSettings={uiSettings} currentUser={currentUser!} onSyncPending={handleSyncPending} skuLinks={skuLinks} addToast={addToast} currentPage={currentPage} onHardDeleteScanLog={handleHardDeleteScanLog} onBulkHardDeleteScanLog={handleBulkHardDeleteScanLog} />
-            case 'pedidos': return <PedidosPage allOrders={allOrders} scanHistory={scanHistory} returns={returns} onLogError={handleLogError} onLogReturn={handleLogReturn} currentUser={currentUser!} onDeleteOrders={handleDeleteOrders} onBulkCancelBipagem={handleBulkCancelBipagem} onUpdateStatus={handleUpdateStatus} onRemoveReturn={handleRemoveReturn} onSolveOrders={handleSolveOrders} generalSettings={generalSettings} users={users} skuLinks={skuLinks} stockItems={stockItems} />
-            case 'planejamento': return <PlanejamentoPage stockItems={stockItems} allOrders={allOrders} skuLinks={skuLinks} produtosCombinados={produtosCombinados} productionPlans={productionPlans} onSaveProductionPlan={handleSaveProductionPlan} onDeleteProductionPlan={handleDeleteProductionPlan} onGenerateShoppingList={handleGenerateShoppingList} currentUser={currentUser!} planningSettings={generalSettings.estoque} onSavePlanningSettings={(s) => handleSaveGeneralSettings(p => ({ ...p, estoque: s }))} addToast={addToast} />
+            case 'pedidos': return <PedidosPage allOrders={allOrders} scanHistory={scanHistory} returns={returns} onLogError={handleLogError} onLogReturn={handleLogReturn} currentUser={currentUser!} onDeleteOrders={handleDeleteOrders} onBulkCancelBipagem={handleBulkCancelBipagem} onUpdateStatus={handleUpdateStatus} onRemoveReturn={handleRemoveReturn} onSolveOrders={handleSolveOrders} generalSettings={generalSettings} users={users} skuLinks={skuLinks} stockItems={stockItems} initialFilter={pedidosInitialFilter} />
+            case 'planejamento': return <PlanejamentoPage stockItems={stockItems} allOrders={allOrders} skuLinks={skuLinks} produtosCombinados={produtosCombinados} productionPlans={productionPlans} onSaveProductionPlan={handleSaveProductionPlan} onDeleteProductionPlan={handleDeleteProductionPlan} onGenerateShoppingList={handleGenerateShoppingList} currentUser={currentUser!} planningSettings={generalSettings.estoque} onSavePlanningSettings={(s) => handleSaveGeneralSettings(p => ({ ...p, estoque: s }))} addToast={addToast} costCalculations={costCalculations} />
             case 'compras': return <ComprasPage shoppingList={shoppingList} onClearList={handleClearShoppingList} onUpdateItem={handleUpdateShoppingItem} stockItems={stockItems} />
             case 'pesagem': return <MaquinasPage stockItems={stockItems} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} currentUser={currentUser!} onDeleteBatch={handleDeleteWeighingBatch} users={users} skuLinks={skuLinks} generalSettings={generalSettings} />
             case 'moagem': return <MoagemPage stockItems={stockItems} grindingBatches={grindingBatches} onAddNewGrinding={handleAddNewGrinding} currentUser={currentUser!} onDeleteBatch={handleDeleteGrindingBatch} users={users} generalSettings={generalSettings} />
@@ -2152,7 +2206,7 @@ const App: React.FC = () => {
             case 'funcionarios': return <FuncionariosPage users={users} onSetAttendance={handleSetAttendance} onAddNewUser={handleAddNewUser} onUpdateAttendanceDetails={handleUpdateAttendanceDetails} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} currentUser={currentUser!} onDeleteUser={handleDeleteUser} sectors={sectors} />
             case 'relatorios': return <RelatoriosPage stockItems={stockItems} stockMovements={stockMovements} orders={allOrders} weighingBatches={weighingBatches} scanHistory={scanHistory} produtosCombinados={produtosCombinados} users={users} returns={returns} generalSettings={generalSettings} grindingBatches={grindingBatches} />
             case 'setores': return <SetoresPage sectors={sectors} users={users} onAddSector={handleAddSector} onDeleteSector={handleDeleteSector} onEditSector={handleEditSector} />
-            case 'calculadora': return <CalculadoraPage stockItems={stockItems} produtosCombinados={produtosCombinados} addToast={addToast} initialSku={calculadoraInitialSku} />
+            case 'calculadora': return <CalculadoraPage stockItems={stockItems} produtosCombinados={produtosCombinados} addToast={addToast} initialSku={calculadoraInitialSku} onUpdatePrices={handleUpdateProductPrices} />
             case 'financeiro': return <FinancePage allOrders={allOrders} stockItems={stockItems} stockMovements={stockMovements} skuLinks={skuLinks} produtosCombinados={produtosCombinados} generalSettings={generalSettings} onDeleteOrders={handleDeleteOrders} onLaunchOrders={handleLaunchSuccess} onSaveSettings={handleSaveGeneralSettings} onNavigateToSettings={() => { _setCurrentPage('configuracoes-gerais'); localStorage.setItem('erp_current_page', 'configuracoes-gerais'); }} setCurrentPage={setCurrentPage} costCalculations={costCalculations} onSelectSku={(sku) => { setCalculadoraInitialSku(sku); setCurrentPage('calculadora'); }} />
             case 'etiquetas': return <EtiquetasPage settings={etiquetasSettings} onSettingsSave={handleSaveEtiquetasSettings} generalSettings={generalSettings} uiSettings={uiSettings} onSetUiSettings={setUiSettings as any} stockItems={stockItems} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} onAddNewItem={handleAddNewItem} etiquetasState={etiquetasState} setEtiquetasState={setEtiquetasState} currentUser={currentUser!} allOrders={allOrders} etiquetasHistory={etiquetasHistory} onSaveHistory={handleSaveEtiquetaHistory} onGetHistoryDetails={handleGetEtiquetaHistoryDetails} onProcessZpl={handleProcessZpl} isProcessing={isProcessingLabels} progressMessage={labelProgressMessage} progress={labelProcessingProgress} addToast={addToast} onSaveBatch={handleSaveZplBatch} />
             case 'bling': return <BlingPage generalSettings={generalSettings} onLaunchSuccess={handleLaunchSuccess} onUpdateOrdersBatch={handleUpdateOrdersBatch} addToast={addToast} setCurrentPage={setCurrentPage} onLoadZpl={handleLoadZplFromBling} onSaveSettings={handleSaveGeneralSettings} stockItems={stockItems} skuLinks={skuLinks} allOrders={allOrders} onLinkSku={handleLinkSku} />;
@@ -2163,7 +2217,7 @@ const App: React.FC = () => {
             case 'powerbi-templates': return <PowerBiTemplatesPage setCurrentPage={setCurrentPage} />
             case 'configuracoes': return <ConfiguracoesPage users={users} setCurrentPage={setCurrentPage} onDeleteUser={handleDeleteUser} onAddNewUser={handleAddNewUser} currentUser={currentUser!} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} stockItems={stockItems} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} onClearScanHistory={handleClearScanHistory} onSaveGeneralSettings={handleSaveGeneralSettings} addToast={addToast} sectors={sectors} onAddSector={handleAddSector} onDeleteSector={handleDeleteSector} onEditSector={handleEditSector} />
             case 'configuracoes-gerais': return <ConfiguracoesGeraisPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} onSaveGeneralSettings={handleSaveGeneralSettings} currentUser={currentUser} onBackupData={handleBackupData} onResetDatabase={handleResetDatabase} addToast={addToast} stockItems={stockItems} onClearScanHistory={handleClearScanHistory} users={users} sectors={sectors} onAddSector={handleAddSector} onDeleteSector={handleDeleteSector} onEditSector={handleEditSector} />
-            default: return <DashboardPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} allOrders={allOrders} scanHistory={scanHistory} stockItems={stockItems} produtosCombinados={produtosCombinados} users={users} lowStockCount={lowStockCount} uiSettings={uiSettings} onSaveUiSettings={handleSaveUiSettings} adminNotices={adminNotices} onSaveNotice={handleSaveNotice} onDeleteNotice={handleDeleteNotice} currentUser={currentUser!} skuLinks={skuLinks} onSaveDashboardConfig={handleSaveDashboardConfig} packGroups={packGroups} onSavePackGroup={async (g, id) => { await dbClient.from('stock_pack_groups').upsert(id ? { ...g, id } : g); loadData(); }} onRefreshData={loadData} onSaveGeneralSettings={handleSaveGeneralSettings} />
+            default: return <DashboardPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} allOrders={allOrders} scanHistory={scanHistory} stockItems={stockItems} produtosCombinados={produtosCombinados} users={users} lowStockCount={lowStockCount} uiSettings={uiSettings} onSaveUiSettings={handleSaveUiSettings} adminNotices={adminNotices} onSaveNotice={handleSaveNotice} onDeleteNotice={handleDeleteNotice} currentUser={currentUser!} skuLinks={skuLinks} onSaveDashboardConfig={handleSaveDashboardConfig} packGroups={packGroups} onSavePackGroup={async (g, id) => { await dbClient.from('stock_pack_groups').upsert(id ? { ...g, id } : g); loadData(); }} onRefreshData={loadData} onSaveGeneralSettings={handleSaveGeneralSettings} onSolveOrders={handleSolveOrders} />
         }
     };
 
@@ -2193,11 +2247,15 @@ const App: React.FC = () => {
                         onMenuClick={() => setIsMobileSidebarOpen(true)}
                         lowStockItems={lowStockItems}
                         setCurrentPage={setCurrentPage}
-                        bannerNotice={bannerNotice}
+                        bannerNotice={(!generalSettings.customSectors || generalSettings.customSectors.length === 0) 
+                            ? { id: 'warn_sectors', text: '⚠️ Nenhum setor configurado. Clique aqui para configurar os setores do sistema.', level: 'red' } as any
+                            : bannerNotice}
                         isAutoBipagemActive={isAutoBipagemActive}
                         onToggleAutoBipagem={setIsAutoBipagemActive}
                         currentUser={currentUser}
-                        onDismissNotice={handleDeleteNotice}
+                        onDismissNotice={(!generalSettings.customSectors || generalSettings.customSectors.length === 0) 
+                            ? () => setCurrentPage('setores')
+                            : handleDeleteNotice}
                         isProcessingLabels={isProcessingLabels}
                         labelProgressMessage={labelProgressMessage}
                         labelProcessingProgress={labelProcessingProgress}
@@ -2229,6 +2287,7 @@ const App: React.FC = () => {
                 existingProducts={stockItems.map(p => ({ id: p.id || p.code, code: p.code, name: p.name }))}
                 onLinkBulk={handleBulkLinkSKUsToExisting}
                 onCreateAndLink={handleBulkLinkSKUsCreateNew}
+                generalSettings={generalSettings}
             />
         </div>
     );

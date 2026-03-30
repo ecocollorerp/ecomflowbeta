@@ -373,6 +373,7 @@ CREATE TABLE IF NOT EXISTS grinding_batches (
     mode                  TEXT,
     user_id               TEXT,
     user_name             TEXT,
+    batch_name            TEXT,
     created_at            TIMESTAMPTZ  DEFAULT NOW()
 );
 
@@ -902,7 +903,8 @@ CREATE OR REPLACE FUNCTION record_grinding_run(
     output_qty    REAL,
     op_mode       TEXT,
     op_user_id    TEXT,
-    op_user_name  TEXT
+    op_user_name  TEXT,
+    p_batch_name  TEXT DEFAULT NULL
 )
 RETURNS VOID
 LANGUAGE plpgsql SECURITY DEFINER AS $$
@@ -927,11 +929,11 @@ BEGIN
     INSERT INTO grinding_batches
         (source_insumo_code, source_insumo_name, source_qty_used,
          output_insumo_code, output_insumo_name, output_qty_produced,
-         mode, user_id, user_name)
+         mode, user_id, user_name, batch_name)
     VALUES
         (source_code, COALESCE(v_source_name, source_code), source_qty,
          output_code, output_name, output_qty,
-         op_mode, op_user_id, op_user_name);
+         op_mode, op_user_id, op_user_name, p_batch_name);
 END;
 $$;
 

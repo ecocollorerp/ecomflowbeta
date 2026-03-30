@@ -96,12 +96,22 @@ const Header: React.FC<HeaderProps> = ({ filters, onFilterChange, onSettingsClic
             <PeriodButton period="last7days" label="Últimos 7 dias" />
             <PeriodButton period="custom" label="Customizado" />
           </div>
-          <div className="flex items-center space-x-2 p-1">
+          <div className="flex items-center space-x-2 p-1 flex-wrap gap-y-2">
             <span className="text-sm font-semibold text-[var(--color-text-secondary)] mr-2">Canal:</span>
             <CanalButton canal="ALL" label="Todos" />
-            <CanalButton canal="ML" label="ML" />
-            <CanalButton canal="SHOPEE" label="Shopee" />
-            <CanalButton canal="SITE" label="Site" />
+            {Object.keys(generalSettings.importer).map(canalKey => {
+              const value = canalKey.toUpperCase();
+              let label = value;
+              if (value === 'ML') label = 'ML';
+              else if (value === 'SHOPEE') label = 'Shopee';
+              else if (value === 'SITE') label = 'Site';
+              else if (value === 'TIKTOK') label = 'TikTok';
+              
+              return <CanalButton key={value} canal={value} label={label} />;
+            })}
+            {(generalSettings.customStores || []).map(store => (
+              <CanalButton key={store.id} canal={store.id.toUpperCase()} label={store.name} />
+            ))}
           </div>
         </div>
         {filters.period === 'custom' && (

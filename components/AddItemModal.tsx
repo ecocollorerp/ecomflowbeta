@@ -1,6 +1,6 @@
-
+// components/AddItemModal.tsx
 import React, { useState, useEffect } from 'react';
-import { X, PlusCircle, Scan } from 'lucide-react';
+import { X, PlusCircle, Scan, Tag, Sliders, Box, Zap, Package } from 'lucide-react';
 import { StockItem, StockItemKind, GeneralSettings } from '../types';
 
 interface AddItemModalProps {
@@ -23,7 +23,7 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
         color: '',
         barcode: '',
         product_type: 'papel_de_parede' as 'papel_de_parede' | 'miudos',
-        base_type: 'branca' as 'branca' | 'preta' | 'especial',
+        base_type: '' as string,
     };
 
     const [newItem, setNewItem] = useState(initialState);
@@ -46,7 +46,7 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                 stateToSet = { ...stateToSet, unit: 'kg' };
             }
             if (itemType === 'PRODUTO') {
-                setTipoEstoque('PRODUTO_PRINCIPAL'); // reset ao abrir
+                setTipoEstoque('PRODUTO_PRINCIPAL'); 
             }
             if (itemType === 'INSUMO' && generalSettings.insumoCategoryList.length > 0) {
                 stateToSet.category = generalSettings.insumoCategoryList[0];
@@ -60,7 +60,6 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
 
     const handleConfirm = () => {
         if (newItem.code.trim() && newItem.name.trim()) {
-            // Garantir que category é incluído para insumos
             const itemToConfirm: any = {
                 ...newItem,
                 kind: itemType,
@@ -70,8 +69,7 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                 stockType: isProduct ? tipoEstoque : undefined,
             };
 
-            // Garantir que category é salvo para insumo
-            if (itemType === 'INSUMO') {
+            if (itemType === 'INSUMO' || isProduct) {
                 itemToConfirm.category = newItem.category || '';
             }
 
@@ -82,7 +80,7 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
         if (isProduct && (name === 'current_qty' || name === 'min_qty')) {
-            return; // Do not update for products
+            return;
         }
         const isNumberField = name === 'current_qty' || name === 'min_qty';
         setNewItem(prev => ({
@@ -92,166 +90,185 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
     };
 
     const isFormValid = newItem.code.trim() !== '' && newItem.name.trim() !== '' && !isNaN(newItem.min_qty) && newItem.min_qty >= 0;
+    
     const getTitle = () => {
         switch (itemType) {
             case 'INSUMO': return 'Cadastrar Novo Insumo';
             case 'PROCESSADO': return 'Cadastrar Novo Material Processado';
             case 'PRODUTO': return `Cadastrar Novo ${generalSettings.productTypeNames.papel_de_parede}`;
+            default: return 'Cadastrar Novo Item';
         }
     }
-    const title = getTitle();
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-[var(--modal-bg)] text-[var(--modal-text-primary)] rounded-lg shadow-2xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
-                <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-xl font-bold flex items-center">
-                        <PlusCircle className="mr-2 text-blue-600" />
-                        {title}
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-[2.5rem] shadow-2xl p-8 w-full max-w-xl max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200">
+                <div className="flex justify-between items-center mb-6">
+                    <h2 className="text-2xl font-black flex items-center uppercase tracking-tighter">
+                        <PlusCircle className="mr-3 text-blue-600" size={28} />
+                        {getTitle()}
                     </h2>
-                    <button onClick={onClose} className="text-[var(--modal-text-secondary)] hover:text-[var(--modal-text-primary)]">
+                    <button onClick={onClose} className="p-2 hover:bg-slate-50 rounded-full text-slate-400 transition-all">
                         <X size={24} />
                     </button>
                 </div>
 
-                <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                            <label htmlFor="code" className="text-sm font-medium text-[var(--modal-text-secondary)]">Código / SKU</label>
+                <div className="space-y-6">
+                    {/* Básico: Código e Nome */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Código / SKU</label>
                             <input
-                                id="code"
                                 name="code"
-                                type="text"
                                 value={newItem.code}
                                 onChange={handleInputChange}
-                                className="mt-1 block w-full border-[var(--modal-border)] rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm bg-[var(--modal-surface-secondary)]"
+                                className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm focus:border-blue-500 focus:bg-white outline-none transition-all uppercase"
                                 placeholder={itemType === 'INSUMO' ? 'ex: COLA_BASE_KG' : 'ex: PPL-BRC-PREM'}
+                                autoFocus
                             />
                         </div>
-                        <div>
-                            <label htmlFor="name" className="text-sm font-medium text-[var(--modal-text-secondary)]">Nome do Item</label>
+                        <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nome do Item</label>
                             <input
-                                id="name"
                                 name="name"
-                                type="text"
                                 value={newItem.name}
                                 onChange={handleInputChange}
-                                className="mt-1 block w-full border-[var(--modal-border)] rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm bg-[var(--modal-surface-secondary)]"
+                                className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm focus:border-blue-500 focus:bg-white outline-none transition-all"
                                 placeholder={itemType === 'INSUMO' ? 'ex: Cola Base Adesiva' : 'ex: Papel de Parede Branco Premium'}
                             />
                         </div>
                     </div>
-                    {isProduct && (
-                        <div>
-                            <label htmlFor="color" className="text-sm font-medium text-[var(--modal-text-secondary)]">Cor Principal</label>
-                            <input
-                                id="color"
-                                name="color"
-                                type="text"
-                                value={newItem.color}
-                                onChange={handleInputChange}
-                                className="mt-1 block w-full border-[var(--modal-border)] rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm bg-[var(--modal-surface-secondary)]"
-                                placeholder="ex: BRANCO"
-                            />
-                        </div>
-                    )}
-                    {/* Tipo de Produto e Tipo de Base */}
-                    {isProduct && (
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="text-sm font-medium text-[var(--modal-text-secondary)] mb-1 block">Tipo de Produto</label>
-                                <select
-                                    name="product_type"
-                                    value={newItem.product_type}
-                                    onChange={handleInputChange}
-                                    className="w-full p-2 border-[var(--modal-border)] rounded-md bg-[var(--modal-surface-secondary)] text-sm font-bold"
-                                >
-                                    <option value="papel_de_parede">Papel de Parede</option>
-                                    <option value="miudos">Itens Menores (Miúdos)</option>
-                                </select>
-                            </div>
-                            {newItem.product_type !== 'miudos' && (
-                            <div>
-                                <label className="text-sm font-medium text-[var(--modal-text-secondary)] mb-1 block">Tipo de Base</label>
-                                <select
-                                    name="base_type"
-                                    value={newItem.base_type || 'branca'}
-                                    onChange={handleInputChange}
-                                    className="w-full p-2 border-[var(--modal-border)] rounded-md bg-[var(--modal-surface-secondary)] text-sm font-bold"
-                                >
-                                    <option value="branca">⚪ Base Branca</option>
-                                    <option value="preta">⚫ Base Preta</option>
-                                    <option value="especial">🎨 Base Especial</option>
-                                </select>
-                            </div>
-                            )}
-                        </div>
-                    )}
 
-                    {/* Tipo de Estoque para Produtos */}
-                    {isProduct && (
-                        <div>
-                            <label className="text-sm font-medium text-[var(--modal-text-secondary)] mb-2 block">Tipo de Estoque</label>
-                            <div className="grid grid-cols-2 gap-3">
-                                <button
-                                    type="button"
-                                    onClick={() => setTipoEstoque('PRODUTO_PRINCIPAL')}
-                                    className={`p-3 rounded-xl border-2 text-left transition-all ${tipoEstoque === 'PRODUTO_PRINCIPAL'
-                                        ? 'border-blue-500 bg-blue-50'
-                                        : 'border-gray-200 bg-white hover:border-blue-300'
-                                        }`}
-                                >
-                                    <p className="text-xs font-black text-slate-800 uppercase">📦 Estoque Tradicional</p>
-                                    <p className="text-[10px] text-slate-500 mt-0.5">Controlado por produção (BOM/receita)</p>
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => setTipoEstoque('VOLATIL')}
-                                    className={`p-3 rounded-xl border-2 text-left transition-all ${tipoEstoque === 'VOLATIL'
-                                        ? 'border-orange-500 bg-orange-50'
-                                        : 'border-gray-200 bg-white hover:border-orange-300'
-                                        }`}
-                                >
-                                    <p className="text-xs font-black text-slate-800 uppercase">⚡ Estoque Volátil</p>
-                                    <p className="text-[10px] text-slate-500 mt-0.5">Ajustado manualmente, independente</p>
-                                </button>
-                            </div>
-                        </div>
-                    )}
-
-                    {itemType === 'INSUMO' && (
-                        <div>
-                            <label htmlFor="category" className="text-sm font-medium text-[var(--modal-text-secondary)]">Categoria</label>
-                            <select
-                                id="category"
-                                name="category"
-                                value={newItem.category}
-                                onChange={handleInputChange}
-                                className="mt-1 block w-full border-[var(--modal-border)] rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm bg-[var(--modal-bg)]"
-                            >
-                                {generalSettings.insumoCategoryList.length === 0 ? (
-                                    <option value="" disabled>Nenhuma categoria criada</option>
-                                ) : (
-                                    <>
-                                        <option value="" disabled>Selecione uma categoria...</option>
-                                        {generalSettings.insumoCategoryList.map(cat => (
+                    {/* Categorias e Bases */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        {(isProduct || itemType === 'INSUMO') && (
+                            <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Categoria</label>
+                                <div className="relative">
+                                    <Tag size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <select
+                                        name="category"
+                                        value={newItem.category}
+                                        onChange={handleInputChange}
+                                        className="w-full pl-10 p-3 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm focus:border-blue-500 focus:bg-white outline-none transition-all appearance-none"
+                                    >
+                                        <option value="">Sem Categoria</option>
+                                        {(itemType === 'INSUMO' ? generalSettings.insumoCategoryList : generalSettings.productCategoryList).map(cat => (
                                             <option key={cat} value={cat}>{cat}</option>
                                         ))}
-                                    </>
-                                )}
-                            </select>
+                                    </select>
+                                </div>
+                            </div>
+                        )}
+
+                        {isProduct && newItem.product_type !== 'miudos' && (
+                            <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tipo de Base</label>
+                                {(() => {
+                                    const catConfig = generalSettings.productCategoryConfigs?.find(c => c.name === newItem.category);
+                                    if (catConfig?.hasBase) {
+                                        return (
+                                            <>
+                                                <select
+                                                    name="base_type"
+                                                    value={newItem.base_type === 'PERSONALIZADA' ? 'PERSONALIZADA' : (catConfig.baseNames?.includes(newItem.base_type) ? newItem.base_type : (newItem.base_type ? 'PERSONALIZADA' : ''))}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        setNewItem(prev => ({ ...prev, base_type: val === 'PERSONALIZADA' ? '' : val }));
+                                                    }}
+                                                    className="w-full p-3 bg-blue-50 border-2 border-blue-100 rounded-2xl font-black text-sm text-blue-700 outline-none transition-all"
+                                                >
+                                                    <option value="">Selecione a Base...</option>
+                                                    {catConfig.baseNames?.map(base => (
+                                                        <option key={base} value={base.toUpperCase()}>{base.toUpperCase()}</option>
+                                                    ))}
+                                                    <option value="PERSONALIZADA">+ Personalizada...</option>
+                                                </select>
+                                                {(!catConfig.baseNames?.includes(newItem.base_type) && newItem.base_type !== '' || newItem.base_type === '') && (
+                                                    <div className="mt-2 animate-in slide-in-from-top-1">
+                                                        <input 
+                                                            type="text"
+                                                            value={newItem.base_type}
+                                                            onChange={(e) => setNewItem(prev => ({ ...prev, base_type: e.target.value.toUpperCase() }))}
+                                                            placeholder="DIGITE O NOME DA BASE..."
+                                                            className="w-full p-3 bg-white border-2 border-blue-200 rounded-2xl font-black text-xs text-blue-600 outline-none focus:border-blue-400 placeholder:text-blue-200"
+                                                        />
+                                                    </div>
+                                                )}
+                                            </>
+                                        );
+                                    }
+                                    return (
+                                        <div className="p-3 bg-slate-100 border-2 border-slate-100 rounded-2xl text-[10px] font-black text-slate-400 uppercase text-center border-dashed">
+                                            Categoria sem bases
+                                        </div>
+                                    );
+                                })()}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Especificidades de Produto */}
+                    {isProduct && (
+                        <div className="space-y-5 bg-slate-50 p-5 rounded-3xl border border-slate-100">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Tipo de Produto</label>
+                                    <div className="flex bg-white p-1 rounded-xl border border-slate-200">
+                                        <button onClick={() => setNewItem({...newItem, product_type: 'papel_de_parede'})} className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${newItem.product_type === 'papel_de_parede' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
+                                            <Box size={14}/> Papel
+                                        </button>
+                                        <button onClick={() => setNewItem({...newItem, product_type: 'miudos'})} className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-[10px] font-black uppercase transition-all ${newItem.product_type === 'miudos' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:bg-slate-50'}`}>
+                                            <Box size={14} className="scale-75"/> Miúdos
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="space-y-1.5">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Cor Principal</label>
+                                    <input
+                                        name="color"
+                                        value={newItem.color}
+                                        onChange={handleInputChange}
+                                        className="w-full p-3 bg-white border border-slate-200 rounded-xl font-bold text-sm focus:border-blue-500 outline-none transition-all uppercase"
+                                        placeholder="EX: BRANCO"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="space-y-1.5">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Modelo de Controle</label>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button
+                                        type="button"
+                                        onClick={() => setTipoEstoque('PRODUTO_PRINCIPAL')}
+                                        className={`p-3 rounded-2xl border-2 text-left transition-all ${tipoEstoque === 'PRODUTO_PRINCIPAL' ? 'border-blue-500 bg-white shadow-lg shadow-blue-50' : 'border-slate-200 opacity-60 hover:opacity-100 hover:border-blue-200'}`}
+                                    >
+                                        <p className="text-[10px] font-black text-blue-600 uppercase mb-0.5 flex items-center gap-1.5"><Package size={12}/> Tradicional</p>
+                                        <p className="text-[8px] text-slate-500 leading-tight">Controlado por produção e receita</p>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setTipoEstoque('VOLATIL')}
+                                        className={`p-3 rounded-2xl border-2 text-left transition-all ${tipoEstoque === 'VOLATIL' ? 'border-orange-500 bg-white shadow-lg shadow-orange-50' : 'border-slate-200 opacity-60 hover:opacity-100 hover:border-orange-200'}`}
+                                    >
+                                        <p className="text-[10px] font-black text-orange-600 uppercase mb-0.5 flex items-center gap-1.5"><Zap size={12}/> Volátil</p>
+                                        <p className="text-[8px] text-slate-500 leading-tight">Lançamentos manuais diretos</p>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     )}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div>
-                            <label htmlFor="unit" className="text-sm font-medium text-[var(--modal-text-secondary)]">Unidade</label>
+
+                    {/* Lógica de Estoque e Unidade */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+                        <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Unidade</label>
                             <select
-                                id="unit"
                                 name="unit"
                                 value={newItem.unit}
                                 onChange={handleInputChange}
                                 disabled={isProduct || isProcessado}
-                                className="mt-1 block w-full border-[var(--modal-border)] rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm bg-[var(--modal-bg)] disabled:bg-gray-100"
+                                className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm disabled:bg-slate-100 outline-none transition-all"
                             >
                                 <option value="un">un</option>
                                 <option value="kg">kg</option>
@@ -259,97 +276,63 @@ const AddItemModal: React.FC<AddItemModalProps> = ({ isOpen, onClose, itemType, 
                                 <option value="L">L</option>
                             </select>
                         </div>
-                        <div className="md:col-span-2 grid grid-cols-2 gap-4">
-                            <div>
-                                <label htmlFor="current_qty" className="text-sm font-medium text-[var(--modal-text-secondary)]">Saldo Inicial (Opcional)</label>
-                                <input
-                                    id="current_qty"
-                                    name="current_qty"
-                                    type="number"
-                                    value={newItem.current_qty}
-                                    onChange={handleInputChange}
-                                    disabled={isProduct}
-                                    className="mt-1 block w-full border-[var(--modal-border)] rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100 bg-[var(--modal-surface-secondary)]"
-                                    placeholder="Padrão 0"
-                                />
-                            </div>
-                            <div>
-                                <label htmlFor="min_qty" className="text-sm font-medium text-[var(--modal-text-secondary)]">Estoque Mínimo</label>
-                                <input
-                                    id="min_qty"
-                                    name="min_qty"
-                                    type="number"
-                                    min="0"
-                                    value={newItem.min_qty}
-                                    onChange={handleInputChange}
-                                    disabled={isProduct}
-                                    required
-                                    className="mt-1 block w-full border-[var(--modal-border)] rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm disabled:bg-gray-100 bg-[var(--modal-surface-secondary)]"
-                                />
-                            </div>
-                        </div>
-                    </div>
-                    {/* Barcode Field */}
-                    <div>
-                        <label htmlFor="barcode" className="text-sm font-medium text-[var(--modal-text-secondary)]">Código de Barras (EAN/GTIN)</label>
-                        <div className="relative mt-1">
-                            <Scan size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <div className="space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Mínimo</label>
                             <input
-                                id="barcode"
-                                name="barcode"
-                                type="text"
-                                value={newItem.barcode}
-                                onChange={(e) => setNewItem(prev => ({ ...prev, barcode: e.target.value.toUpperCase() }))}
-                                className="block w-full pl-9 p-2 border border-[var(--modal-border)] bg-[var(--modal-surface-secondary)] rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
-                                placeholder="Escaneie ou digite..."
+                                name="min_qty"
+                                type="number"
+                                value={newItem.min_qty}
+                                onChange={handleInputChange}
+                                disabled={isProduct}
+                                className="w-full p-3 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm disabled:bg-slate-100 outline-none transition-all"
                             />
                         </div>
+                        <div className="md:col-span-2 space-y-1.5">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Código de Barras</label>
+                            <div className="relative">
+                                <Scan size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                <input
+                                    name="barcode"
+                                    value={newItem.barcode}
+                                    onChange={(e) => setNewItem(prev => ({ ...prev, barcode: e.target.value.toUpperCase() }))}
+                                    className="w-full pl-10 p-3 bg-slate-50 border-2 border-slate-100 rounded-2xl font-bold text-sm focus:border-blue-500 focus:bg-white outline-none transition-all"
+                                    placeholder="ESCANEAR EAN..."
+                                />
+                            </div>
+                        </div>
                     </div>
 
-                    {itemType === 'INSUMO' && (
-                        <div>
-                            <label className="flex items-center select-none cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={isVolatileInfinite}
-                                    onChange={(e) => setIsVolatileInfinite(e.target.checked)}
-                                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                />
-                                <span className="ml-2 text-sm text-[var(--modal-text-secondary)]">Estoque Volátil Infinito (quantidade não diminui)</span>
+                    {/* Flags Adicionais */}
+                    <div className="space-y-3 pt-2">
+                        {itemType === 'INSUMO' && (
+                            <label className="flex items-center gap-3 cursor-pointer group">
+                                <div className="relative w-10 h-6">
+                                    <input type="checkbox" checked={isVolatileInfinite} onChange={e => setIsVolatileInfinite(e.target.checked)} className="sr-only peer" />
+                                    <div className="w-10 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                </div>
+                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest group-hover:text-slate-700 transition-colors">Estoque Infinito (Quantidade não diminui)</span>
                             </label>
-                        </div>
-                    )}
-
-                    {(isProduct || isProcessado) && (
-                        <div>
-                            <label className="flex items-center select-none cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={configureBom}
-                                    onChange={(e) => setConfigureBom(e.target.checked)}
-                                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                                />
-                                <span className="ml-2 text-sm text-[var(--modal-text-secondary)]">Configurar Produto Combinado (Receita) após salvar</span>
+                        )}
+                        {(isProduct || isProcessado) && (
+                            <label className="flex items-center gap-3 cursor-pointer group">
+                                <div className="relative w-10 h-6">
+                                    <input type="checkbox" checked={configureBom} onChange={e => setConfigureBom(e.target.checked)} className="sr-only peer" />
+                                    <div className="w-10 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                                </div>
+                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest group-hover:text-slate-700 transition-colors">Configurar Receita (BOM) após salvar</span>
                             </label>
-                        </div>
-                    )}
+                        )}
+                    </div>
                 </div>
 
-                <div className="mt-6 flex justify-end space-x-3">
+                <div className="mt-10 flex justify-end gap-3 pt-6 border-t border-slate-100">
+                    <button onClick={onClose} className="px-6 py-4 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-slate-200 transition-all">Cancelar</button>
                     <button
-                        type="button"
-                        onClick={onClose}
-                        className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 transition-colors"
-                    >
-                        Cancelar
-                    </button>
-                    <button
-                        type="button"
                         onClick={handleConfirm}
                         disabled={!isFormValid}
-                        className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
+                        className="px-10 py-4 bg-blue-600 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all active:scale-95 disabled:opacity-50 disabled:grayscale"
                     >
-                        Salvar Item
+                        SALVAR ITEM
                     </button>
                 </div>
             </div>

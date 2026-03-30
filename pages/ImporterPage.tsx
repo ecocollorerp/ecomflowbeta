@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import FileUploader from '../components/FileUploader';
 import ImportResults from '../components/ImportResults';
 import LinkSkuModal from '../components/LinkSkuModal';
@@ -64,6 +64,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         descontarVolatil: false,
     });
     const [importAsHistory, setImportAsHistory] = useState(false);
+    const [importAsNormalWithDate, setImportAsNormalWithDate] = useState(true);
     const [selectedChannel, setSelectedChannel] = useState<Canal | 'AUTO'>('AUTO');
     const [tiktokOrderType, setTiktokOrderType] = useState<'all' | 'normal' | 'pre-order'>('all');
     // Estados para o fluxo de datas
@@ -79,6 +80,23 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
     const [isViewingHistory, setIsViewingHistory] = useState(false);
     const [dbInconsistency, setDbInconsistency] = useState<any>(null);
     const [copiedSql, setCopiedSql] = useState(false);
+
+    const channelOptions = useMemo(() => {
+        const opts = [{ value: 'AUTO', label: 'Automático (Detectar cabeçalho)' }];
+        Object.keys(generalSettings.importer).forEach(key => {
+            const val = key.toUpperCase();
+            let label = val;
+            if (val === 'ML') label = 'Mercado Livre';
+            else if (val === 'SHOPEE') label = 'Shopee';
+            else if (val === 'SITE') label = 'Site / Outros';
+            else if (val === 'TIKTOK') label = 'TikTok Shop';
+            opts.push({ value: val, label: `${label} (Forçar layout)` });
+        });
+        (generalSettings.customStores || []).forEach(store => {
+            opts.push({ value: store.id.toUpperCase(), label: `${store.name} (Loja Customizada)` });
+        });
+        return opts;
+    }, [generalSettings]);
 
     // History Management
     const [isHistoryManagerOpen, setIsHistoryManagerOpen] = useState(false);
@@ -112,12 +130,12 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
 
     const handleUpdateMapping = (canalId: string, field: string, value: any) => {
         const key = canalId.toLowerCase();
-        if (['ml', 'shopee', 'site'].includes(key)) {
+        if (['ml', 'shopee', 'site', 'tiktok'].includes(key)) {
             setGeneralSettings(prev => ({
                 ...prev, 
                 importer: {
                     ...prev.importer, 
-                    [key]: { ...prev.importer[key as 'ml' | 'shopee' | 'site'], [field]: value }
+                    [key]: { ...prev.importer[key as 'ml' | 'shopee' | 'site' | 'tiktok'], [field]: value }
                 }
             }));
         } else {
@@ -135,14 +153,15 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
             const workbook = XLSX.read(buffer, { type: 'array' });
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
             const isML = selectedFile.name.toLowerCase().includes('vendas') || selectedFile.name.toLowerCase().includes('mercado');
-            const startRow = isML ? 5 : 0;
+            const detectedCanalKey = isML ? 'ml' : (selectedFile.name.toLowerCase().includes('shopee') ? 'shopee' : (selectedFile.name.toLowerCase().includes('tiktok') ? 'tiktok' : 'site'));
+            const config = (generalSettings.importer as any)[detectedCanalKey];
+            const startRow = config?.importStartRow !== undefined ? config.importStartRow : (isML ? 5 : 0);
+            
             const headers = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, range: startRow })[0] || [];
             setDetectedHeaders(headers);
             
             // Auto-seleciona o canal baseado no arquivo
-            if (isML) setMappingCanal('ml');
-            else if (selectedFile.name.toLowerCase().includes('shopee')) setMappingCanal('shopee');
-            else if (selectedFile.name.toLowerCase().includes('tiktok')) setMappingCanal('site');
+            setMappingCanal(detectedCanalKey);
         } catch (e) {
             console.error("Erro ao extrair cabeçalhos:", e);
         }
@@ -250,14 +269,14 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
             // Determina canal efetivo por cabeçalho + nome de arquivo quando estiver em AUTO.
             const detectChannelByConfig = (): Canal | 'AUTO' => {
                 const byName = selectedFile.name.toUpperCase();
-                if (byName.includes('TIKTOK')) return 'SITE';
+                if (byName.includes('TIKTOK')) return 'TIKTOK';
                 if (byName.includes('MERCADO') || byName.includes('MELI') || byName.includes('ML_')) return 'ML';
                 if (byName.includes('SHOPEE') || byName.includes('TO_SHIP') || byName.includes('TOSHIP') || byName.includes('ORDER')) return 'SHOPEE';
 
                 let best: { canal: Canal | 'AUTO'; score: number } = { canal: 'AUTO', score: 0 };
-                const candidates: Canal[] = ['ML', 'SHOPEE', 'SITE'];
+                const candidates: Canal[] = ['ML', 'SHOPEE', 'TIKTOK', 'SITE'];
                 for (const canal of candidates) {
-                    const cfgKey = canal === 'SHOPEE' ? 'shopee' : canal === 'ML' ? 'ml' : 'site';
+                    const cfgKey = canal.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site';
                     // @ts-ignore
                     const cfg = (generalSettings.importer || {})[cfgKey] || {};
                     const keys = [cfg.orderId, cfg.sku, cfg.qty, cfg.tracking, cfg.date, cfg.dateShipping].filter(Boolean);
@@ -286,7 +305,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
             let detectedKeyFromConfig: string | null = null;
 
             for (const ch of channelCandidates) {
-                const cfgKey = ch === 'SHOPEE' ? 'shopee' : ch === 'ML' ? 'ml' : 'site';
+                const cfgKey = ch.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site';
                 // @ts-ignore
                 const cfg = (generalSettings.importer || {})[cfgKey];
                 if (!cfg) continue;
@@ -428,7 +447,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 const importerCfg = generalSettings.importer || {};
                 diagnostics.importerConfig = importerCfg;
                 const cfgChecks: any = {};
-                for (const canalKey of ['ml', 'shopee', 'site']) {
+                for (const canalKey of ['ml', 'shopee', 'tiktok', 'site']) {
                     const cfg = importerCfg[canalKey as 'ml'|'shopee'|'site'] || {} as any;
                     cfgChecks[canalKey] = {};
                     for (const k of Object.keys(cfg)) {
@@ -531,7 +550,9 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         const ordersToLaunch = processedData.lists.completa.map(order => ({
             ...order,
             lote_id: loteId,
-            status: importAsHistory ? 'BIPADO' : (order.status || 'NORMAL') // preserva status detectado no parser
+            status: importAsHistory 
+                ? 'BIPADO' 
+                : (importAsNormalWithDate && order.data_prevista_envio ? 'NORMAL' : (order.status || 'NORMAL'))
         }));
 
         onLaunchSuccess(ordersToLaunch as any);
@@ -649,15 +670,14 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                                         onChange={e => setSelectedChannel(e.target.value as any)}
                                         className="w-full p-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
                                     >
-                                        <option value="AUTO">Automático (Detectar cabeçalho)</option>
-                                        <option value="ML">Mercado Livre (Forçar layout ML)</option>
-                                        <option value="SHOPEE">Shopee (Forçar layout Shopee)</option>
-                                        <option value="SITE">TikTokShop (Forçar layout TikTok)</option>
+                                        {channelOptions.map(opt => (
+                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                        ))}
                                     </select>
                                     <p className="text-[10px] text-slate-400 mt-2 font-medium">Use "Automático" por padrão. Se houver erro de colunas não encontradas, selecione o canal específico aqui.</p>
                                 </div>
 
-                                {(selectedChannel === 'SITE' || (selectedChannel === 'AUTO' && selectedFile && selectedFile.name.toUpperCase().includes('TIKTOK'))) && (
+                                {(selectedChannel === 'TIKTOK' || (selectedChannel === 'AUTO' && selectedFile && selectedFile.name.toUpperCase().includes('TIKTOK'))) && (
                                     <div className="bg-purple-50 p-4 rounded-xl border border-purple-100">
                                         <label className="block text-[10px] font-black text-purple-500 uppercase tracking-widest mb-2">TikTok — Tipo de Pedido</label>
                                         <select
@@ -729,6 +749,22 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                                 <div>
                                     <label htmlFor="import-history-check" className="font-black text-amber-900 text-sm uppercase cursor-pointer">Importar como Histórico / Financeiro (Já Enviados)</label>
                                     <p className="text-xs text-amber-700 font-medium">Se marcado, os pedidos serão salvos como "BIPADO" e não aparecerão na lista de pendências da produção. Use isso para alimentar dados financeiros antigos.</p>
+                                </div>
+                            </div>
+                        )}
+
+                        {!isViewingHistory && !importAsHistory && (
+                            <div className="bg-emerald-50 border-2 border-emerald-200 p-4 rounded-xl mb-4 flex items-center gap-4">
+                                <input
+                                    type="checkbox"
+                                    id="import-normal-with-date-check"
+                                    checked={importAsNormalWithDate}
+                                    onChange={(e) => setImportAsNormalWithDate(e.target.checked)}
+                                    className="w-6 h-6 text-emerald-600 rounded focus:ring-emerald-500"
+                                />
+                                <div>
+                                    <label htmlFor="import-normal-with-date-check" className="font-black text-emerald-900 text-sm uppercase cursor-pointer">Forçar como Pedidos do Dia (Ativos)</label>
+                                    <p className="text-xs text-emerald-700 font-medium">Se marcado, qualquer pedido que contenha uma **Data de Postagem** será importado como "NORMAL" (ativo), ignorando status de cancelamento/conclusão da planilha. Útil para reimportar biipagens.</p>
                                 </div>
                             </div>
                         )}

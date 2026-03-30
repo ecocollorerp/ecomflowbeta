@@ -1,4 +1,4 @@
-﻿
+
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { StockItem, OrderItem, SkuLink, ProdutoCombinado, ProductionPlan, PlanningParameters, ProductionPlanItem, RequiredInsumo, ShoppingListItem, User, ToastMessage, PlanningTargetMode } from '../types';
 import { Plus } from 'lucide-react';
@@ -20,6 +20,16 @@ interface PlanejamentoPageProps {
     planningSettings: PlanningParameters;
     onSavePlanningSettings: (settings: PlanningParameters) => void;
     addToast: (message: string, type: ToastMessage['type']) => void;
+    costCalculations?: any[];
+}
+
+interface CostCalculation {
+    id: string;
+    product_sku: string;
+    product_name: string;
+    selling_price: number;
+    items: any[];
+    total_cost?: number; // Calculado no processamento se não houver
 }
 
 const StepHeader: React.FC<{ number: number, title: string, isComplete: boolean }> = ({ number, title, isComplete }) => (
@@ -31,7 +41,7 @@ const StepHeader: React.FC<{ number: number, title: string, isComplete: boolean 
     </div>
 );
 
-const PlanejamentoPage: React.FC<PlanejamentoPageProps> = ({ stockItems, allOrders, skuLinks, produtosCombinados, productionPlans, onSaveProductionPlan, onDeleteProductionPlan, onGenerateShoppingList, currentUser, planningSettings, onSavePlanningSettings, addToast }) => {
+const PlanejamentoPage: React.FC<PlanejamentoPageProps> = ({ stockItems, allOrders, skuLinks, produtosCombinados, productionPlans, onSaveProductionPlan, onDeleteProductionPlan, onGenerateShoppingList, currentUser, planningSettings, onSavePlanningSettings, addToast, costCalculations }) => {
     const [mode, setMode] = useState<'automatico' | 'manual'>('automatico');
     const [manualParams, setManualParams] = useState<PlanningParameters>(planningSettings);
     const [autoParams, setAutoParams] = useState<PlanningParameters>(planningSettings);
@@ -187,9 +197,32 @@ const PlanejamentoPage: React.FC<PlanejamentoPageProps> = ({ stockItems, allOrde
                     reason, 
                     substitute,
                     avgPrice,
-                    projectedRevenue 
+                    projectedRevenue,
+                    calculatedCost: 0, 
+                    calculatedMargin: 0
                 });
             });
+            
+            // 2.1 Enrich with Calculator Data
+            if (costCalculations && costCalculations.length > 0) {
+                newProductionPlan.forEach(item => {
+                    const calc = costCalculations
+                        .filter(c => c.product_sku.toUpperCase() === item.product.code.toUpperCase())
+                        .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())[0];
+                    
+                    if (calc) {
+                        const totalMatCost = Array.isArray(calc.items) 
+                            ? calc.items.reduce((sum: number, it: any) => sum + (it.totalCost || 0), 0)
+                            : 0;
+                        const fees = (calc.selling_price * (calc.platform_fee || 0)) / 100;
+                        const tax = (calc.selling_price * (calc.tax_percent || 0)) / 100;
+                        const totalDirectCost = totalMatCost + fees + (calc.shipping_cost || 0) + tax + (calc.other_costs || 0);
+                        
+                        item.calculatedCost = totalDirectCost;
+                        item.calculatedMargin = calc.selling_price > 0 ? ((calc.selling_price - totalDirectCost) / calc.selling_price) * 100 : 0;
+                    }
+                });
+            }
 
             setProductionPlan(newProductionPlan.sort((a,b) => b.requiredProduction - a.requiredProduction));
             setScenarioAnalysis({
@@ -562,7 +595,7 @@ const PlanejamentoPage: React.FC<PlanejamentoPageProps> = ({ stockItems, allOrde
                             <table className="min-w-full bg-white dark:bg-gray-800 text-sm">
                                 <thead className="bg-gray-50 dark:bg-gray-700 sticky top-0">
                                     <tr>
-                                        {['Produto', 'Preço Unitário', 'Venda Média/dia', 'Demanda Calc.', 'Produção Necessária', 'Faturamento Est.', 'Motivo'].map(h=><th key={h} className="py-3 px-3 text-left font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">{h}</th>)}
+                                        {['Produto', 'Preço Unitário (Venda)', 'Custo (Calc.)', 'Margem (Calc.)', 'Venda Média/dia', 'Demanda Calc.', 'Produção Necessária', 'Faturamento Est.'].map(h=><th key={h} className="py-3 px-3 text-left font-semibold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider">{h}</th>)}
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -585,13 +618,27 @@ const PlanejamentoPage: React.FC<PlanejamentoPageProps> = ({ stockItems, allOrde
                                                     />
                                                 </div>
                                             </td>
+                                            <td className="py-3 px-3">
+                                                {item.calculatedCost ? (
+                                                    <div className="flex flex-col">
+                                                        <span className="text-xs font-bold text-slate-600">{fmtMoney(item.calculatedCost)}</span>
+                                                        <span className="text-[10px] text-gray-400">Via Calculadora</span>
+                                                    </div>
+                                                ) : <span className="text-xs text-gray-300">-</span>}
+                                            </td>
+                                            <td className="py-3 px-3">
+                                                {item.calculatedMargin !== undefined && item.calculatedMargin !== 0 ? (
+                                                    <span className={`text-xs font-black p-1 px-2 rounded-md ${item.calculatedMargin > 20 ? 'bg-green-100 text-green-700' : item.calculatedMargin > 10 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
+                                                        {item.calculatedMargin.toFixed(1)}%
+                                                    </span>
+                                                ) : <span className="text-xs text-gray-300">-</span>}
+                                            </td>
                                             <td className="py-3 px-3 text-slate-500">{item.avgDailySales.toFixed(1)}</td>
                                             <td className="py-3 px-3 text-slate-500">{Math.ceil(item.forecastedDemand)}</td>
                                             <td className="py-3 px-3"><input type="number" value={item.requiredProduction} onChange={e => handleUpdateProduction(item.product.code, Number(e.target.value))} className="w-24 p-2 text-center font-black border-2 border-indigo-100 rounded-lg text-indigo-700 focus:border-indigo-500 outline-none" /></td>
                                             <td className="py-3 px-3 font-bold text-emerald-600">{fmtMoney(item.projectedRevenue || 0)}</td>
-                                            <td className="py-3 px-3 text-xs text-slate-400 font-medium">{item.reason}</td>
                                         </tr>
-                                    )) : <tr><td colSpan={7} className="text-center p-8 text-gray-500 dark:text-gray-400">Simule um cenário para gerar o plano.</td></tr>}
+                                    )) : <tr><td colSpan={8} className="text-center p-8 text-gray-500 dark:text-gray-400">Simule um cenário para gerar o plano.</td></tr>}
                                 </tbody>
                             </table>
                         </div>

@@ -8,7 +8,7 @@ interface AddGrindingModalProps {
     onClose: () => void;
     insumos: StockItem[];
     stockItems: StockItem[];
-    onConfirm: (data: { sourceCode: string, sourceQty: number, outputCode: string, outputName: string, outputQty: number, mode: 'manual' | 'automatico', userId?: string, userName: string }) => void;
+    onConfirm: (data: { sourceCode: string, sourceQty: number, outputCode: string, outputName: string, outputQty: number, mode: 'manual' | 'automatico', userId?: string, userName: string, batchName?: string }) => void;
     users: User[];
     currentUser: User;
     generalSettings: GeneralSettings;
@@ -20,6 +20,7 @@ const AddGrindingModal: React.FC<AddGrindingModalProps> = ({ isOpen, onClose, in
     const [outputCode, setOutputCode] = useState('');
     const [outputName, setOutputName] = useState('');
     const [outputQty, setOutputQty] = useState(1);
+    const [batchName, setBatchName] = useState('');
     const [mode, setMode] = useState<'manual' | 'automatico'>('manual');
     const [selectedUserId, setSelectedUserId] = useState('');
     const [categoryFilter, setCategoryFilter] = useState('ALL');
@@ -46,6 +47,7 @@ const AddGrindingModal: React.FC<AddGrindingModalProps> = ({ isOpen, onClose, in
             setOutputCode('');
             setOutputName('');
             setOutputQty(1);
+            setBatchName('');
             setMode('manual');
             setSelectedSector('');
             const isCurrentUserInList = users.some(u => u.id === currentUser.id);
@@ -99,7 +101,8 @@ const AddGrindingModal: React.FC<AddGrindingModalProps> = ({ isOpen, onClose, in
             outputQty,
             mode,
             userId,
-            userName
+            userName,
+            batchName: batchName.trim() || undefined
         });
     };
 
@@ -190,7 +193,18 @@ const AddGrindingModal: React.FC<AddGrindingModalProps> = ({ isOpen, onClose, in
                         </div>
                     </div>
                      <div className="border-t pt-4">
-                        <h3 className="text-md font-semibold text-gray-700 mb-2">Operação</h3>
+                        <h3 className="text-md font-semibold text-gray-700 mb-2">Lote e Operação</h3>
+                        <div className="mb-4">
+                            <label htmlFor="batch-name" className="text-sm font-bold text-gray-600 block mb-1">Identificador do Lote (Opcional)</label>
+                            <input 
+                                id="batch-name" 
+                                type="text" 
+                                value={batchName} 
+                                onChange={e => setBatchName(e.target.value)} 
+                                className="mt-1 block w-full border border-slate-200 bg-slate-50 rounded-md shadow-sm p-2 text-sm font-bold" 
+                                placeholder="EX: LOTE-2026-03-A"
+                            />
+                        </div>
                         <div className="flex gap-4">
                              <div className="flex-1">
                                 <label className="text-sm">Modo</label>

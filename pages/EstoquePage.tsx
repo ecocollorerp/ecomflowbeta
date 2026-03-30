@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { StockItem, StockMovement, ProdutoCombinado, WeighingBatch, WeighingType, StockMovementOrigin, StockItemKind, User, GeneralSettings, ParsedNfeItem, SkuLink, StockPackGroup } from '../types';
+import { StockItem, StockMovement, ProdutoCombinado, WeighingBatch, WeighingType, StockMovementOrigin, StockItemKind, User, GeneralSettings, ParsedNfeItem, SkuLink, StockPackGroup, CategoryConfig } from '../types';
 import { skuMatchesTerm, buildParentMap, skuCodeMatches } from '../utils/skuHelpers';
 import { Package, Factory, History, Search, PlusCircle, Weight, Cog, SlidersHorizontal, Edit3, Trash2, ChevronDown, ChevronRight, FileUp, ArrowLeft, Settings, Box, Plus, Save, X, Link, ArrowRight, Loader2, ChevronUp, AlertTriangle, ArrowDownCircle, ArrowUpCircle, Layers, TrendingUp, TrendingDown, BarChart2, Filter, Calendar, RefreshCw, FileText, Calculator } from 'lucide-react';
 import { MaquinasPage } from './MaquinasPage';
@@ -564,8 +564,12 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
         setGeneralSettings(prev => ({ ...prev, insumoCategoryList: newCategories }));
     };
 
-    const handleSaveProductCategories = async (newCategories: string[]) => {
-        setGeneralSettings(prev => ({ ...prev, productCategoryList: newCategories }));
+    const handleSaveProductCategories = async (newCategories: string[], newConfigs?: CategoryConfig[]) => {
+        setGeneralSettings(prev => {
+            const updated = { ...prev, productCategoryList: newCategories };
+            if (newConfigs) updated.productCategoryConfigs = newConfigs;
+            return updated;
+        });
     };
 
     const toggleExpansion = (productId: string) => {
@@ -1565,7 +1569,19 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
             {modalState.updateStock && <UpdateStockModal isOpen={!!modalState.updateStock} onClose={closeModal} item={modalState.updateStock} onConfirm={handleConfirmUpdateStock} />}
             {modalState.importXml && <ImportXmlModal isOpen={modalState.importXml} onClose={closeModal} existingStockItems={stockItems} onConfirmImport={(payload) => { onConfirmImportFromXml(payload); closeModal(); }} generalSettings={generalSettings} />}
             {modalState.manageInsumoCategories && <InsumoCategoryManagerModal isOpen={modalState.manageInsumoCategories} onClose={closeModal} currentCategories={generalSettings.insumoCategoryList} onSave={handleSaveInsumoCategories} />}
-            {modalState.manageProductCategories && <InsumoCategoryManagerModal isOpen={modalState.manageProductCategories} onClose={closeModal} currentCategories={generalSettings.productCategoryList} onSave={handleSaveProductCategories} allProducts={produtos} onAssignProducts={handleAssignProductsToCategory} />}
+            {modalState.manageProductCategories && (
+                <InsumoCategoryManagerModal 
+                    isOpen={modalState.manageProductCategories} 
+                    onClose={closeModal} 
+                    currentCategories={generalSettings.productCategoryList} 
+                    onSave={(cats) => handleSaveProductCategories(cats)}
+                    onSaveConfigs={(cfgs) => handleSaveProductCategories(generalSettings.productCategoryList, cfgs)}
+                    currentConfigs={generalSettings.productCategoryConfigs}
+                    showBaseConfig={true}
+                    allProducts={produtos} 
+                    onAssignProducts={handleAssignProductsToCategory} 
+                />
+            )}
             {modalState.updateFromSheet && <UpdateStockFromSheetModal isOpen={modalState.updateFromSheet} onClose={closeModal} stockItems={stockItems} onBulkInventoryUpdate={onBulkInventoryUpdate} />}
             {modalState.updateFromSheetShopee && <UpdateStockFromSheetModalShopee isOpen={modalState.updateFromSheetShopee} onClose={closeModal} stockItems={stockItems} onBulkInventoryUpdate={onBulkInventoryUpdate} />}
             {modalState.isPackModalOpen && <PackGroupModal isOpen={modalState.isPackModalOpen} onClose={closeModal} groupToEdit={modalState.packGroup} allProducts={produtos} onSave={handleSavePackGroup} />}

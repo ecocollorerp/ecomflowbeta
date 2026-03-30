@@ -5,6 +5,8 @@ import { Calendar, Truck, AlertTriangle, CheckCircle, Clock, CalendarDays } from
 interface DailyOverviewWidgetsProps {
     allOrders: OrderItem[];
     dateSourceMode: 'sale_date' | 'import_date';
+    onClickAtrasados?: () => void;
+    onClickQuickStatus?: (orders: OrderItem[]) => void;
 }
 
 const getTodayString = () => new Date().toISOString().split('T')[0];
@@ -29,7 +31,7 @@ const getOrderDateString = (order: OrderItem, source: 'sale_date' | 'import_date
     return null;
 };
 
-const DailyOverviewWidgets: React.FC<DailyOverviewWidgetsProps> = ({ allOrders, dateSourceMode }) => {
+const DailyOverviewWidgets: React.FC<DailyOverviewWidgetsProps> = ({ allOrders, dateSourceMode, onClickAtrasados, onClickQuickStatus }) => {
     const today = getTodayString();
     const tomorrow = getTomorrowString();
 
@@ -106,14 +108,33 @@ const DailyOverviewWidgets: React.FC<DailyOverviewWidgetsProps> = ({ allOrders, 
                 <h3 className="text-xs font-black uppercase text-orange-600 mb-3 flex items-center gap-2">
                     <Truck size={14} /> Envios Pendentes por Prazo
                 </h3>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     {/* Atrasados */}
-                    <div className={`p-2 rounded-xl flex flex-col justify-center items-center border ${stats.envios.atrasados > 0 ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-100'}`}>
-                        <div className="flex items-center gap-1 mb-1">
-                            {stats.envios.atrasados > 0 && <AlertTriangle size={10} className="text-red-500" />}
-                            <span className={`text-[9px] font-black uppercase tracking-wider ${stats.envios.atrasados > 0 ? 'text-red-600' : 'text-slate-400'}`}>Atrasados</span>
+                    <div className="relative group">
+                        <div 
+                            onClick={() => {
+                                if (stats.envios.atrasados > 0 && onClickQuickStatus) {
+                                    const atrasadosList = allOrders.filter(o => (o.status === 'NORMAL' || o.status === 'BIPADO') && o.data_prevista_envio && o.data_prevista_envio < today);
+                                    onClickQuickStatus(atrasadosList);
+                                } else if (onClickAtrasados) {
+                                    onClickAtrasados();
+                                }
+                            }}
+                            className={`p-2 rounded-xl flex flex-col justify-center items-center border transition-all cursor-pointer hover:bg-opacity-80 active:scale-95 h-full ${stats.envios.atrasados > 0 ? 'bg-red-50 border-red-200 shadow-sm shadow-red-100' : 'bg-slate-50 border-slate-100 opacity-60'}`}
+                        >
+                            <div className="flex items-center gap-1 mb-1">
+                                {stats.envios.atrasados > 0 && <AlertTriangle size={10} className="text-red-500" />}
+                                <span className={`text-[9px] font-black uppercase tracking-wider ${stats.envios.atrasados > 0 ? 'text-red-600' : 'text-slate-400'}`}>Atrasados</span>
+                            </div>
+                            <span className={`text-xl font-black ${stats.envios.atrasados > 0 ? 'text-red-700' : 'text-slate-600'}`}>{stats.envios.atrasados}</span>
                         </div>
-                        <span className={`text-xl font-black ${stats.envios.atrasados > 0 ? 'text-red-700' : 'text-slate-600'}`}>{stats.envios.atrasados}</span>
+                        {stats.envios.atrasados > 0 && onClickQuickStatus && (
+                            <div 
+                                className="absolute -bottom-2 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[8px] font-black uppercase px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 transition-all whitespace-nowrap shadow-xl z-10 pointer-events-none"
+                            >
+                                Clique para Mudar Status
+                            </div>
+                        )}
                     </div>
 
                     {/* Hoje */}

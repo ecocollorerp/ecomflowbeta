@@ -9,7 +9,7 @@ export type Period =
   | "lastMonth"
   | "custom"
   | "last_upload";
-export type Canal = "ML" | "SHOPEE" | "SITE" | "ALL" | "AUTO";
+export type Canal = "ML" | "SHOPEE" | "SITE" | "TIKTOK" | "ALL" | "AUTO" | string;
 export type UserRole = "SUPER_ADMIN" | "ADMIN" | "OPERATOR";
 export type UserSetor = string;
 
@@ -325,6 +325,7 @@ export interface GrindingBatch {
   userId: string;
   userName: string;
   mode: "manual" | "automatico";
+  batch_name?: string;
 }
 
 // Orders
@@ -978,6 +979,8 @@ export interface ProductionPlanItem {
   substitute?: StockItem;
   avgPrice?: number;
   projectedRevenue?: number;
+  calculatedCost?: number;
+  calculatedMargin?: number;
 }
 
 export interface ProductionPlan {
@@ -1085,6 +1088,10 @@ export interface ColumnMapping {
   statusColumn?: string;
   acceptedStatusValues?: string[];
   storeName?: string;
+  importStartRow?: number;
+  sumMultipleLines?: boolean;
+  fixedFeePerItem?: number;
+  commissionPercent?: number;
 }
 
 export interface ExpeditionRule {
@@ -1099,6 +1106,12 @@ export interface ExpeditionRule {
 export interface ExpeditionSettings {
   packagingRules: ExpeditionRule[];
   miudosPackagingRules: ExpeditionRule[];
+}
+
+export interface CategoryConfig {
+  name: string;
+  hasBase: boolean;
+  baseNames?: string[];
 }
 
 export interface ProductBaseConfig {
@@ -1135,11 +1148,13 @@ export interface GeneralSettings {
   productTypeNames: { papel_de_parede: string; miudos: string };
   insumoCategoryList: string[];
   productCategoryList: string[];
+  productCategoryConfigs?: CategoryConfig[];
   expeditionRules: ExpeditionSettings;
   importer: {
     ml: ColumnMapping;
     shopee: ColumnMapping;
     site: ColumnMapping;
+    tiktok: ColumnMapping;
   };
   pedidos: {
     errorReasons: string[];
@@ -1270,6 +1285,23 @@ export const defaultGeneralSettings: GeneralSettings = {
       customerCpf: "CPF Number",
       statusColumn: "Order Status",
       acceptedStatusValues: []
+    },
+    tiktok: {
+      orderId: "Order ID",
+      sku: "Seller SKU",
+      qty: "Quantity",
+      tracking: "Tracking ID",
+      date: "Created Time",
+      dateShipping: "",
+      priceGross: "SKU Subtotal After Discount",
+      totalValue: "Order Amount",
+      shippingFee: "Shipping Fee After Discount",
+      shippingPaidByCustomer: "",
+      fees: ["SKU Platform Discount"],
+      customerName: "Recipient",
+      customerCpf: "CPF Number",
+      statusColumn: "Order Status",
+      acceptedStatusValues: []
     }
   },
   pedidos: {
@@ -1341,6 +1373,7 @@ export interface TaxEntry {
   calculatedAmount?: number;
   appliesTo?: 'gross' | 'after_fees' | 'after_ship' | 'after_both';
   category?: 'imposto' | 'publicidade' | 'funcionarios' | 'insumos' | 'outro';
+  appliesToChannels?: string[];
 }
 
 export interface CustomStore {

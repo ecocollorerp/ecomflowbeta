@@ -16,6 +16,7 @@ const CreateProductFromImportModal: React.FC<CreateProductFromImportModalProps> 
     const [newItemColor, setNewItemColor] = useState('');
     const [productType, setProductType] = useState<'papel_de_parede' | 'miudos'>('papel_de_parede');
     const [baseType, setBaseType] = useState<'branca' | 'preta' | 'especial'>('branca');
+    const [category, setCategory] = useState('');
 
     const primarySku = unlinkedSkuData?.skus[0] || '';
 
@@ -31,6 +32,7 @@ const CreateProductFromImportModal: React.FC<CreateProductFromImportModalProps> 
             setNewItemColor(unlinkedSkuData.colorSugerida);
             setProductType(unlinkedSkuData.isMiudoSugerido ? 'miudos' : 'papel_de_parede');
             setBaseType(unlinkedSkuData.baseSugerida || 'branca');
+            setCategory(unlinkedSkuData.isMiudoSugerido ? 'Miúdos' : 'Papel de Parede');
         }
     }, [isOpen, unlinkedSkuData, primarySku]);
 
@@ -50,6 +52,7 @@ const CreateProductFromImportModal: React.FC<CreateProductFromImportModalProps> 
                 color: newItemColor.trim(),
                 product_type: productType,
                 base_type: baseType,
+                category: category,
                 description: `Criado da importação - Base: ${baseType}`,
             };
             onConfirm(newItem);
@@ -105,6 +108,27 @@ const CreateProductFromImportModal: React.FC<CreateProductFromImportModalProps> 
                             </select>
                         </div>
                         )}
+                        <div>
+                            <label className="text-sm font-medium text-gray-700">Categoria</label>
+                            <select
+                                value={category}
+                                onChange={(e) => setCategory(e.target.value)}
+                                className="mt-1 block w-full border-gray-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+                            >
+                                <option value="">-- Sem Categoria --</option>
+                                {(generalSettings.productCategoryList || []).length > 0 ? (
+                                    generalSettings.productCategoryList.map(cat => (
+                                        <option key={cat} value={cat}>{cat}</option>
+                                    ))
+                                ) : (
+                                    <>
+                                        <option value="Papel de Parede">Papel de Parede</option>
+                                        <option value="Miúdos">Miúdos</option>
+                                        <option value="Insumos">Insumos</option>
+                                    </>
+                                )}
+                            </select>
+                        </div>
                     </div>
                     <div>
                         <label htmlFor="name" className="text-sm font-medium text-gray-700">Nome do Produto</label>

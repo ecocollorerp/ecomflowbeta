@@ -220,6 +220,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
     // Toggles de deduções da planilha
     const [deductPlatformFees, setDeductPlatformFees] = useState(true);
     const [deductShipping, setDeductShipping] = useState(true);
+    const [useNetShipping, setUseNetShipping] = useState(true); // Frete líquido = shipping - customerPaid
 
     // Modal states
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -344,7 +345,15 @@ const FinancePage: React.FC<FinancePageProps> = ({
 
             groups.forEach((group) => {
                 const first = group[0];
-                const isRep = generalSettings.isRepeatedValue;
+                const canalKey = (first.canal || 'SITE').toLowerCase();
+                // Tenta pegar o mapeamento do canal específico (padrão ou customizado)
+                const mapping = (generalSettings.importer as any)[canalKey] || (generalSettings as any)[`importer_${canalKey}`] || {};
+                
+                // Se sumMultipleLines estiver definido no canal, ele tem prioridade (invertido pois isRep significa 'repetido', não 'somado')
+                const isRep = mapping.sumMultipleLines !== undefined 
+                    ? !mapping.sumMultipleLines 
+                    : generalSettings.isRepeatedValue;
+                    
                 const toCents = (v: any) => Math.round((Number(v) || 0) * 100);
 
                 const gGross = isRep ? toCents(first.price_gross) : group.reduce((s, i) => s + toCents(i.price_gross), 0);
@@ -395,10 +404,30 @@ const FinancePage: React.FC<FinancePageProps> = ({
 
             let taxCalculated = 0;
             const breakdown = taxes.map(t => {
-                let taxBase = Math.round(base.gross * 100);
-                if (t.appliesTo === 'after_fees') taxBase = Math.max(0, Math.round(base.gross * 100) - Math.round(base.fees * 100));
-                else if (t.appliesTo === 'after_ship') taxBase = Math.max(0, Math.round(base.gross * 100) - Math.round(base.shipping * 100));
-                else if (t.appliesTo === 'after_both') taxBase = Math.max(0, Math.round(base.gross * 100) - Math.round(base.fees * 100) - Math.round(base.shipping * 100));
+                // Se a taxa tem canais específicos, calcular base apenas desses canais
+                const hasChannelFilter = t.appliesToChannels && t.appliesToChannels.length > 0;
+                let channelGross = base.gross;
+                let channelFees = base.fees;
+                let channelShipping = base.shipping;
+                
+                if (hasChannelFilter) {
+                    channelGross = 0;
+                    channelFees = 0;
+                    channelShipping = 0;
+                    t.appliesToChannels!.forEach(ch => {
+                        const sp = storeProfit[ch];
+                        if (sp) {
+                            channelGross += sp.gross;
+                            channelFees += sp.fees;
+                            channelShipping += sp.shipping;
+                        }
+                    });
+                }
+
+                let taxBase = Math.round(channelGross * 100);
+                if (t.appliesTo === 'after_fees') taxBase = Math.max(0, Math.round(channelGross * 100) - Math.round(channelFees * 100));
+                else if (t.appliesTo === 'after_ship') taxBase = Math.max(0, Math.round(channelGross * 100) - Math.round(channelShipping * 100));
+                else if (t.appliesTo === 'after_both') taxBase = Math.max(0, Math.round(channelGross * 100) - Math.round(channelFees * 100) - Math.round(channelShipping * 100));
                 
                 const amt = t.type === 'percent' ? Math.round(taxBase * t.value / 100) : Math.round(t.value * 100);
                 const amtInReal = amt / 100;
@@ -406,12 +435,18 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 return { ...t, calculatedAmount: amtInReal, taxBase: taxBase / 100 };
             });
 
+            // Frete líquido: shipping_fee - shipping_paid_by_customer (custo real do vendedor)
+            // Quando useNetShipping=true, usa buyerTotal (valor pago pelo cliente) como base e subtrai o frete líquido
+            // Fórmula ML: recebido = valor_pago_cliente - tarifas - (frete_total - frete_pago_pelo_cliente)
+            const effectiveShipping = useNetShipping ? Math.max(0, base.shipping - base.customerPaid) : base.shipping;
+            const baseValue = useNetShipping ? base.buyerTotal : base.gross;
+
             let totalDeductions = 0;
             if (deductPlatformFees) totalDeductions += base.fees;
-            if (deductShipping) totalDeductions += base.shipping;
+            if (deductShipping) totalDeductions += effectiveShipping;
             totalDeductions += taxCalculated;
 
-            const finalNet = base.gross - totalDeductions;
+            const finalNet = baseValue - totalDeductions;
             const ticketMedio = base.orders > 0 ? base.gross / base.orders : 0;
             const margemPct = base.gross > 0 ? (finalNet / base.gross) * 100 : 0;
 
@@ -485,7 +520,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
             prevMargemPct: prev.base.gross > 0 ? ((prev.finalNet - prevTotalMaterialCost) / prev.base.gross) * 100 : 0, prevTotalMaterialCost,
             estimatedProfitCalculated, estimatedMarginCalculated: current.base.gross > 0 ? (estimatedProfitCalculated / current.base.gross) * 100 : 0
         };
-    }, [allOrders, period, canalFilter, customDates, compareMode, compareCustomDates, considerarInvalidos, dateSourceMode, rankingMetric, generalSettings.isRepeatedValue, taxes, deductPlatformFees, deductShipping, skuLinks, stockItems, produtosCombinados, costCalculations]);
+    }, [allOrders, period, canalFilter, customDates, compareMode, compareCustomDates, considerarInvalidos, dateSourceMode, rankingMetric, generalSettings.isRepeatedValue, taxes, deductPlatformFees, deductShipping, useNetShipping, skuLinks, stockItems, produtosCombinados, costCalculations]);
 
     const handleAddTax = () => {
         const updated = [...taxes, { id: Date.now().toString(), name: 'Nova Despesa', type: 'percent' as const, value: 0, enabled: true, category: 'outro' as const, appliesTo: 'gross' as const }];
@@ -680,8 +715,19 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                     <span className="text-xs font-bold text-slate-700">Taxa de Envio / Frete</span>
                                     <span className="text-[9px] text-slate-400 block">Frete pago pela empresa</span>
                                 </div>
-                                <span className="text-xs font-black text-orange-600">{fmt(stats.shipping)}</span>
+                                <span className="text-xs font-black text-orange-600">{fmt(useNetShipping ? Math.max(0, stats.shipping - stats.customerPaid) : stats.shipping)}</span>
                             </label>
+                            {deductShipping && (
+                                <label className="flex items-center gap-2 p-2 ml-4 bg-blue-50 rounded-xl border border-blue-100 cursor-pointer hover:bg-blue-100 transition-colors">
+                                    <input type="checkbox" checked={useNetShipping} onChange={e => setUseNetShipping(e.target.checked)} className="rounded text-blue-600" />
+                                    <div className="flex-1">
+                                        <span className="text-[10px] font-bold text-blue-700">Frete Líquido (Frete Total − Pago pelo Cliente)</span>
+                                        <span className="text-[9px] text-blue-400 block">
+                                            {fmt(stats.shipping)} total − {fmt(stats.customerPaid)} cliente = {fmt(Math.max(0, stats.shipping - stats.customerPaid))} líquido
+                                        </span>
+                                    </div>
+                                </label>
+                            )}
                         </div>
 
                         {/* Despesas e deduções customizadas */}
@@ -745,6 +791,29 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                             <option value="after_both">Bruto − Comissões − Frete</option>
                                         </select>
                                     </div>
+                                    <div>
+                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">Aplicar em Canais</label>
+                                        <div className="flex flex-wrap gap-1">
+                                            {canaisDisponiveis.map(ch => {
+                                                const selected = (tax.appliesToChannels || []).includes(ch);
+                                                return (
+                                                    <button
+                                                        key={ch}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const current = tax.appliesToChannels || [];
+                                                            const updated = selected ? current.filter(c => c !== ch) : [...current, ch];
+                                                            handleUpdateTax(tax.id, 'appliesToChannels', updated);
+                                                        }}
+                                                        className={`px-2 py-0.5 rounded text-[9px] font-black border transition-all ${selected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-500 border-slate-200 hover:border-blue-300'}`}
+                                                    >
+                                                        {ch === 'ML' ? 'Mercado Livre' : ch === 'SHOPEE' ? 'Shopee' : ch === 'SITE' ? 'Site' : ch}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                        <p className="text-[8px] text-slate-400 mt-0.5">{(!tax.appliesToChannels || tax.appliesToChannels.length === 0) ? 'Nenhum selecionado = aplica em todos' : `Aplicado em: ${tax.appliesToChannels.join(', ')}`}</p>
+                                    </div>
                                 </div>
                             ))}
                             <button onClick={handleAddTax} className="w-full py-2 border-2 border-dashed border-slate-200 rounded-2xl text-[10px] font-black text-slate-400 uppercase hover:bg-slate-50 hover:border-blue-200 transition-all flex items-center justify-center gap-2">
@@ -784,9 +853,19 @@ const FinancePage: React.FC<FinancePageProps> = ({
                             )}
                             <select value={canalFilter} onChange={e => setCanalFilter(e.target.value as any)} className="w-full p-3 bg-slate-50 border rounded-xl text-xs font-black outline-none focus:ring-2 focus:ring-blue-500">
                                 <option value="ALL">Todos os Canais</option>
-                                {canaisDisponiveis.map(c => (
-                                    <option key={c} value={c}>{c}</option>
-                                ))}
+                                {canaisDisponiveis.map(c => {
+                                    const val = String(c).toUpperCase();
+                                    let label = val;
+                                    if (val === 'ML') label = 'Mercado Livre';
+                                    else if (val === 'SHOPEE') label = 'Shopee';
+                                    else if (val === 'SITE') label = 'Site / Outros';
+                                    else if (val === 'TIKTOK') label = 'TikTok Shop';
+                                    else {
+                                        const custom = (generalSettings.customStores || []).find(s => s.id.toUpperCase() === val);
+                                        if (custom) label = custom.name;
+                                    }
+                                    return <option key={c} value={c}>{label}</option>;
+                                })}
                             </select>
                         </div>
                     </div>
@@ -1333,11 +1412,13 @@ const FinancePage: React.FC<FinancePageProps> = ({
                         </div>
 
                         <div className="flex-1 overflow-y-auto p-8">
-                            <div className="flex gap-2 mb-8 bg-slate-100 p-1.5 rounded-2xl w-fit">
+                            <div className="flex flex-wrap gap-2 mb-8 bg-slate-100 p-1.5 rounded-2xl w-fit">
                                 {[
                                     { id: 'ml', name: 'Mercado Livre' },
                                     { id: 'shopee', name: 'Shopee' },
-                                    { id: 'site', name: 'Padrao / Site' }
+                                    { id: 'tiktok', name: 'TikTok Shop' },
+                                    { id: 'site', name: 'Padrão / Site' },
+                                    ...(generalSettings.customStores || []).map(s => ({ id: s.id.toLowerCase(), name: s.name }))
                                 ].map(canal => (
                                     <button
                                         key={canal.id}
@@ -1351,9 +1432,15 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                 ))}
                             </div>
 
-                            <MappingPanel
+                             <MappingPanel
                                 canalId={mappingCanal}
-                                canalName={mappingCanal === 'ml' ? 'Mercado Livre' : mappingCanal === 'shopee' ? 'Shopee' : 'Padrão'}
+                                canalName={
+                                    mappingCanal === 'ml' ? 'Mercado Livre' : 
+                                    mappingCanal === 'shopee' ? 'Shopee' : 
+                                    mappingCanal === 'tiktok' ? 'TikTok Shop' : 
+                                    mappingCanal === 'site' ? 'Padrão' : 
+                                    (generalSettings.customStores || []).find(s => s.id.toLowerCase() === mappingCanal)?.name || mappingCanal
+                                }
                                 settings={generalSettings}
                                 onUpdateMapping={(cid, f, v) => {
                                     const key = cid.toLowerCase();

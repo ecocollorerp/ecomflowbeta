@@ -16,7 +16,7 @@ const normalizeHeaderToken = (val: any) => String(val || '')
 const detectCanalHintFromFileName = (fileName?: string): Canal | null => {
     const upper = safeUpper(fileName || '');
     if (!upper) return null;
-    if (upper.includes('TIKTOK') || upper.includes('TIK TOK') || upper.includes('TTSHOP')) return 'SITE';
+    if (upper.includes('TIKTOK') || upper.includes('TIK TOK') || upper.includes('TTSHOP')) return 'TIKTOK';
     if (upper.includes('MERCADO LIVRE') || upper.includes('MERCADOLIVRE') || upper.includes('MELI') || upper.includes('ML_')) return 'ML';
     if (upper.includes('SHOPEE') || upper.includes('TO_SHIP') || upper.includes('TOSHIP')) return 'SHOPEE';
     return null;
@@ -25,7 +25,7 @@ const detectCanalHintFromFileName = (fileName?: string): Canal | null => {
 const orderCandidateChannels = (forcedCanal?: Canal | 'AUTO', fileNameHint?: string): Canal[] => {
     if (forcedCanal && forcedCanal !== 'AUTO') return [forcedCanal];
 
-    const defaults: Canal[] = ['ML', 'SHOPEE', 'SITE'];
+    const defaults: Canal[] = ['ML', 'SHOPEE', 'TIKTOK', 'SITE'];
     const hinted = detectCanalHintFromFileName(fileNameHint);
     if (!hinted) return defaults;
 
@@ -48,8 +48,13 @@ const getCriticalColumnsForDetection = (canal: Canal, config?: Partial<ColumnMap
             .map(normalizeHeaderToken);
     }
 
-    // SITE (TikTok / e-commerce próprio)
-    return ['Order ID', 'Seller SKU', 'SKU ID', 'Quantity', 'Created Time', 'Order Status', 'Normal or Pre-order', 'Tracking ID']
+    if (canal === 'TIKTOK') {
+        return ['Order ID', 'Seller SKU', 'SKU ID', 'Quantity', 'Created Time', 'Order Status', 'Normal or Pre-order', 'Tracking ID']
+            .map(normalizeHeaderToken);
+    }
+
+    // SITE (e-commerce próprio)
+    return ['Order ID', 'SKU', 'Quantity', 'Status', 'Date']
         .map(normalizeHeaderToken);
 };
 
@@ -101,23 +106,32 @@ const normalizeDate = (rawDate: any): string => {
     return '';
 };
 
-export const extractHeadersAndData = (fileBuffer: ArrayBuffer): { headers: string[], sheetData: any[] } => {
+export const extractHeadersAndData = (fileBuffer: ArrayBuffer, startIndex?: number): { headers: string[], sheetData: any[] } => {
     const workbook = XLSX.read(fileBuffer, { type: 'array' });
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
     const rawData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
 
-    let headerRowIndex = 0;
-    let maxCols = 0;
-    for (let i = 0; i < Math.min(rawData.length, 50); i++) {
-        const row = rawData[i];
-        if (Array.isArray(row)) {
-            const filledCols = row.filter(c => String(c || '').trim() !== '').length;
-            if (filledCols > maxCols) {
-                maxCols = filledCols;
-                headerRowIndex = i;
+    // Improved Header Detection Logic
+    let headerRowIndex = startIndex !== undefined ? startIndex : 0;
+
+    if (startIndex === undefined) {
+        let maxCols = 0;
+        for (let i = 0; i < Math.min(rawData.length, 50); i++) {
+            const row = rawData[i];
+            if (Array.isArray(row)) {
+                const filledCols = row.filter(c => String(c || '').trim() !== '').length;
+                
+                let rowScore = filledCols;
+                if (i === 5 || i === 6) rowScore *= 1.5;
+                else if (i < 5) rowScore *= 0.8;
+                
+                if (rowScore > maxCols) {
+                    maxCols = rowScore;
+                    headerRowIndex = i;
+                }
+                if (filledCols >= 15 && i >= 5) break; 
             }
-            if (filledCols >= 8) break; // Assume that a real header has at least 8 columns
         }
     }
 
@@ -145,16 +159,26 @@ export const extractShippingDates = (
     const worksheet = workbook.Sheets[sheetName];
     const rawData = XLSX.utils.sheet_to_json<any[]>(worksheet, { header: 1 });
 
-    // Reutiliza a lógica de detecção de cabeçalho
+    const candidateChannels = orderCandidateChannels(forcedCanal, sourceFileName);
+
     let headerRowIndex = -1;
     let mappingToUse: ColumnMapping | null = null;
     let detectedChannel: Canal | null = null;
 
-    const candidateChannels = orderCandidateChannels(forcedCanal, sourceFileName);
+    // Check if we have a forced channel and it has a configured start row
+    if (forcedCanal && forcedCanal !== 'AUTO') {
+        const configKey = forcedCanal.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site';
+        const config = settings.importer[configKey];
+        if (config && config.importStartRow !== undefined) {
+            headerRowIndex = config.importStartRow;
+            detectedChannel = forcedCanal;
+        }
+    }
 
     let bestMatch = { rowIndex: -1, channel: null as Canal | null, score: 0 };
 
-    for (let i = 0; i < Math.min(rawData.length, 50); i++) {
+    if (headerRowIndex === -1) {
+        for (let i = 0; i < Math.min(rawData.length, 50); i++) {
         const row = rawData[i];
         if (!Array.isArray(row) || row.length === 0) continue;
         const rowValues = row.map(cell => normalizeHeaderToken(cell));
@@ -174,6 +198,7 @@ export const extractShippingDates = (
             }
         }
     }
+}
 
     if (bestMatch.rowIndex !== -1) {
         headerRowIndex = bestMatch.rowIndex;
@@ -205,9 +230,9 @@ export const extractShippingDates = (
 
             // Tenta identificar o canal a partir dos tokens do cabeçalho
             const firstRowValues = (rawData[headerRowIndex] || []).map(c => normalizeHeaderToken(c));
-            const possibleChannels: Canal[] = ['ML', 'SHOPEE', 'SITE'];
+            const possibleChannels: Canal[] = ['ML', 'SHOPEE', 'TIKTOK', 'SITE'];
             for (const canal of possibleChannels) {
-                const cfg = settings.importer[canal.toLowerCase() as 'ml' | 'shopee' | 'site'];
+                const cfg = settings.importer[canal.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site'];
                 if (!cfg) continue;
                 const crit = [cfg.orderId, cfg.sku].filter(Boolean).map(h => normalizeHeaderToken(h));
                 let cnt = 0;
@@ -219,7 +244,7 @@ export const extractShippingDates = (
     }
 
     // OBTEM A CONFIGURAÇÃO ESPECÍFICA DO CANAL
-    mappingToUse = settings.importer[detectedChannel.toLowerCase() as 'ml' | 'shopee' | 'site'];
+    mappingToUse = settings.importer[detectedChannel.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site'];
     
 
     // Se não tiver coluna de data de envio configurada, tenta usar data de venda ou retorna vazio
@@ -354,15 +379,28 @@ export const getParserInternals = (
 
     let candidateChannels: Canal[] = [];
     if (forcedCanal && forcedCanal !== 'AUTO') candidateChannels = [forcedCanal as Canal];
-    else candidateChannels = ['ML', 'SHOPEE', 'SITE'];
+    else candidateChannels = ['ML', 'SHOPEE', 'TIKTOK', 'SITE'];
 
     let bestMatch = { rowIndex: -1, channel: null as Canal | null, score: 0 };
-    for (let i = 0; i < Math.min(rawData.length, 50); i++) {
+    
+    // Support configured start row
+    if (forcedCanal && forcedCanal !== 'AUTO') {
+        const configKey = forcedCanal.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site';
+        const config = settings.importer[configKey];
+        if (config && config.importStartRow !== undefined) {
+            headerRowIndex = config.importStartRow;
+            canalDetectado = forcedCanal as Canal;
+            mappingToUse = config;
+        }
+    }
+
+    if (headerRowIndex === -1) {
+        for (let i = 0; i < Math.min(rawData.length, 50); i++) {
         const row = rawData[i];
         if (!Array.isArray(row) || row.length === 0) continue;
         const rowValues = row.map(cell => normalizeHeaderToken(cell));
         for (const canal of candidateChannels) {
-            const config = settings.importer[canal.toLowerCase() as 'ml' | 'shopee' | 'site'];
+            const config = settings.importer[canal.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site'];
             const criticalColumns = getCriticalColumnsForDetection(canal, config);
             if (criticalColumns.length === 0) continue;
             let matchCount = 0;
@@ -370,15 +408,16 @@ export const getParserInternals = (
             if (matchCount > bestMatch.score) bestMatch = { rowIndex: i, channel: canal, score: matchCount };
         }
     }
+}
 
     if (bestMatch.rowIndex !== -1) {
         headerRowIndex = bestMatch.rowIndex;
         canalDetectado = bestMatch.channel;
-        if (canalDetectado) mappingToUse = settings.importer[canalDetectado.toLowerCase() as 'ml' | 'shopee' | 'site'];
+        if (canalDetectado) mappingToUse = settings.importer[canalDetectado.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site'];
     } else if (forcedCanal && forcedCanal !== 'AUTO') {
         headerRowIndex = 0;
         canalDetectado = forcedCanal as Canal;
-        mappingToUse = settings.importer[canalDetectado.toLowerCase() as 'ml' | 'shopee' | 'site'];
+        mappingToUse = settings.importer[canalDetectado.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site'];
     } else {
         let maxCols = 0;
         for (let i = 0; i < Math.min(rawData.length, 50); i++) {
@@ -394,9 +433,9 @@ export const getParserInternals = (
         }
         if (headerRowIndex !== -1) {
             const firstRowValues = (rawData[headerRowIndex] || []).map(c => normalizeHeaderToken(c));
-            const possibleChannels: Canal[] = ['ML', 'SHOPEE', 'SITE'];
+            const possibleChannels: Canal[] = ['ML', 'SHOPEE', 'TIKTOK', 'SITE'];
             for (const canal of possibleChannels) {
-                const cfg = settings.importer[canal.toLowerCase() as 'ml' | 'shopee' | 'site'];
+                const cfg = settings.importer[canal.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site'];
                 if (!cfg) continue;
                 const crit = [cfg.orderId, cfg.sku].filter(Boolean).map((h: any) => normalizeHeaderToken(h));
                 let cnt = 0; for (const h of crit) if (firstRowValues.includes(h)) cnt++;
@@ -478,27 +517,39 @@ export const parseExcelFile = (
     // Definição dos canais a testar
     const candidateChannels = orderCandidateChannels(forcedCanal, fileName);
 
-    // 3. Lógica de Pontuação para Detecção do Cabeçalho
     let bestMatch = { rowIndex: -1, channel: null as Canal | null, score: 0 };
 
-    for (let i = 0; i < Math.min(rawData.length, 50); i++) {
-        const row = rawData[i];
-        if (!Array.isArray(row) || row.length === 0) continue;
-        const rowValues = row.map(cell => normalizeHeaderToken(cell));
+    // 3.1. Prioridade para linha configurada manualmente nas GeneralSettings
+    if (forcedCanal && forcedCanal !== 'AUTO') {
+        const configKey = forcedCanal.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site';
+        const config = settings.importer[configKey];
+        if (config && config.importStartRow !== undefined) {
+            headerRowIndex = config.importStartRow;
+            canalDetectado = forcedCanal;
+            mappingToUse = config;
+        }
+    }
 
-        for (const canal of candidateChannels) {
-            const configKey = canal.toLowerCase() as 'ml' | 'shopee' | 'site';
-            const config = settings.importer[configKey];
-            const criticalColumns = getCriticalColumnsForDetection(canal, config);
-            if (criticalColumns.length === 0) continue;
+    if (headerRowIndex === -1) {
+        for (let i = 0; i < Math.min(rawData.length, 50); i++) {
+            const row = rawData[i];
+            if (!Array.isArray(row) || row.length === 0) continue;
+            const rowValues = row.map(cell => normalizeHeaderToken(cell));
 
-            let matchCount = 0;
-            for (const header of criticalColumns) {
-                if (rowValues.includes(header)) matchCount++;
-            }
+            for (const canal of candidateChannels) {
+                const configKey = canal.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site';
+                const config = settings.importer[configKey];
+                const criticalColumns = getCriticalColumnsForDetection(canal, config);
+                if (criticalColumns.length === 0) continue;
 
-            if (matchCount > bestMatch.score) {
-                bestMatch = { rowIndex: i, channel: canal, score: matchCount };
+                let matchCount = 0;
+                for (const header of criticalColumns) {
+                    if (rowValues.includes(header)) matchCount++;
+                }
+
+                if (matchCount > bestMatch.score) {
+                    bestMatch = { rowIndex: i, channel: canal, score: matchCount };
+                }
             }
         }
     }
@@ -508,7 +559,7 @@ export const parseExcelFile = (
         headerRowIndex = bestMatch.rowIndex;
         canalDetectado = bestMatch.channel;
         if (canalDetectado) {
-            mappingToUse = settings.importer[canalDetectado.toLowerCase() as 'ml' | 'shopee' | 'site'];
+            mappingToUse = settings.importer[canalDetectado.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site'];
         }
     }
 
@@ -516,7 +567,7 @@ export const parseExcelFile = (
     if (!mappingToUse || headerRowIndex === -1) {
         if (forcedCanal && forcedCanal !== 'AUTO') {
             canalDetectado = forcedCanal;
-            mappingToUse = settings.importer[forcedCanal.toLowerCase() as 'ml' | 'shopee' | 'site'];
+            mappingToUse = settings.importer[forcedCanal.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site'];
             const isML = forcedCanal === 'ML';
             let maxCols = 0;
             for (let i = 0; i < Math.min(rawData.length, 50); i++) {
@@ -615,14 +666,21 @@ export const parseExcelFile = (
         fillMissingHeaderKey('dateShipping', ['Data prevista de envio', 'Data de envio prevista', 'Ship By Date']);
         fillMissingHeaderKey('shippingPaidByCustomer', ['Taxa de envio paga pelo comprador', 'Frete pago pelo comprador']);
         fillMissingHeaderKey('statusColumn', ['Status do pedido', 'Order Status']);
-    } else {
-        // SITE (TikTok / e-commerce próprio)
+    } else if (canalDetectado === 'TIKTOK') {
         fillMissingHeaderKey('orderId', ['Order ID', 'ID do pedido', 'N.º do pedido']);
         fillMissingHeaderKey('sku', ['Seller SKU', 'SKU', 'SKU ID', 'Número de referência SKU']);
         fillMissingHeaderKey('qty', ['Quantity', 'Quantidade', 'Unidades']);
         fillMissingHeaderKey('tracking', ['Tracking ID', 'Package ID', 'Número de rastreamento', 'Tracking Number']);
         fillMissingHeaderKey('date', ['Created Time', 'Data de criação do pedido', 'Paid Time', 'Data da venda']);
         fillMissingHeaderKey('statusColumn', ['Order Status', 'Status do pedido', 'Estado']);
+    } else {
+        // SITE (e-commerce próprio)
+        fillMissingHeaderKey('orderId', ['Order ID', 'ID do pedido', 'N.º do pedido']);
+        fillMissingHeaderKey('sku', ['SKU', 'Seller SKU']);
+        fillMissingHeaderKey('qty', ['Quantity', 'Quantidade']);
+        fillMissingHeaderKey('tracking', ['Tracking Number', 'Tracking ID']);
+        fillMissingHeaderKey('date', ['Date', 'Created Time']);
+        fillMissingHeaderKey('statusColumn', ['Status', 'Order Status']);
     }
 
     // Hard fallback para Shopee (Data de envio) se não encontrar via config
@@ -729,6 +787,13 @@ export const parseExcelFile = (
 
         // --- Filtro de Status ---
         let statusParaImportacao: any = forcedStatus || 'NORMAL';
+        
+        // Se houver data de postagem/envio e for importação normal, pode ser tratado como NORMAL (Pedidos do dia)
+        // Se for Shopee sem data de envio, talvez deva ser outro status, mas aqui seguimos a regra do usuário de ML
+        if (!forcedStatus && canalDetectado === 'ML' && dataEnvioStr) {
+            statusParaImportacao = 'NORMAL'; 
+        }
+        
         let errorReason = undefined;
 
         if (!forcedStatus && madeToOrderColumnKey) {

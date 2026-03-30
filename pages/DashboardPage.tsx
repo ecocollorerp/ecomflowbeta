@@ -11,7 +11,8 @@ import PackGroupModal from '../components/PackGroupModal';
 import PackGroupDetailModal from '../components/PackGroupDetailModal';
 import { ActionCardData, AlertItemData, DashboardFilters, AlertLevel, GeneralSettings, ScanLogItem, ActivityType, ActivityItemData, OrderItem, StockItem, User, Canal, UiSettings, AdminNotice, SkuLink, ProductionSummaryData, DeducedMaterial, ProdutoCombinado, Period, DashboardWidgetConfig, StockPackGroup, ProductionStats } from '../types';
 import DailyOverviewWidgets from '../components/DailyOverviewWidgets';
-import { Package, Scan, BarChart2, ShoppingCart, Archive, AlertTriangle, AlertCircle, ShieldCheck, Printer, CheckCheck, TrendingUp, Users, Factory, Box, Calendar, RefreshCw, Eye, Settings, DollarSign, ArrowDownCircle, ArrowUpCircle } from 'lucide-react';
+import { Package, Scan, BarChart2, ShoppingCart, Archive, AlertTriangle, AlertCircle, ShieldCheck, Printer, CheckCheck, TrendingUp, Users, Factory, Box, Calendar, RefreshCw, Eye, Settings, DollarSign, ArrowDownCircle, ArrowUpCircle, Save, CheckCircle } from 'lucide-react';
+import QuickStatusModal from '../components/QuickStatusModal';
 
 import { dbClient } from '../lib/supabaseClient';
 
@@ -37,6 +38,7 @@ interface DashboardPageProps {
     onExportDailyLog: () => void;
     onRefreshData?: () => void;
     onSaveGeneralSettings?: (settings: GeneralSettings) => void;
+    onSolveOrders?: (orderIds: string[], resolution: any) => Promise<boolean>;
 }
 
 const getTodayString = () => new Date().toISOString().split('T')[0];
@@ -59,7 +61,6 @@ const getOrderDate = (order: OrderItem, dateSource: 'sale_date' | 'import_date')
     if (dateSource === 'import_date' && order.created_at) return new Date(order.created_at);
     const dStr = String(order.data || '');
     if (!dStr) {
-        // Fallback: se não tem data de venda, usar data de importação
         if (order.created_at) return new Date(order.created_at);
         return null;
     }
@@ -74,14 +75,15 @@ const getOrderDate = (order: OrderItem, dateSource: 'sale_date' | 'import_date')
 }
 
 const DashboardPage: React.FC<DashboardPageProps> = (props) => {
-    const { setCurrentPage, generalSettings, allOrders, scanHistory, stockItems, produtosCombinados, users, lowStockCount, uiSettings, onSaveUiSettings, adminNotices, onSaveNotice, onDeleteNotice, currentUser, skuLinks, packGroups, onSavePackGroup, onExportDailyLog, onRefreshData, onSaveGeneralSettings } = props;
+    const { setCurrentPage, generalSettings, allOrders, scanHistory, stockItems, produtosCombinados, users, lowStockCount, uiSettings, onSaveUiSettings, adminNotices, onSaveNotice, onDeleteNotice, currentUser, skuLinks, packGroups, onSavePackGroup, onExportDailyLog, onRefreshData, onSaveGeneralSettings, onSolveOrders } = props;
 
     const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
     const [viewingPackGroup, setViewingPackGroup] = useState<StockPackGroup | null>(null);
     const [editingPackGroup, setEditingPackGroup] = useState<StockPackGroup | null>(null);
     const [packMovements, setPackMovements] = useState<Record<string, any[]>>({});
+    const [isQuickStatusModalOpen, setIsQuickStatusModalOpen] = useState(false);
+    const [selectedOrdersForStatus, setSelectedOrdersForStatus] = useState<OrderItem[]>([]);
 
-    // Manter viewingPackGroup sincronizado com packGroups atualizado
     useEffect(() => {
         if (viewingPackGroup) {
             const updated = packGroups.find(g => g.id === viewingPackGroup.id);
@@ -91,7 +93,6 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
         }
     }, [packGroups]);
 
-    // Carregar movimentações recentes dos pacotes para exibir no dashboard
     const loadPackMovements = useCallback(async () => {
         if (!packGroups.length) return;
         const packCodes = packGroups.map(g => `PACK:${g.name}`);
@@ -133,8 +134,6 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
             setFilters(f => ({ ...f, startDate, endDate }));
         }
     }, [filters.period]);
-
-    const [activeStatCardIndex, setActiveStatCardIndex] = useState(0);
 
     const productionSummary = useMemo(() => {
         const linkedSkusMap = new Map<string, string>(skuLinks.map(link => [link.importedSku.toUpperCase(), link.masterProductSku.toUpperCase()]));
@@ -184,7 +183,18 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
         const mainPeriodOrders = getOrdersInPeriod(filters.startDate, filters.endDate);
         const filteredOrders = filters.canal === 'ALL' ? mainPeriodOrders : mainPeriodOrders.filter(o => o.canal === filters.canal);
 
-        return { main: { ml: calculateStats(filteredOrders.filter(o => o.canal === 'ML')), shopee: calculateStats(filteredOrders.filter(o => o.canal === 'SHOPEE')), total: calculateStats(filteredOrders) } };
+        const main: Record<string, ProductionStats> = {
+            total: calculateStats(filteredOrders)
+        };
+
+        const uniqueCanals = Array.from(new Set(mainPeriodOrders.map(o => o.canal)));
+        uniqueCanals.forEach(canal => {
+            if (canal && typeof canal === 'string') {
+                main[canal.toLowerCase()] = calculateStats(mainPeriodOrders.filter(o => o.canal === canal));
+            }
+        });
+
+        return { main };
     }, [filters, allOrders, skuLinks, stockItems, generalSettings, dateSourceMode]);
 
     const materialDeductions = useMemo((): DeducedMaterial[] => {
@@ -252,8 +262,16 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
 
             <div className="mt-4">
                 {currentUser.role !== 'OPERATOR' && <AdminNotices notices={adminNotices} currentUser={currentUser} onSaveNotice={onSaveNotice} onDeleteNotice={onDeleteNotice} />}
-
-                <DailyOverviewWidgets allOrders={allOrders} dateSourceMode={dateSourceMode} />
+                
+                <DailyOverviewWidgets 
+                    allOrders={allOrders} 
+                    dateSourceMode={dateSourceMode} 
+                    onClickAtrasados={() => setCurrentPage('pedidos-atrasados')}
+                    onClickQuickStatus={(orders) => {
+                        setSelectedOrdersForStatus(orders);
+                        setIsQuickStatusModalOpen(true);
+                    }}
+                />
 
                 <ProductionSummary
                     olderData={productionSummary.main.total}
@@ -297,7 +315,6 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
                                         <div className="w-full bg-slate-200 h-1.5 rounded-full mt-2 overflow-hidden">
                                             <div className={`h-full transition-all duration-1000 ${isBelowMin ? 'bg-red-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, (currentTotal / (group.min_pack_qty || 1)) * 100)}%` }} />
                                         </div>
-                                        {/* Resumo Entradas/Saídas */}
                                         {recentMoves.length > 0 && (
                                             <div className="mt-3 pt-2 border-t border-slate-200/60 flex items-center gap-3">
                                                 <div className="flex items-center gap-1">
@@ -353,6 +370,7 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
             </div>
 
             <DashboardSettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} currentSettings={uiSettings} onSave={onSaveUiSettings} setCurrentPage={setCurrentPage} navMode={generalSettings.navMode || 'sidebar'} onNavModeChange={onSaveGeneralSettings ? (mode) => onSaveGeneralSettings({ ...generalSettings, navMode: mode }) : undefined} />
+            
             <PackGroupDetailModal
                 isOpen={!!viewingPackGroup}
                 onClose={() => setViewingPackGroup(null)}
@@ -361,7 +379,30 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
                 onEdit={(g) => { setViewingPackGroup(null); setEditingPackGroup(g); }}
                 onRefresh={onRefreshData}
             />
-            <PackGroupModal isOpen={!!editingPackGroup} onClose={() => setEditingPackGroup(null)} groupToEdit={editingPackGroup} allProducts={stockItems.filter(i => i.kind === 'PRODUTO')} onSave={onSavePackGroup} />
+            
+            <PackGroupModal 
+                isOpen={!!editingPackGroup} 
+                onClose={() => setEditingPackGroup(null)} 
+                groupToEdit={editingPackGroup} 
+                allProducts={stockItems.filter(i => i.kind === 'PRODUTO')} 
+                onSave={onSavePackGroup} 
+            />
+
+            {isQuickStatusModalOpen && onSolveOrders && (
+                <QuickStatusModal
+                    isOpen={isQuickStatusModalOpen}
+                    onClose={() => setIsQuickStatusModalOpen(false)}
+                    orders={selectedOrdersForStatus}
+                    onConfirm={async (ids, status, notes) => {
+                        const success = await onSolveOrders(ids, {
+                            resolution_type: 'ALTERACAO_DASHBOARD',
+                            notes: notes || 'Alteração rápida via Dashboard',
+                            refunded: false
+                        });
+                        return success;
+                    }}
+                />
+            )}
         </>
     );
 };

@@ -283,18 +283,37 @@ export const PacotesProntosManager: React.FC<PacotesProntosManagerProps> = ({
                                         </div>
                                     </td>
                                     <td className="p-4 text-center">
-                                        <span className="font-black text-emerald-700 text-lg">{pacote.quantidade_disponivel}</span>
-                                        <span className="text-[10px] text-slate-400 block">de {pacote.quantidade_total} un</span>
+                                        <div className="flex flex-col items-center">
+                                            <span className="font-black text-emerald-700 text-xl leading-none">{pacote.quantidade_disponivel}</span>
+                                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">unidades reais</span>
+                                        </div>
                                         {/* Mostrar detalhe de cada SKU: qtd_pacotes × unid/pacote */}
                                         {pacote.produtos && pacote.produtos.length > 0 && (
-                                            <div className="mt-1 space-y-0.5">
+                                            <div className="mt-2 space-y-1 bg-slate-50 p-2 rounded-lg border border-slate-100">
                                                 {pacote.produtos.map((prod, idx) => {
-                                                    // qtd_pacotes = quantidade_total / unidades_por_pacote
                                                     const unidPorPacote = prod.quantidade;
-                                                    const qtdPacotes = unidPorPacote > 0 ? Math.round(pacote.quantidade_total / unidPorPacote) : pacote.quantidade_total;
+                                                    const totalDisp = pacote.quantidade_disponivel;
+                                                    
+                                                    if (unidPorPacote <= 1) {
+                                                        return (
+                                                            <div key={idx} className="text-[10px] text-slate-600 font-black">
+                                                                {totalDisp} un (Unitários)
+                                                            </div>
+                                                        );
+                                                    }
+
+                                                    const pacotesFechados = Math.floor(totalDisp / unidPorPacote);
+                                                    const unidadesAvulsas = totalDisp % unidPorPacote;
+
                                                     return (
-                                                        <div key={idx} className="text-[9px] text-slate-500 font-bold">
-                                                            {qtdPacotes} pct × {unidPorPacote} = {pacote.quantidade_total}un
+                                                        <div key={idx} className="flex flex-col gap-0.5 border-b border-slate-200 last:border-0 pb-1 last:pb-0">
+                                                            <div className="text-[9px] text-slate-400 font-bold truncate max-w-[100px]">{prod.sku}</div>
+                                                            <div className="flex items-center justify-center gap-1">
+                                                                <span className="text-[11px] text-emerald-600 font-black">{pacotesFechados} pct</span>
+                                                                {unidadesAvulsas > 0 && (
+                                                                    <span className="text-[11px] text-orange-600 font-black">+ {unidadesAvulsas} un ({unidadesAvulsas} de {unidPorPacote})</span>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                     );
                                                 })}

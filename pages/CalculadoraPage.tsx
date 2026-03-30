@@ -43,9 +43,10 @@ interface CalculadoraPageProps {
     produtosCombinados: ProdutoCombinado[];
     addToast?: (message: string, type: 'success' | 'error' | 'info' | 'warning') => void;
     initialSku?: string;
+    onUpdatePrices?: (productSkus: string[], newCost?: number, newSell?: number) => Promise<boolean>;
 }
 
-export default function CalculadoraPage({ stockItems, produtosCombinados, addToast, initialSku }: CalculadoraPageProps) {
+export default function CalculadoraPage({ stockItems, produtosCombinados, addToast, initialSku, onUpdatePrices }: CalculadoraPageProps) {
     const [items, setItems] = useState<MaterialItem[]>([]);
     const [sellingPrice, setSellingPrice] = useState(0);
     const [platformFeePercent, setPlatformFeePercent] = useState(15);
@@ -80,6 +81,8 @@ export default function CalculadoraPage({ stockItems, produtosCombinados, addToa
     const [searchingItemId, setSearchingItemId] = useState<string | null>(null);
 
     // Todos os itens de estoque disponíveis para busca
+    const fmtMoney = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
     const allAvailableProducts = useMemo(() => {
         return stockItems.sort((a, b) => a.name.localeCompare(b.name));
     }, [stockItems]);
@@ -402,6 +405,40 @@ export default function CalculadoraPage({ stockItems, produtosCombinados, addToa
             }
             return item;
         }));
+    };
+    
+    // Total de custo de materiais/insumos sem taxas
+    const totalMaterialOnlyCost = useMemo(() => {
+        return items.reduce((sum, item) => {
+            if (item.productSku) {
+                const parent = selectedProducts.find(p => p.sku === item.productSku);
+                if (parent && !parent.isVisible) return sum;
+            }
+            return sum + (item.totalCost || 0);
+        }, 0);
+    }, [items, selectedProducts]);
+
+    const handleApplyPricing = async () => {
+        if (!onUpdatePrices || selectedProducts.length === 0) return;
+        
+        const skus = selectedProducts.map(p => p.sku);
+        const confirmMsg = `Deseja aplicar o Custo Direto (${fmtMoney(totalDirectCost)}) e/ou o Preço de Venda (${fmtMoney(sellingPrice)}) aos ${skus.length} produtos selecionados?`;
+        
+        if (!confirm(confirmMsg)) return;
+
+        setIsSaving(true);
+        try {
+            // Aplicamos o custo proporcional se for conjunto? 
+            // O usuário disse: "ao adicionar mais de um produto ao clicar na calculadora vai editar os preços"
+            // Vamos aplicar o custo total e o preço de venda para cada um, ou o usuário decide.
+            // Para simplificar, vamos aplicar o custo direto total e o preço de venda para todos os SKUs do conjunto.
+            const success = await onUpdatePrices(skus, totalMaterialOnlyCost, sellingPrice);
+            if (success && addToast) addToast("Preços atualizados no sistema!", "success");
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const totalMaterialCost = useMemo(() => {
@@ -748,6 +785,17 @@ export default function CalculadoraPage({ stockItems, produtosCombinados, addToa
                         <FileText size={16} />
                         PDF
                     </button>
+                    {onUpdatePrices && selectedProducts.length > 0 && (
+                        <button 
+                            onClick={handleApplyPricing}
+                            disabled={isSaving}
+                            className="flex items-center gap-2 px-5 py-2.5 bg-orange-500 text-white rounded-xl font-bold text-[11px] hover:bg-orange-600 transition-all shadow-lg shadow-orange-100 animate-pulse"
+                            title="Atualiza o custo e preço de venda nos produtos do estoque"
+                        >
+                            <DollarSign size={16} />
+                            Aplicar no Estoque
+                        </button>
+                    )}
                 </div>
             </div>
 

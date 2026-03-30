@@ -2,7 +2,7 @@
  * Mapeamento de canais/plataformas para labels amigáveis
  */
 
-export type Canal = 'ML' | 'SHOPEE' | 'SITE' | 'ALL' | 'AUTO';
+export type Canal = 'ML' | 'SHOPEE' | 'SITE' | 'TIKTOK' | 'ALL' | 'AUTO' | string;
 
 export interface PlatformLabel {
   displayName: string;
@@ -40,6 +40,13 @@ const PLATFORM_LABELS: Record<Canal | string, PlatformLabel> = {
     color: 'text-blue-700',
     bgColor: 'bg-blue-50',
     icon: '☁️'
+  },
+  TIKTOK: {
+    displayName: 'TikTok Shop',
+    shortName: 'TikTok',
+    color: 'text-pink-700',
+    bgColor: 'bg-pink-50',
+    icon: '🎵'
   },
   ALL: {
     displayName: 'Todos os Canais',
@@ -101,6 +108,7 @@ export const normalizeCanal = (canal: string): Canal => {
   const normalized = canal.toUpperCase();
   if (normalized === 'MERCADO_LIVRE' || normalized === 'MERCADO') return 'ML';
   if (normalized === 'SHOPEE') return 'SHOPEE';
+  if (normalized === 'TIKTOK' || normalized === 'TIK TOK') return 'TIKTOK';
   if (normalized === 'SITE' || normalized === 'SITE_OWN') return 'SITE';
   return 'ALL';
 };

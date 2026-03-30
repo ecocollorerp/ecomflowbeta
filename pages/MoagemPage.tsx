@@ -15,7 +15,7 @@ const MEDALS = ['🥇', '🥈', '🥉'];
 interface MoagemPageProps {
     stockItems: StockItem[];
     grindingBatches: GrindingBatch[];
-    onAddNewGrinding: (data: { sourceCode: string; sourceQty: number; outputCode: string; outputName: string; outputQty: number; mode: 'manual' | 'automatico'; userId?: string; userName: string }) => void;
+    onAddNewGrinding: (data: { sourceCode: string; sourceQty: number; outputCode: string; outputName: string; outputQty: number; mode: 'manual' | 'automatico'; userId?: string; userName: string; batchName?: string }) => void;
     currentUser: User;
     onDeleteBatch: (batchId: string) => Promise<boolean>;
     users: User[];
