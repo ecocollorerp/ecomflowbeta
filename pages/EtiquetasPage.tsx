@@ -1,12 +1,15 @@
 
 import React, { useRef, useCallback, useState, useMemo, useEffect } from 'react';
-import { Settings, Printer, Trash2, X, FileText, Loader2, Image as ImageIcon, Zap, Link as LinkIcon, PlusCircle, AlertTriangle, Package, File, Eye, History, Clock, CheckCircle2, ExternalLink, ChevronDown, ChevronRight, Search, Copy, LayoutList, CalendarDays } from 'lucide-react';
-import { ZplSettings, ExtractedZplData, GeneralSettings, UiSettings, StockItem, SkuLink, User, OrderItem, ZplPlatformSettings, EtiquetaHistoryItem, EtiquetasState, defaultZplSettings } from '../types';
+import { Settings, Printer, Trash2, X, FileText, Loader2, Image as ImageIcon, Zap, Link as LinkIcon, PlusCircle, AlertTriangle, Package, File, Eye, EyeOff, History, Clock, CheckCircle2, ExternalLink, ChevronDown, ChevronRight, Search, Copy, LayoutList, CalendarDays } from 'lucide-react';
+import { ZplSettings, ExtractedZplData, GeneralSettings, UiSettings, StockItem, SkuLink, User, OrderItem, ZplPlatformSettings, EtiquetaHistoryItem, EtiquetasState, defaultZplSettings, ZplBatch } from '../types';
 import { buildPdf } from '../services/pdfGenerator';
 import LinkSkuModal from '../components/LinkSkuModal';
 import CreateProductFromImportModal from '../components/CreateProductFromImportModal';
 import { simpleHash } from '../utils/zplUtils';
 import { loadPendingZpl, removePendingZplItem, clearPendingZpl, type PendingZplItem } from '../utils/pendingZpl';
+import { mergeZplBlocks } from '../utils/zpl_merge_utils';
+import ZplMergerModal from '../components/ZplMergerModal';
+import { PDFDocument } from 'pdf-lib';
 
 // --- Types ---
 type ProcessingMode = 'completo' | 'rapido';
@@ -32,6 +35,9 @@ interface EtiquetasPageProps {
     onProcessZpl: (mode: ProcessingMode) => Promise<void>;
     isProcessing: boolean;
     progressMessage: string;
+    progress: number;
+    addToast: (message: string, type: "success" | "error" | "warning" | "info") => void;
+    onSaveBatch: (batch: Omit<ZplBatch, 'id' | 'created_at'>) => Promise<boolean>;
 }
 
 // ... DraggableFooterEditor e SettingsModal permanecem inalterados, copiados do original ...
@@ -329,42 +335,49 @@ const SettingsModal: React.FC<{
     );
 };
 
-const ProcessingModeModal: React.FC<{
+// --- Main Page Component ---
+const ModeZplModal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
-    onSelectMode: (mode: ProcessingMode) => void;
-}> = ({ isOpen, onClose, onSelectMode }) => {
+    onSelect: (mode: ProcessingMode) => void;
+}> = ({ isOpen, onClose, onSelect }) => {
     if (!isOpen) return null;
-
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
-            <div className="bg-white dark:bg-gray-800 p-6 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-md">
-                <h2 className="text-xl font-bold text-gray-900 dark:text-gray-50 mb-4">Escolha o modo de processamento</h2>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">O modo "Rápido" economiza recursos ignorando a pré-visualização da DANFE, ideal para grandes volumes ou conexões lentas.</p>
-                <div className="space-y-4">
-                    <button
-                        onClick={() => onSelectMode('completo')}
-                        className="w-full flex items-center p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-blue-600 dark:border-blue-500 hover:bg-blue-50 dark:bg-blue-900/20 transition-all"
-                    >
-                        <Package size={24} className="mr-4 text-blue-600 dark:text-blue-400" />
-                        <div>
-                            <p className="font-semibold text-gray-900 dark:text-gray-50">Completo (Etiqueta + DANFE)</p>
-                            <p className="text-xs text-gray-500 dark:text-gray-400">Modo padrão. Gera a pré-visualização de todas as páginas.</p>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-sm w-full overflow-hidden border border-white/20 transform animate-in zoom-in-95 duration-200 border-gray-100 dark:border-gray-700">
+                <div className="p-6">
+                    <div className="flex items-center gap-3 mb-6">
+                        <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-xl">
+                            <Zap className="text-blue-600 dark:text-blue-400" size={20} />
                         </div>
-                    </button>
+                        <h3 className="text-lg font-black text-gray-900 dark:text-white uppercase tracking-tight">Modo de Processamento</h3>
+                    </div>
+                    <div className="space-y-3">
+                        <button
+                            onClick={() => onSelect('completo')}
+                            className="w-full flex items-center justify-between p-4 bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/20 dark:hover:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-xl transition-all group"
+                        >
+                            <div className="text-left">
+                                <span className="block text-sm font-black text-blue-700 dark:text-blue-400 uppercase tracking-wide">Modo Completo</span>
+                                <span className="text-[10px] text-blue-600/70 dark:text-blue-400/70 font-medium font-sans">Renderiza etiquetas + DANFE</span>
+                            </div>
+                            <ChevronRight size={18} className="text-blue-400 group-hover:translate-x-1 transition-transform" />
+                        </button>
+                        <button
+                            onClick={() => onSelect('rapido')}
+                            className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 dark:bg-gray-700/30 dark:hover:bg-gray-700/50 border border-gray-200 dark:border-gray-700 rounded-xl transition-all group"
+                        >
+                            <div className="text-left">
+                                <span className="block text-sm font-black text-gray-700 dark:text-gray-300 uppercase tracking-wide">Modo Rápido</span>
+                                <span className="text-[10px] text-gray-500 dark:text-gray-400 font-medium font-sans">Apenas etiquetas (mais veloz)</span>
+                            </div>
+                            <ChevronRight size={18} className="text-gray-400 group-hover:translate-x-1 transition-transform" />
+                        </button>
+                    </div>
                     <button
-                        onClick={() => onSelectMode('rapido')}
-                        className="w-full flex items-center p-4 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-blue-600 dark:border-blue-500 hover:bg-blue-50 dark:bg-blue-900/20 transition-all"
+                        onClick={onClose}
+                        className="w-full mt-6 py-3 text-xs font-black text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 uppercase tracking-widest transition-colors"
                     >
-                        <Zap size={24} className="mr-4 text-orange-500" />
-                        <div>
-                            <p className="font-semibold text-gray-900 dark:text-gray-50">Rápido (Apenas Etiqueta)</p>
-                            <p className="text-xs text-gray-500 dark:text-gray-400">Processamento otimizado, ignora a DANFE na pré-visualização.</p>
-                        </div>
-                    </button>
-                </div>
-                <div className="mt-6 text-right">
-                    <button onClick={onClose} className="text-sm font-semibold text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:text-gray-50 px-4 py-2">
                         Cancelar
                     </button>
                 </div>
@@ -373,11 +386,42 @@ const ProcessingModeModal: React.FC<{
     );
 };
 
-
 // --- Main Page Component ---
-const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
-    const { settings, onSettingsSave, generalSettings, stockItems, skuLinks, onLinkSku, onAddNewItem, etiquetasState, setEtiquetasState, allOrders, currentUser, onSaveHistory, etiquetasHistory, onGetHistoryDetails, onProcessZpl, isProcessing, progressMessage } = props;
-    const { zplInput, includeMode, zplPages, previews, extractedData, printedIndices, warnings } = etiquetasState;
+const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
+    settings,
+    onSettingsSave,
+    generalSettings,
+    uiSettings,
+    onSetUiSettings,
+    stockItems,
+    skuLinks,
+    onLinkSku,
+    onUnlinkSku,
+    onAddNewItem,
+    etiquetasState,
+    setEtiquetasState,
+    currentUser,
+    allOrders,
+    etiquetasHistory,
+    onSaveHistory,
+    onGetHistoryDetails,
+    onProcessZpl,
+    isProcessing,
+    progressMessage,
+    progress,
+    addToast,
+    onSaveBatch
+}) => {
+    const { 
+        zplInput, 
+        includeMode, 
+        zplPages, 
+        previews, 
+        extractedData, 
+        printedIndices, 
+        warnings,
+        showUnificadores = true 
+    } = etiquetasState;
 
     const includeDanfe = includeMode === 'both' || includeMode === 'only_danfe';
     const includeLabel = includeMode === 'both' || includeMode === 'only_label';
@@ -393,8 +437,11 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
     // ── Fila de pendentes de impressão ZPL (lida do localStorage) ────────────
     const [pendingItems, setPendingItems] = useState<PendingZplItem[]>(() => loadPendingZpl());
     const [showPrintedConfirm, setShowPrintedConfirm] = useState(false);
+    const [isMergerModalOpen, setIsMergerModalOpen] = useState(false);
     const [pendingPanelOpen, setPendingPanelOpen] = useState(true);
     const [pendSearch, setPendSearch] = useState('');
+    const [selectedPendingIds, setSelectedPendingIds] = useState<Set<string>>(new Set());
+    const [useHalfCount, setUseHalfCount] = useState(false);
 
     useEffect(() => {
         const refresh = () => setPendingItems(loadPendingZpl());
@@ -409,6 +456,32 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
     const handleConfirmPrinted = (id: string) => {
         removePendingZplItem(id);
         setPendingItems(loadPendingZpl());
+        setSelectedPendingIds(prev => {
+            const next = new Set(prev);
+            next.delete(id);
+            return next;
+        });
+    };
+
+
+    const handleMergeSelected = () => {
+        if (selectedPendingIds.size === 0) return;
+        setIsMergerModalOpen(true);
+    };
+
+    const handleConfirmMerge = (mergedZpl: string) => {
+        setEtiquetasState(prev => ({ ...prev, zplInput: mergedZpl }));
+        setIsMergerModalOpen(false);
+        setIsModeModalOpen(true); // Abre o modal de processamento rápido/completo para o novo ZPL
+    };
+
+    const toggleSelectPending = (id: string) => {
+        setSelectedPendingIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
     };
 
     const handleReopenZpl = (item: PendingZplItem) => {
@@ -425,7 +498,58 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
     };
 
     const handleCopyZpl = (item: PendingZplItem) => {
-        navigator.clipboard.writeText(item.zplContent).catch(() => { });
+        navigator.clipboard.writeText(item.zplContent).then(() => {
+            if (addToast) addToast("ZPL copiado!", "success");
+        }).catch(() => { });
+    };
+
+    const unifierInputRef = useRef<HTMLInputElement>(null);
+
+    const handleFileUploadUnify = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(e.target.files || []) as File[];
+        if (files.length === 0) return;
+
+        const zplFiles = files.filter(f => f.name.toLowerCase().endsWith('.zpl') || f.name.toLowerCase().endsWith('.txt'));
+        
+        if (zplFiles.length === 0) {
+            addToast('Nenhum arquivo ZPL ou TXT detectado.', 'warning');
+            return;
+        }
+
+        try {
+            let combinedZpl = '';
+            for (const file of zplFiles) {
+                const text = await file.text();
+                combinedZpl += (combinedZpl ? '\n' : '') + text;
+            }
+
+            if (combinedZpl) {
+                setEtiquetasState(prev => ({ ...prev, zplInput: combinedZpl }));
+                addToast(`${zplFiles.length} arquivos ZPL/TXT unificados com sucesso.`, 'success');
+            }
+        } catch (err) {
+            console.error('Erro ao unificar arquivos:', err);
+            addToast('Erro ao ler arquivos para unificação.', 'error');
+        } finally {
+            e.target.value = '';
+        }
+    };
+
+    const handleSaveBatchToDb = async (item: PendingZplItem) => {
+        const success = await onSaveBatch({
+            batch_id: item.loteId,
+            description: item.descricao,
+            source: item.source,
+            label_count: item.labelCount,
+            zpl_content: item.zplContent,
+            created_by_name: currentUser.name
+        });
+
+        if (success) {
+            if (addToast) addToast("Lote salvo no banco de dados!", "success");
+        } else {
+            if (addToast) addToast("Erro ao salvar lote no banco.", "error");
+        }
     };
 
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -657,10 +781,24 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                                 {pendingItems.length} lote{pendingItems.length !== 1 ? 's' : ''}
                             </span>
                             <span className="bg-amber-100 text-amber-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-amber-200">
-                                {pendTotalEtiquetas} etiqueta{pendTotalEtiquetas !== 1 ? 's' : ''}
+                                {useHalfCount ? Math.ceil(pendTotalEtiquetas / 2) : pendTotalEtiquetas} etiqueta{pendTotalEtiquetas !== 1 ? 's' : ''}
                             </span>
+                             <button
+                                onClick={(e) => { e.stopPropagation(); setUseHalfCount(!useHalfCount); }}
+                                className={`ml-2 text-[9px] font-black px-2 py-0.5 rounded-full border transition-all ${useHalfCount ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-blue-600 border-blue-200'}`}
+                             >
+                                {useHalfCount ? '1/2 ON' : '1/2 OFF'}
+                             </button>
                         </div>
                         <div className="flex items-center gap-2">
+                            {selectedPendingIds.size > 0 && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); handleMergeSelected(); }}
+                                    className="text-[10px] font-black bg-blue-600 text-white px-3 py-1 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-1 animate-pulse"
+                                >
+                                    <LinkIcon size={12} /> Mesclar {selectedPendingIds.size} selecionados
+                                </button>
+                            )}
                             <button
                                 onClick={e => { e.stopPropagation(); clearPendingZpl(); setPendingItems([]); setPendSearch(''); }}
                                 className="text-[10px] font-bold text-orange-400 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50 transition-colors"
@@ -695,17 +833,26 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
                                         'individual': 'Individual',
                                     };
                                     return (
-                                        <div key={item.id} className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-orange-100/60 transition-colors">
-                                            <div className="min-w-0 flex-1">
-                                                <p className="font-bold text-sm text-orange-900 truncate">{item.loteId}</p>
-                                                <p className="text-xs text-orange-600 flex items-center gap-2 mt-0.5 flex-wrap">
-                                                    <span className="bg-orange-200 text-orange-700 px-1.5 py-0.5 rounded text-[9px] font-black uppercase">
-                                                        {sourceLabels[item.source] || item.source}
-                                                    </span>
-                                                    <span className="font-semibold">{item.labelCount} etiqueta{item.labelCount !== 1 ? 's' : ''}</span>
-                                                    {item.descricao && <span className="truncate max-w-[140px] text-orange-500">{item.descricao}</span>}
-                                                    <span className="text-orange-400">{new Date(item.timestamp).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
-                                                </p>
+                                        <div key={item.id} className={`flex items-center justify-between gap-3 px-4 py-3 hover:bg-orange-100/60 transition-colors ${selectedPendingIds.has(item.id) ? 'bg-orange-200/40 border-l-4 border-orange-500' : ''}`}>
+                                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                                                <input 
+                                                    type="checkbox" 
+                                                    checked={selectedPendingIds.has(item.id)}
+                                                    onChange={() => toggleSelectPending(item.id)}
+                                                    className="w-4 h-4 rounded border-orange-300 text-orange-600 focus:ring-orange-500"
+                                                    onClick={e => e.stopPropagation()}
+                                                />
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="font-bold text-sm text-orange-900 truncate">{item.loteId}</p>
+                                                    <p className="text-xs text-orange-600 flex items-center gap-2 mt-0.5 flex-wrap">
+                                                        <span className="bg-orange-200 text-orange-700 px-1.5 py-0.5 rounded text-[9px] font-black uppercase">
+                                                            {sourceLabels[item.source] || item.source}
+                                                        </span>
+                                                        <span className="font-semibold">{useHalfCount ? Math.ceil(item.labelCount / 2) : item.labelCount} etiqueta{item.labelCount !== 1 ? 's' : ''}</span>
+                                                        {item.descricao && <span className="truncate max-w-[140px] text-orange-500">{item.descricao}</span>}
+                                                        <span className="text-orange-400">{new Date(item.timestamp).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                                                    </p>
+                                                </div>
                                             </div>
                                             <div className="flex items-center gap-1.5 flex-shrink-0">
                                                 <button
@@ -741,228 +888,403 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = (props) => {
 
             <div className="flex flex-col md:flex-row gap-6 h-full">
 
-                <div className="flex-1 flex flex-col gap-6">
-                    <div className="flex flex-col bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm flex-1 min-h-0">
-                        <div className="flex-shrink-0 flex justify-between items-center p-3 gap-2 border-b border-gray-200 dark:border-gray-700">
+                <div className="flex-1 flex flex-col gap-6 overflow-hidden">
+                    {/* Área de Entrada (ZPL) */}
+                    <div className="flex flex-col bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm flex-initial h-64 shrink-0 overflow-hidden">
+                        <div className="flex-shrink-0 flex justify-between items-center p-3 gap-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
                             <div className="flex items-center gap-2">
                                 <input type="file" ref={fileInputRef} onChange={(e) => { const file = e.target.files?.[0]; if (file) file.text().then(text => setEtiquetasState(p => ({ ...p, zplInput: text }))); e.target.value = ''; }} accept=".txt,.zpl" className="hidden" />
-                                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-md bg-gray-50 dark:bg-gray-700 hover:bg-gray-200 dark:bg-gray-600"><FileText size={16} /> Importar</button>
-                                <button onClick={handleClear} className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-md bg-gray-50 dark:bg-gray-700 hover:bg-gray-200 dark:bg-gray-600"><Trash2 size={16} /> Limpar</button>
+                                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 text-[11px] font-bold uppercase px-3 py-1.5 rounded-md bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 text-gray-700 dark:text-gray-200 transition-all"><FileText size={14} /> Importar</button>
+                                <button onClick={handleClear} className="flex items-center gap-2 text-[11px] font-bold uppercase px-3 py-1.5 rounded-md bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 text-gray-700 dark:text-gray-200 transition-all"><Trash2 size={14} /> Limpar</button>
                             </div>
                             <div className="flex items-center gap-2">
-                                <button onClick={() => setIsSettingsModalOpen(true)} className="p-2 rounded-full hover:bg-gray-50 dark:bg-gray-700"><Settings size={20} /></button>
-                                <button onClick={handleProcessRequest} disabled={!zplInput.trim() || isProcessing} className="flex items-center gap-2 text-sm px-4 py-1.5 rounded-md bg-blue-600 dark:bg-blue-500 text-white font-semibold disabled:opacity-50"><Zap size={16} /> Processar</button>
+                                <button 
+                                    onClick={() => setEtiquetasState(p => ({ ...p, showUnificadores: !showUnificadores }))}
+                                    title={showUnificadores ? "Ocultar Unificadores" : "Mostrar Unificadores"}
+                                    className={`p-2 rounded-full transition-all ${showUnificadores ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/30' : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                                >
+                                    {showUnificadores ? <Eye size={18} /> : <EyeOff size={18} />}
+                                </button>
+                                <button onClick={() => setIsSettingsModalOpen(true)} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors"><Settings size={18} /></button>
+                                <button 
+                                    onClick={handleProcessRequest} 
+                                    disabled={!zplInput.trim() || isProcessing} 
+                                    className={`flex items-center gap-2 text-xs px-5 py-2 rounded-lg font-black uppercase tracking-tight shadow-lg transition-all ${isProcessing ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white hover:scale-[1.02] active:scale-[0.98]'}`}
+                                >
+                                    {isProcessing ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />} 
+                                    {isProcessing ? 'Processando...' : 'Processar Agora'}
+                                </button>
                             </div>
                         </div>
-                        <textarea value={zplInput} onChange={(e) => setEtiquetasState(p => ({ ...p, zplInput: e.target.value }))} placeholder="Cole seu código ZPL aqui ou clique em 'Importar'..." className="h-full w-full p-4 font-mono text-sm resize-none focus:outline-none bg-white dark:bg-gray-800" />
+                        <textarea 
+                            value={zplInput} 
+                            onChange={(e) => setEtiquetasState(p => ({ ...p, zplInput: e.target.value }))} 
+                            placeholder="Cole seu código ZPL aqui ou use o unificador lateral..." 
+                            className="flex-1 w-full p-4 font-mono text-[11px] leading-relaxed resize-none focus:outline-none bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-gray-700" 
+                        />
                     </div>
-                    {(previews.length > 0) && (
-                        <div className="flex-1 flex flex-col gap-4 overflow-hidden">
-                            {warnings.length > 0 && <div className="flex-shrink-0 p-3 border-l-4 border-orange-500 bg-orange-50 rounded-r-lg shadow-sm"><h3 className="font-bold text-orange-800 flex items-center gap-2"><AlertTriangle size={18} /> {warnings.join(' ')}</h3></div>}
-                            {unlinkedSkusData.length > 0 && <div className="flex-shrink-0 p-3 border-l-4 border-yellow-500 bg-yellow-50 rounded-r-lg shadow-sm"><h3 className="font-bold text-yellow-800 flex items-center gap-2"><AlertTriangle size={18} /> Vínculo de SKUs Pendentes ({unlinkedSkusData.length})</h3><div className="space-y-2 mt-2 max-h-32 overflow-y-auto pr-2">{unlinkedSkusData.map(({ sku }) => (<div key={sku} className="flex items-center justify-between bg-white p-2 rounded border border-yellow-200 text-sm"><span className="font-mono text-xs">{sku}</span><div className="flex gap-3"><button onClick={() => setLinkModalState({ isOpen: true, skus: [sku], color: 'Padrão' })} className="font-semibold text-blue-600 hover:underline flex items-center gap-1"><LinkIcon size={14} /> Vincular</button><button onClick={() => setCreateModalState({ isOpen: true, data: { sku, colorSugerida: 'Padrão' } })} className="font-semibold text-green-600 hover:underline flex items-center gap-1"><PlusCircle size={14} /> Criar</button></div></div>))}</div></div>}
 
-                            <div className="flex-1 flex flex-col bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 overflow-hidden">
-                                <div className="flex-shrink-0 flex justify-between items-center mb-4"><h2 className="text-lg font-semibold">Pré-visualização ({previews.filter(p => p && p !== 'SKIPPED').length}/{zplPages.length})</h2><div className="flex items-center gap-4">
-                                    <div className="flex items-center bg-gray-100 dark:bg-gray-700 p-1 rounded-lg border border-gray-200 dark:border-gray-600">
+                    {/* Indicador de Carregamento / Progresso */}
+                    {isProcessing && (
+                        <div className="flex-shrink-0 bg-blue-50 dark:bg-blue-900/20 border-2 border-blue-100 dark:border-blue-800/50 p-5 rounded-2xl shadow-sm animate-in fade-in slide-in-from-top-4 duration-300">
+                            <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-3">
+                                    <div className="bg-blue-600 p-2 rounded-lg text-white">
+                                        <Loader2 size={18} className="animate-spin" />
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-black text-blue-900 dark:text-blue-100 uppercase tracking-wider">{progressMessage || 'Renderizando Etiquetas...'}</p>
+                                        <p className="text-[10px] text-blue-600 dark:text-blue-400 font-bold uppercase">Aguarde a conclusão para gerar o PDF</p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="w-full bg-blue-200/50 dark:bg-blue-800/50 rounded-full h-3 overflow-hidden">
+                                <div 
+                                    className="bg-blue-600 h-full rounded-full transition-all duration-500 ease-out relative" 
+                                    style={{ width: `${progress}%` }}
+                                >
+                                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-[shimmer_1.5s_infinite]" style={{ backgroundSize: '200% 100%' }} />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Área de Previews */}
+                    {previews.length > 0 && (
+                        <div className="flex-1 flex flex-col gap-4 overflow-hidden border-t-2 pt-6 border-gray-100 dark:border-gray-800/50">
+                            {warnings.length > 0 && (
+                                <div className="flex-shrink-0 p-4 border-l-4 border-orange-500 bg-orange-50 dark:bg-orange-900/10 rounded-r-2xl shadow-sm">
+                                    <h3 className="font-black text-[11px] uppercase tracking-wider text-orange-800 dark:text-orange-300 flex items-center gap-2">
+                                        <AlertTriangle size={16} /> {warnings.join(' ')}
+                                    </h3>
+                                </div>
+                            )}
+                            
+                            {unlinkedSkusData.length > 0 && (
+                                <div className="flex-shrink-0 p-4 border-l-4 border-amber-500 bg-amber-50 dark:bg-amber-900/10 rounded-r-2xl shadow-sm">
+                                    <h3 className="font-black text-[11px] uppercase tracking-wider text-amber-800 dark:text-amber-300 flex items-center gap-2">
+                                        <AlertTriangle size={16} /> Vínculo de SKUs Pendentes ({unlinkedSkusData.length})
+                                    </h3>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
+                                        {unlinkedSkusData.map(({ sku }) => (
+                                            <div key={sku} className="flex items-center justify-between bg-white dark:bg-gray-800 p-2.5 rounded-xl border border-amber-200 dark:border-amber-800 shadow-xs">
+                                                <span className="font-mono text-[10px] font-bold text-gray-700 dark:text-gray-300">{sku}</span>
+                                                <div className="flex gap-2">
+                                                    <button onClick={() => setLinkModalState({ isOpen: true, skus: [sku], color: 'Padrão' })} className="text-[10px] font-black uppercase text-blue-600 hover:bg-blue-50 px-2 py-1 rounded-md transition-all">Vincular</button>
+                                                    <button onClick={() => setCreateModalState({ isOpen: true, data: { sku, colorSugerida: 'Padrão' } })} className="text-[10px] font-black uppercase text-green-600 hover:bg-green-50 px-2 py-1 rounded-md transition-all">Criar</button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            <div className="flex-1 flex flex-col bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-6 shadow-sm overflow-hidden min-h-0">
+                                <div className="flex-shrink-0 flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
+                                    <div>
+                                        <h2 className="text-xl font-black text-gray-900 dark:text-white tracking-tight">Etiquetas Processadas</h2>
+                                        <p className="text-xs font-bold text-gray-500 uppercase tracking-widest">{previews.filter(p => p && p !== 'SKIPPED').length} de {zplPages.length} renderizadas</p>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                        <div className="flex items-center bg-gray-100 dark:bg-gray-700 p-1 rounded-xl border border-gray-200 dark:border-gray-600">
+                                            {(['only_danfe', 'both', 'only_label'] as const).map(mode => (
+                                                <button 
+                                                    key={mode}
+                                                    onClick={() => setEtiquetasState(p => ({ ...p, includeMode: mode }))}
+                                                    className={`px-4 py-2 text-[10px] font-black uppercase rounded-lg transition-all ${includeMode === mode ? 'bg-white dark:bg-gray-600 shadow-md text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'}`}
+                                                >
+                                                    {mode === 'only_danfe' ? 'Só DANFE' : mode === 'both' ? 'Ambos' : 'Só Etiqueta'}
+                                                </button>
+                                            ))}
+                                        </div>
                                         <button 
-                                            onClick={() => setEtiquetasState(p => ({ ...p, includeMode: 'only_danfe' }))}
-                                            className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-md transition-all ${includeMode === 'only_danfe' ? 'bg-white dark:bg-gray-600 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500'}`}
+                                            onClick={handlePdfAction} 
+                                            disabled={previews.length === 0 || previews.every(p => !p) || isProcessing} 
+                                            className="flex items-center gap-2 text-xs px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider shadow-lg disabled:opacity-50 transition-all hover:scale-[1.02] active:scale-[0.98]"
                                         >
-                                            Só DANFE
-                                        </button>
-                                        <button 
-                                            onClick={() => setEtiquetasState(p => ({ ...p, includeMode: 'both' }))}
-                                            className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-md transition-all ${includeMode === 'both' ? 'bg-white dark:bg-gray-600 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500'}`}
-                                        >
-                                            Ambos
-                                        </button>
-                                        <button 
-                                            onClick={() => setEtiquetasState(p => ({ ...p, includeMode: 'only_label' }))}
-                                            className={`px-3 py-1.5 text-[10px] font-black uppercase rounded-md transition-all ${includeMode === 'only_label' ? 'bg-white dark:bg-gray-600 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500'}`}
-                                        >
-                                            Só Etiqueta
+                                            <Printer size={16} /> Gerar PDF Final
                                         </button>
                                     </div>
-                                    <button onClick={handlePdfAction} disabled={previews.length === 0 || previews.every(p => !p) || isProcessing} className="flex items-center gap-2 text-sm px-4 py-2 rounded-md bg-blue-600 dark:bg-blue-500 text-white font-semibold disabled:opacity-50"><Printer size={16} /> Gerar PDF</button>
-                                </div></div>
-                                <div className="flex-1 overflow-y-auto pr-2"><div className="grid grid-cols-3 gap-6">{previews.map((src, index) => {
-                                    if (!includeDanfe && index % 2 === 0) return null;
-                                    if (!includeLabel && index % 2 !== 0) return null;
-                                    const isEvenPage = index % 2 !== 0;
-                                    const pairData = extractedData.get(Math.floor(index / 2) * 2);
-                                    const platformSettings = pairData?.isTikTokShop
-                                        ? (settings.tikTokShop ?? settings.shopee)
-                                        : (pairData?.isMercadoLivre ? settings.mercadoLivre : settings.shopee);
+                                </div>
 
-                                    // Prepara as linhas de pré-visualização para o rodapé usando agrupamento por mestre
-                                    const previewLines: string[] = [];
-                                    if (pairData && pairData.skus.length > 0) {
-                                        const grouped = groupSkusByMasterProduct(pairData.skus);
-                                        grouped.forEach(({ product, totalQty }) => {
-                                            const finalSku = product ? product.code : 'SKU-UNKNOWN';
-                                            const finalName = product ? product.name : 'Produto não encontrado';
-                                            const line = platformSettings.footer.template
-                                                .replace('{sku}', finalSku)
-                                                .replace('{name}', finalName)
-                                                .replace('{qty}', String(totalQty));
-                                            previewLines.push(line);
-                                        });
-                                    }
+                                <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar pb-10">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+                                        {previews.map((src, index) => {
+                                            if (!includeDanfe && index % 2 === 0) return null;
+                                            if (!includeLabel && index % 2 !== 0) return null;
+                                            const isEvenPage = index % 2 !== 0;
+                                            const pairData = extractedData.get(Math.floor(index / 2) * 2);
+                                            const platformSettings = pairData?.isTikTokShop
+                                                ? (settings.tikTokShop ?? settings.shopee)
+                                                : (pairData?.isMercadoLivre ? settings.mercadoLivre : settings.shopee);
 
+                                            const previewLines: string[] = [];
+                                            if (pairData && pairData.skus.length > 0) {
+                                                const grouped = groupSkusByMasterProduct(pairData.skus);
+                                                grouped.forEach(({ product, totalQty }) => {
+                                                    const finalSku = product ? product.code : 'SKU-UNKNOWN';
+                                                    const finalName = product ? product.name : 'Produto não encontrado';
+                                                    const line = platformSettings.footer.template
+                                                        .replace('{sku}', finalSku)
+                                                        .replace('{name}', finalName)
+                                                        .replace('{qty}', String(totalQty));
+                                                    previewLines.push(line);
+                                                });
+                                            }
 
-                                    return (
-                                        <div key={index} className="space-y-2 relative">
-                                            {printedIndices.has(index) && (
-                                                <div className="absolute inset-0 bg-green-900 bg-opacity-75 flex items-center justify-center z-10 rounded-lg pointer-events-none">
-                                                    <span className="text-white font-bold text-lg rotate-[-15deg] border-2 border-white px-4 py-1 rounded">IMPRESSO</span>
-                                                </div>
-                                            )}
-                                            <div className="bg-gray-50 dark:bg-gray-700 p-2 rounded-lg shadow-md flex flex-col aspect-[100/150] justify-center items-center overflow-hidden">
-                                                {src === 'SKIPPED' ? (
-                                                    <div className="text-center p-4 text-gray-500">
-                                                        <Eye size={24} className="mx-auto mb-2" />
-                                                        <p className="font-semibold">DANFE Omitida</p>
-                                                        <p className="text-xs">(Modo Rápido)</p>
-                                                    </div>
-                                                ) : src === 'ERROR' ? (
-                                                    <div className="text-red-500 text-center p-4">Erro ao renderizar</div>
-                                                ) : src ? (
-                                                    <img src={src} alt={`Preview ${index + 1}`} className="max-w-full max-h-full object-contain" />
-                                                ) : (
-                                                    <Loader2 className="animate-spin text-gray-400" />
-                                                )}
-                                            </div>
-                                            {isEvenPage && pairData && (
-                                                <div className="text-center font-semibold text-xs text-gray-800 dark:text-gray-100 p-2 border-t mt-1 bg-gray-50 dark:bg-gray-800/50 rounded-b">
-                                                    {pairData.isTikTokShop && (
-                                                        <div className="mb-1">
-                                                            <span className="bg-black text-white text-[9px] font-black px-2 py-0.5 rounded">🎵 TikTok Shop</span>
+                                            return (
+                                                <div key={index} className="space-y-3 relative group animate-in fade-in zoom-in duration-300">
+                                                    {printedIndices.has(index) && (
+                                                        <div className="absolute inset-0 bg-emerald-900/80 backdrop-blur-[2px] flex items-center justify-center z-10 rounded-2xl pointer-events-none border-2 border-emerald-400">
+                                                            <div className="flex flex-col items-center gap-2">
+                                                                <span className="text-white font-black text-2xl rotate-[-15deg] border-4 border-white px-6 py-2 rounded-xl shadow-2xl tracking-tighter uppercase">IMPRESSO</span>
+                                                                <CheckCircle2 size={32} className="text-emerald-300" />
+                                                            </div>
                                                         </div>
                                                     )}
-                                                    {previewLines.length > 0 ? (
-                                                        previewLines.map((line, lIdx) => (
-                                                            <div key={lIdx} className="truncate" title={line}>{line}</div>
-                                                        ))
-                                                    ) : (
-                                                        <p className="text-red-600 font-bold">Sem dados de SKU</p>
+                                                    <div className="bg-gray-50 dark:bg-gray-900 border-2 border-gray-100 dark:border-gray-800 p-3 rounded-2xl shadow-sm group-hover:shadow-xl group-hover:border-blue-200 dark:group-hover:border-blue-900 transition-all flex flex-col aspect-[10/14] justify-center items-center overflow-hidden relative">
+                                                        <div className="absolute top-2 left-2 bg-gray-200/80 dark:bg-gray-700/80 text-[10px] font-black px-2 py-0.5 rounded-full z-10">{index + 1}</div>
+                                                        {src === 'SKIPPED' ? (
+                                                            <div className="text-center p-6 text-gray-400">
+                                                                 <Eye size={32} className="mx-auto mb-3 opacity-20" />
+                                                                 <p className="font-black text-xs uppercase tracking-widest">Página Omitida</p>
+                                                                 <p className="text-[10px] font-bold">Modo Rápido Ativo</p>
+                                                            </div>
+                                                        ) : src === 'ERROR' ? (
+                                                            <div className="text-red-500 text-center p-6 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-100 w-full font-bold text-xs uppercase">Erro de Renderização</div>
+                                                        ) : src ? (
+                                                            <img src={src} alt={`Etiqueta ${index + 1}`} className="max-w-full max-h-full object-contain drop-shadow-md" />
+                                                        ) : (
+                                                            <div className="flex flex-col items-center gap-3">
+                                                                <Loader2 className="animate-spin text-blue-500" size={32} />
+                                                                <p className="text-[10px] font-black uppercase text-gray-400 animate-pulse">Gerando...</p>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    {isEvenPage && pairData && (
+                                                        <div className="text-center font-bold text-[10px] leading-tight text-gray-800 dark:text-gray-200 p-3 border-t-2 border-gray-50 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-800/30 rounded-xl shadow-inner group-hover:bg-blue-50/50 dark:group-hover:bg-blue-900/20 transition-colors">
+                                                            {pairData.isTikTokShop && (
+                                                                <div className="mb-2 flex justify-center">
+                                                                    <span className="bg-black text-white text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-tighter shadow-sm flex items-center gap-1">
+                                                                        <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-pulse" /> TikTok Shop
+                                                                    </span>
+                                                                </div>
+                                                            )}
+                                                            {previewLines.length > 0 ? (
+                                                                <div className="space-y-1">
+                                                                    {previewLines.map((line, lIdx) => (
+                                                                        <div key={lIdx} className="truncate uppercase tracking-tight" title={line}>{line}</div>
+                                                                    ))}
+                                                                </div>
+                                                            ) : (
+                                                                <p className="text-red-600 dark:text-red-400 font-black uppercase italic tracking-tighter scale-90">SKUs Não Identificadas</p>
+                                                            )}
+                                                        </div>
                                                     )}
                                                 </div>
-                                            )}
-                                            <p className="text-xs text-center text-gray-500 dark:text-gray-400">Página {index + 1}</p>
-                                        </div>
-                                    );
-                                })}
-                                </div>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     )}
                 </div>
+                <div className="w-full md:w-1/3 lg:w-1/4 flex flex-col gap-6">
+                    {/* ── Unificadores de Lote ── */}
+                    {showUnificadores && (
+                        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-sm overflow-hidden animate-in slide-in-from-right-4 duration-300">
+                            <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700 flex justify-between items-center">
+                                <h2 className="text-sm font-black text-gray-900 dark:text-gray-50 uppercase tracking-tight flex items-center gap-2">
+                                    <Zap size={16} className="text-blue-600" /> Unificadores de Lote
+                                </h2>
+                                <button 
+                                    onClick={() => setEtiquetasState(p => ({ ...p, showUnificadores: false }))}
+                                    className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                                >
+                                    <X size={14} />
+                                </button>
+                            </div>
+                            <div className="p-4 space-y-4">
+                                {/* Unificador por Texto */}
+                                <div>
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 shadow-sm block">Unificar por Texto (ZPL)</label>
+                                    <textarea 
+                                        value={zplInput}
+                                        onChange={(e) => setEtiquetasState(p => ({ ...p, zplInput: e.target.value }))}
+                                        placeholder="Cole múltiplos ZPLs aqui..."
+                                        className="w-full h-24 p-3 border border-gray-200 dark:border-gray-700 rounded-lg font-mono text-[10px] bg-slate-50 dark:bg-gray-900 focus:border-blue-500 outline-none resize-none"
+                                    />
+                                    <button 
+                                        onClick={() => {
+                                            const count = (zplInput.match(/\^XA/gi) || []).length;
+                                            if (count === 0) return addToast("Nenhum ZPL detectado", "warning");
+                                            const newItem: PendingZplItem = {
+                                                id: crypto.randomUUID(),
+                                                loteId: `TEXT-${Date.now()}`,
+                                                zplContent: zplInput,
+                                                labelCount: count,
+                                                timestamp: new Date().toISOString(),
+                                                source: 'manual',
+                                                descricao: `Unificação via texto (${count} etiquetas)`
+                                            };
+                                            const current = loadPendingZpl();
+                                            localStorage.setItem('pendingZpl', JSON.stringify([newItem, ...current]));
+                                            window.dispatchEvent(new Event('pendingZplChanged'));
+                                            setEtiquetasState(p => ({ ...p, zplInput: '' }));
+                                            addToast("Lote adicionado à fila!", "success");
+                                        }}
+                                        disabled={!zplInput.trim()}
+                                        className="w-full mt-2 py-2 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black uppercase rounded-lg transition-all disabled:opacity-50"
+                                    >
+                                        Unificar Texto
+                                    </button>
+                                </div>
 
-                <div className="w-full md:w-1/3 lg:w-1/4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-sm flex flex-col overflow-hidden">
-                    {/* header */}
-                    <div className="flex-shrink-0 px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700">
-                        <div className="flex items-center gap-2 mb-3">
-                            <History size={16} className="text-blue-600 dark:text-blue-400" />
-                            <h2 className="text-sm font-black text-gray-900 dark:text-gray-50 uppercase tracking-tight">Histórico de Impressões</h2>
+                                <div className="border-t border-gray-100 dark:border-gray-700 pt-4">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Unificar por Arquivo (ZPL/PDF)</label>
+                                    <input 
+                                        type="file" 
+                                        ref={unifierInputRef} 
+                                        onChange={handleFileUploadUnify} 
+                                        multiple 
+                                        accept=".zpl,.txt,.pdf" 
+                                        className="hidden" 
+                                    />
+                                    <button 
+                                        onClick={() => unifierInputRef.current?.click()}
+                                        className="w-full py-3 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg hover:border-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-all group flex flex-col items-center justify-center gap-2"
+                                    >
+                                        <File size={20} className="text-gray-400 group-hover:text-blue-500" />
+                                        <span className="text-[10px] font-black text-gray-400 group-hover:text-blue-600 uppercase">Selecionar Arquivos</span>
+                                    </button>
+                                    <p className="text-[9px] text-gray-400 mt-2 text-center">Suporta múltiplos .zpl, .txt ou .pdf</p>
+                                </div>
+                            </div>
                         </div>
-                        {/* stats cards */}
-                        <div className="grid grid-cols-3 gap-2">
-                            <div className="bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700 text-center">
-                                <p className="text-lg font-black text-blue-600 dark:text-blue-400">{histStats.totalRegistros}</p>
-                                <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">Registros</p>
+                    )}
+
+                    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-sm flex flex-col overflow-hidden">
+                        {/* header */}
+                        <div className="flex-shrink-0 px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700">
+                            <div className="flex items-center gap-2 mb-3">
+                                <History size={16} className="text-blue-600 dark:text-blue-400" />
+                                <h2 className="text-sm font-black text-gray-900 dark:text-gray-50 uppercase tracking-tight">Histórico de Impressões</h2>
                             </div>
-                            <div className="bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700 text-center">
-                                <p className="text-lg font-black text-emerald-600">{histStats.totalPaginas}</p>
-                                <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">Pág. Total</p>
-                            </div>
-                            <div className="bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700 text-center">
-                                <p className="text-lg font-black text-amber-600">{histStats.hojePaginas}</p>
-                                <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">Pág. Hoje</p>
+                            {/* stats cards */}
+                            <div className="grid grid-cols-3 gap-2">
+                                <div className="bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700 text-center">
+                                    <p className="text-lg font-black text-blue-600 dark:text-blue-400">{histStats.totalRegistros}</p>
+                                    <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">Registros</p>
+                                </div>
+                                <div className="bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700 text-center">
+                                    <p className="text-lg font-black text-emerald-600">{histStats.totalPaginas}</p>
+                                    <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">Pág. Total</p>
+                                </div>
+                                <div className="bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700 text-center">
+                                    <p className="text-lg font-black text-amber-600">{histStats.hojePaginas}</p>
+                                    <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">Pág. Hoje</p>
+                                </div>
                             </div>
                         </div>
-                    </div>
-                    {/* list */}
-                    <div className="overflow-y-auto flex-grow p-3">
-                        {etiquetasHistory.length === 0 ? (
-                            <div className="flex flex-col items-center justify-center py-10 text-gray-500 dark:text-gray-400">
-                                <LayoutList size={28} className="mb-2 opacity-30" />
-                                <p className="text-sm">Nenhum histórico encontrado.</p>
-                            </div>
-                        ) : (() => {
-                            const today = new Date().toDateString();
-                            const sorted = [...etiquetasHistory].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-                            const todayItems = sorted.filter(h => new Date(h.created_at).toDateString() === today);
-                            const olderItems = sorted.filter(h => new Date(h.created_at).toDateString() !== today);
-                            const renderItem = (item: typeof etiquetasHistory[0]) => {
-                                const initials = (item.created_by_name ?? 'U').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
-                                const ts = new Date(item.created_at);
-                                const now = Date.now();
-                                const diffMs = now - ts.getTime();
-                                const diffMins = Math.floor(diffMs / 60000);
-                                const relTime = diffMins < 1 ? 'agora mesmo'
-                                    : diffMins < 60 ? `há ${diffMins}min`
-                                        : diffMins < 1440 ? `há ${Math.floor(diffMins / 60)}h`
-                                            : ts.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                        {/* list */}
+                        <div className="overflow-y-auto flex-grow p-3">
+                            {etiquetasHistory.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center py-10 text-gray-500 dark:text-gray-400">
+                                    <LayoutList size={28} className="mb-2 opacity-30" />
+                                    <p className="text-sm">Nenhum histórico encontrado.</p>
+                                </div>
+                            ) : (() => {
+                                const today = new Date().toDateString();
+                                const sorted = [...etiquetasHistory].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+                                const todayItems = sorted.filter(h => new Date(h.created_at).toDateString() === today);
+                                const olderItems = sorted.filter(h => new Date(h.created_at).toDateString() !== today);
+                                const renderItem = (item: typeof etiquetasHistory[0]) => {
+                                    const initials = (item.created_by_name ?? 'U').split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+                                    const ts = new Date(item.created_at);
+                                    const now = Date.now();
+                                    const diffMs = now - ts.getTime();
+                                    const diffMins = Math.floor(diffMs / 60000);
+                                    const relTime = diffMins < 1 ? 'agora mesmo'
+                                        : diffMins < 60 ? `há ${diffMins}min`
+                                            : diffMins < 1440 ? `há ${Math.floor(diffMins / 60)}h`
+                                                : ts.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                                    return (
+                                        <div key={item.id} className="bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-700 p-3 mb-2 hover:border-blue-600 dark:border-blue-500 transition-colors">
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <div className="w-7 h-7 rounded-full bg-blue-600 dark:bg-blue-500 text-white flex items-center justify-center text-[10px] font-black flex-shrink-0">
+                                                    {initials}
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="font-semibold text-xs text-gray-900 dark:text-gray-50 truncate">{item.created_by_name}</p>
+                                                    <p className="text-[10px] text-gray-500 dark:text-gray-400">{relTime}</p>
+                                                </div>
+                                                <span className="flex-shrink-0 bg-blue-100 text-blue-700 text-[9px] font-black px-1.5 py-0.5 rounded-full border border-blue-200">
+                                                    {item.page_count} pág
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center gap-1 mb-2">
+                                                <CalendarDays size={10} className="text-gray-500 dark:text-gray-400" />
+                                                <p className="text-[10px] text-gray-500 dark:text-gray-400">{ts.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
+                                            </div>
+                                            <button
+                                                onClick={() => handleReloadHistory(item)}
+                                                className="w-full px-3 py-1.5 text-[10px] font-black uppercase bg-blue-600 dark:bg-blue-500 text-white rounded-md hover:opacity-90 transition-all flex items-center justify-center gap-1"
+                                            >
+                                                <History size={10} /> Recarregar ZPL
+                                            </button>
+                                        </div>
+                                    );
+                                };
                                 return (
-                                    <div key={item.id} className="bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-700 p-3 mb-2 hover:border-blue-600 dark:border-blue-500 transition-colors">
-                                        <div className="flex items-center gap-2 mb-2">
-                                            <div className="w-7 h-7 rounded-full bg-blue-600 dark:bg-blue-500 text-white flex items-center justify-center text-[10px] font-black flex-shrink-0">
-                                                {initials}
+                                    <>
+                                        {todayItems.length > 0 && (
+                                            <div className="mb-3">
+                                                <p className="text-[10px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                                                    Hoje ({todayItems.length})
+                                                </p>
+                                                {todayItems.map(renderItem)}
                                             </div>
-                                            <div className="min-w-0 flex-1">
-                                                <p className="font-semibold text-xs text-gray-900 dark:text-gray-50 truncate">{item.created_by_name}</p>
-                                                <p className="text-[10px] text-gray-500 dark:text-gray-400">{relTime}</p>
+                                        )}
+                                        {olderItems.length > 0 && (
+                                            <div>
+                                                <p className="text-[10px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                                                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400 inline-block" />
+                                                    Anteriores ({olderItems.length})
+                                                </p>
+                                                {olderItems.map(renderItem)}
                                             </div>
-                                            <span className="flex-shrink-0 bg-blue-100 text-blue-700 text-[9px] font-black px-1.5 py-0.5 rounded-full border border-blue-200">
-                                                {item.page_count} pág
-                                            </span>
-                                        </div>
-                                        <div className="flex items-center gap-1 mb-2">
-                                            <CalendarDays size={10} className="text-gray-500 dark:text-gray-400" />
-                                            <p className="text-[10px] text-gray-500 dark:text-gray-400">{ts.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
-                                        </div>
-                                        <button
-                                            onClick={() => handleReloadHistory(item)}
-                                            className="w-full px-3 py-1.5 text-[10px] font-black uppercase bg-blue-600 dark:bg-blue-500 text-white rounded-md hover:opacity-90 transition-all flex items-center justify-center gap-1"
-                                        >
-                                            <History size={10} /> Recarregar ZPL
-                                        </button>
-                                    </div>
+                                        )}
+                                    </>
                                 );
-                            };
-                            return (
-                                <>
-                                    {todayItems.length > 0 && (
-                                        <div className="mb-3">
-                                            <p className="text-[10px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-                                                Hoje ({todayItems.length})
-                                            </p>
-                                            {todayItems.map(renderItem)}
-                                        </div>
-                                    )}
-                                    {olderItems.length > 0 && (
-                                        <div>
-                                            <p className="text-[10px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-2 flex items-center gap-1.5">
-                                                <span className="w-1.5 h-1.5 rounded-full bg-slate-400 inline-block" />
-                                                Anteriores ({olderItems.length})
-                                            </p>
-                                            {olderItems.map(renderItem)}
-                                        </div>
-                                    )}
-                                </>
-                            );
-                        })()}
+                            })()}
+                        </div>
                     </div>
+
+                    <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} currentSettings={settings} onSave={onSettingsSave} previews={previews} extractedData={extractedData} />
+                    <LinkSkuModal isOpen={linkModalState.isOpen} onClose={() => setLinkModalState({ isOpen: false, skus: [], color: '' })} skusToLink={linkModalState.skus} colorSugerida={linkModalState.color} onConfirmLink={handleConfirmLink} products={stockItems.filter(i => i.kind === 'PRODUTO' || i.kind === 'PROCESSADO')} skuLinks={skuLinks} onTriggerCreate={() => { setLinkModalState(p => ({ ...p, isOpen: false })); setCreateModalState({ isOpen: true, data: { sku: linkModalState.skus[0], colorSugerida: linkModalState.color } }); }} />
+                    <CreateProductFromImportModal isOpen={createModalState.isOpen} onClose={() => setCreateModalState({ isOpen: false, data: null })} unlinkedSkuData={createModalState.data ? { skus: [createModalState.data.sku], colorSugerida: createModalState.data.colorSugerida } : null} onConfirm={handleConfirmCreateAndLink} generalSettings={generalSettings} />
+                    <ZplMergerModal 
+                        isOpen={isMergerModalOpen}
+                        onClose={() => setIsMergerModalOpen(false)}
+                        selectedZpls={pendingItems.filter(i => selectedPendingIds.has(i.id)).map(i => i.zplContent)}
+                        onConfirm={handleConfirmMerge}
+                        addToast={addToast}
+                    />
+                    
+                    <ModeZplModal 
+                        isOpen={isModeModalOpen} 
+                        onClose={() => setIsModeModalOpen(false)} 
+                        onSelect={(mode) => {
+                            setIsModeModalOpen(false);
+                            onProcessZpl(mode);
+                        }} 
+                    />
                 </div>
             </div>
-            <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} currentSettings={settings} onSave={onSettingsSave} previews={previews} extractedData={extractedData} />
-            <LinkSkuModal isOpen={linkModalState.isOpen} onClose={() => setLinkModalState({ isOpen: false, skus: [], color: '' })} skusToLink={linkModalState.skus} colorSugerida={linkModalState.color} onConfirmLink={handleConfirmLink} products={stockItems.filter(i => i.kind === 'PRODUTO' || i.kind === 'PROCESSADO')} skuLinks={skuLinks} onTriggerCreate={() => { setLinkModalState(p => ({ ...p, isOpen: false })); setCreateModalState({ isOpen: true, data: { sku: linkModalState.skus[0], colorSugerida: linkModalState.color } }); }} />
-            <CreateProductFromImportModal isOpen={createModalState.isOpen} onClose={() => setCreateModalState({ isOpen: false, data: null })} unlinkedSkuData={createModalState.data ? { skus: [createModalState.data.sku], colorSugerida: createModalState.data.colorSugerida } : null} onConfirm={handleConfirmCreateAndLink} generalSettings={generalSettings} />
-            <ProcessingModeModal isOpen={isModeModalOpen} onClose={() => setIsModeModalOpen(false)} onSelectMode={startProcessing} />
         </>
     );
-}
+};
 
 export default EtiquetasPage;

@@ -28,6 +28,8 @@ interface LogObj {
   situacaoNome: string;
   loja: string;
   dataCriacao: string;
+  prazoEntrega: string;
+  quantidade: number; // Qtd de itens no pedido
   raw: any;
 }
 
@@ -99,6 +101,8 @@ function mapObj(obj: any): LogObj {
     situacaoNome,
     loja: obj.pedidoLoja?.origem || obj.loja?.descricao || obj.loja?.nome || "—",
     dataCriacao: obj.dataCriacao || "",
+    prazoEntrega: obj.prazoEntrega || "",
+    quantidade: obj.itens?.reduce((acc: number, item: any) => acc + (item.quantidade || 0), 0) || 0,
     raw: obj,
   };
 }
@@ -148,6 +152,9 @@ export const AbaLogistica: React.FC<Props> = ({ token, addToast, startDate, endD
   // ── History ──
   const [historico, setHistorico] = useState<HistoricoEtiq[]>(loadHistorico);
   const [activeView, setActiveView] = useState<"lista" | "historico">("lista");
+  const [remessasExistentes, setRemessasExistentes] = useState<any[]>([]);
+  const [selectedRemessaId, setSelectedRemessaId] = useState<string>("");
+  const [isAddingToRemessa, setIsAddingToRemessa] = useState(false);
 
   // ── Operations ──
   const [isGenerating, setIsGenerating] = useState(false);
@@ -212,7 +219,25 @@ export const AbaLogistica: React.FC<Props> = ({ token, addToast, startDate, endD
     }
   }, [token, startDate, endDate, addToast]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  const fetchRemessas = useCallback(async () => {
+    if (!token) return;
+    try {
+      const resp = await fetch("/api/bling/logisticas/remessas?limite=50", {
+        headers: { Authorization: authH }
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setRemessasExistentes(data?.data || []);
+      }
+    } catch (err) {
+      console.error("Erro ao buscar remessas:", err);
+    }
+  }, [token, authH]);
+
+  useEffect(() => { 
+    fetchAll();
+    fetchRemessas();
+  }, [fetchAll, fetchRemessas]);
 
   // ─── Filtered + sorted list ───────────────────────────────────────────────
 
@@ -429,6 +454,38 @@ export const AbaLogistica: React.FC<Props> = ({ token, addToast, startDate, endD
     setGenProgress(null);
     clearSelection();
     addToast(`${errors === 0 ? "✅" : "⚠️"} ${totalRemessas} remessa(s) criada(s)${errors ? `, ${errors} erro(s)` : ""}.`, errors ? "warning" : "success");
+    fetchRemessas();
+  };
+
+  const handleAdicionarObjetosRemessa = async () => {
+    if (selectedIds.size === 0) { addToast("Selecione objetos para adicionar.", "warning"); return; }
+    if (!selectedRemessaId) { addToast("Selecione uma remessa existente.", "warning"); return; }
+    if (!token) return;
+
+    const selecionados = filtered.filter(o => selectedIds.has(o.id));
+    setIsAddingToRemessa(true);
+
+    try {
+      const body = { objetos: selecionados.map(o => ({ id: o.id })) };
+      const resp = await fetch(`/api/bling/logisticas/remessas/${selectedRemessaId}/objetos`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: authH },
+        body: JSON.stringify(body),
+      });
+
+      if (resp.ok) {
+        addToast(`✅ Objetos adicionados à remessa ${selectedRemessaId} com sucesso!`, "success");
+        clearSelection();
+        setSelectedRemessaId("");
+      } else {
+        const err = await resp.json();
+        addToast(`Erro ao adicionar: ${err.error || "Erro desconhecido"}`, "error");
+      }
+    } catch (e: any) {
+      addToast(`Erro de conexão: ${e.message}`, "error");
+    } finally {
+      setIsAddingToRemessa(false);
+    }
   };
 
   // ─── Batch: get PDF from Bling ─────────────────────────────────────────────
@@ -575,6 +632,35 @@ export const AbaLogistica: React.FC<Props> = ({ token, addToast, startDate, endD
                 <option key={t.id} value={String(t.id)}>{t.nome}</option>
               ))}
             </select>
+          </div>
+
+          {/* Adicionar a Remessa Existente */}
+          <div className="flex flex-col gap-1 lg:col-span-2">
+            <label className="text-[9px] font-black text-blue-500 uppercase tracking-widest flex items-center gap-1">
+              <Box size={9} /> Add a Remessa Existente
+            </label>
+            <div className="flex gap-1">
+              <select
+                value={selectedRemessaId}
+                onChange={e => setSelectedRemessaId(e.target.value)}
+                className="flex-1 border-2 border-blue-50 rounded-xl px-2 py-1.5 text-[10px] font-bold bg-blue-50/50 outline-none focus:border-blue-400"
+              >
+                <option value="">Selecionar Remessa...</option>
+                {remessasExistentes.map(r => (
+                  <option key={r.id} value={r.id}>
+                    #{r.id} ({r.situacao === 0 ? 'Aberta' : 'Fechada'}) - {fmtDate(r.dataCriacao)}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={handleAdicionarObjetosRemessa}
+                disabled={isAddingToRemessa || !selectedRemessaId || selectedIds.size === 0}
+                className="px-3 py-1.5 bg-blue-600 text-white text-[10px] font-black uppercase rounded-xl hover:bg-blue-700 disabled:opacity-50 transition-all flex items-center gap-1 shrink-0 shadow-lg shadow-blue-100"
+              >
+                {isAddingToRemessa ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                Add
+              </button>
+            </div>
           </div>
 
           {/* Loja */}
@@ -820,6 +906,9 @@ export const AbaLogistica: React.FC<Props> = ({ token, addToast, startDate, endD
                             <span className="text-slate-300 italic text-[10px]">sem rastreio</span>
                           )}
                         </td>
+                        <td className="px-4 py-4 border-b border-slate-50 text-center font-black text-slate-700 text-xs">
+                          {obj.quantidade}
+                        </td>
                         <td className="px-3 py-2.5 text-[11px] text-slate-600">
                           <div>{obj.servico}</div>
                           <div className="text-[10px] text-slate-400">{obj.transportadora}</div>
@@ -913,7 +1002,8 @@ export const AbaLogistica: React.FC<Props> = ({ token, addToast, startDate, endD
                   <tr className="bg-slate-50 border-b">
                     <th className="px-4 py-3 text-left font-black text-slate-500 uppercase tracking-widest text-[10px]">Data/Hora</th>
                     <th className="px-4 py-3 text-left font-black text-slate-500 uppercase tracking-widest text-[10px]"># Pedido</th>
-                    <th className="px-4 py-3 text-left font-black text-slate-500 uppercase tracking-widest text-[10px]">NF-e</th>
+                    <th className="px-4 py-3 text-left font-black text-slate-500 uppercase tracking-widest text-[10px]">NF-e / Pedido</th>
+                    <th className="px-4 py-3 text-center font-black text-slate-500 uppercase tracking-widest text-[10px]">Qtd</th>
                     <th className="px-4 py-3 text-left font-black text-slate-500 uppercase tracking-widest text-[10px]">Transportadora</th>
                     <th className="px-4 py-3 text-left font-black text-slate-500 uppercase tracking-widest text-[10px]">Tipo</th>
                     <th className="px-4 py-3 text-center font-black text-slate-500 uppercase tracking-widest text-[10px]">Baixar</th>

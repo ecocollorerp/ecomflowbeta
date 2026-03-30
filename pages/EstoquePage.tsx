@@ -344,6 +344,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
     const [transferState, setTransferState] = useState<{ sku: string, currentMaster: StockItem } | null>(null);
     const [showOnlyWithoutBom, setShowOnlyWithoutBom] = useState(false);
     const [viewModePacks, setViewModePacks] = useState<'list' | 'grid'>('grid');
+    const [viewModeHistoryPacks, setViewModeHistoryPacks] = useState<'card' | 'list'>('card');
     const [selectedPacks, setSelectedPacks] = useState<string[]>([]);
 
     const [packGroupColumnsExist, setPackGroupColumnsExist] = useState(false);
@@ -385,25 +386,29 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
         await loadPackGroups();
     };
 
-    // Movimentação de estoque volátil (entrada/saída)
-    const handleVolatilMovement = async (groupId: string, delta: number, ref: string) => {
+    // Movimentação de estoque volátil em lote (corrigindo bug de "salva apenas 1")
+    const handleVolatilMovementAll = async (groupId: string, entries: { skuCode: string, delta: number }[], ref: string) => {
         const group = packGroups.find(g => g.id === groupId);
         if (!group) return;
 
-        const newQty = Math.max(0, (group.quantidade_volatil || 0) + delta);
+        const totalDelta = entries.reduce((sum, e) => sum + e.delta, 0);
+        const newQty = Math.max(0, (group.quantidade_volatil || 0) + totalDelta);
 
-        // Atualiza quantidade no grupo
+        // 1. Atualiza quantidade total no grupo (uma única vez)
         await dbClient.from('stock_pack_groups').update({ quantidade_volatil: newQty }).eq('id', groupId);
 
-        // Registra movimento no histórico
-        await dbClient.from('stock_movements').insert({
-            stock_item_code: `PACK:${group.name}`,
-            movement_type: delta > 0 ? 'ENTRADA' : 'SAIDA',
-            quantity: Math.abs(delta),
-            reference: ref || (delta > 0 ? 'Entrada manual volátil' : 'Saída manual volátil'),
-            previous_qty: group.quantidade_volatil || 0,
-            new_qty: newQty,
-        });
+        // 2. Registra todos os movimentos no histórico
+        const movementsToInsert = entries.map(entry => ({
+            stock_item_code: entry.skuCode,
+            stock_item_name: group.name,
+            origin: entry.delta > 0 ? 'ENTRADA_PACOTE' : 'SAIDA_PACOTE',
+            qty_delta: entry.delta,
+            ref: ref || (entry.delta > 0 ? 'Entrada manual volátil' : 'Saída manual volátil'),
+            product_sku: entry.skuCode,
+            created_by_name: currentUser?.name || 'Sistema'
+        }));
+
+        await dbClient.from('stock_movements').insert(movementsToInsert);
 
         await loadPackGroups();
     };
@@ -689,15 +694,17 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
 
             totalGeral += currentTotal;
 
-            // Tenta detectar o tamanho do pacote pelo nome ou min_pack_qty
-            let size = 1;
-            const nameMatch = group.name.match(/(\d+)\s*un/i);
-            if (nameMatch) {
-                size = parseInt(nameMatch[1], 10);
-            } else if (group.name.toLowerCase().includes('duplo') || group.name.toLowerCase().includes('par')) {
-                size = 2;
-            } else if (group.min_pack_qty > 1) {
-                size = group.min_pack_qty;
+            // Tenta detectar o tamanho do pacote pelo campo pack_size, nome ou min_pack_qty
+            let size = group.pack_size || 1;
+            if (!group.pack_size) {
+                const nameMatch = group.name.match(/(\d+)\s*un/i);
+                if (nameMatch) {
+                    size = parseInt(nameMatch[1], 10);
+                } else if (group.name.toLowerCase().includes('duplo') || group.name.toLowerCase().includes('par')) {
+                    size = 2;
+                } else if (group.min_pack_qty > 1) {
+                    size = group.min_pack_qty;
+                }
             }
 
             // Soma no breakdown por tamanho
@@ -729,7 +736,11 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
             .map(([size, total]) => ({ size, total }))
             .sort((a, b) => a.size - b.size);
 
-        const packMovements = stockMovements.filter(m => m.stockItemCode?.startsWith('PACK:'));
+        const packMovements = stockMovements.filter(m => 
+            m.stockItemCode?.startsWith('PACK:') || 
+            m.origin === 'ENTRADA_PACOTE' || 
+            m.origin === 'SAIDA_PACOTE'
+        );
 
         // Agrupar por setor (usando o setor do usuário que criou o log)
         const setorMap = new Map<string, { entradas: number, saidas: number }>();
@@ -874,9 +885,9 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
         yPos += 10;
 
         const itensData = relatorioProdutosProntos.individuais.map(i => {
-            const numPacks = i.size > 0 ? (i.total / i.size).toFixed(0) : i.total.toString();
-            const formatado = i.size > 1 ? `${numPacks} de ${i.size}` : `${i.total} UN`;
-            return [i.nome, i.sku, `Pacote ${i.size} UN`, formatado];
+            const numPacks = i.size > 0 ? (i.total / i.size).toFixed(1) : i.total.toString();
+            const formatado = i.size > 1 ? `${numPacks} fardos de ${i.size}` : `${i.total} UN`;
+            return [i.nome, i.sku, `Tam: ${i.size} UN`, formatado];
         });
         autoTable(doc, {
             startY: yPos,
@@ -1021,6 +1032,39 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                             </div>
                         </div>
 
+                        {/* NOVO: Resumo Consolidado por SKU (Cores) - Atendendo solicitação de visão geral de cada cor */}
+                        <div className="bg-white p-6 rounded-2xl border border-blue-100 shadow-sm mb-6">
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                    <Layers size={16} className="text-blue-500" /> Resumo Consolidado por SKU (Cores)
+                                </h3>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-lg">
+                                        {relatorioProdutosProntos.individuais.length} Itens Detectados
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+                                {relatorioProdutosProntos.individuais.map((item: any) => (
+                                    <div key={`${item.sku}-${item.size}`} className="bg-slate-50 p-3 rounded-xl border border-slate-100 hover:border-blue-200 transition-all group">
+                                        <p className="text-[10px] font-black text-slate-800 uppercase truncate group-hover:text-blue-600">{item.nome}</p>
+                                        <div className="flex justify-between items-baseline mt-1">
+                                            <span className="text-[9px] font-bold text-slate-400 truncate mr-1">{item.sku}</span>
+                                            <span className="text-sm font-black text-blue-700">{item.total} <span className="text-[8px] opacity-50">UN</span></span>
+                                        </div>
+                                        {item.size > 1 && (
+                                            <p className="text-[8px] font-bold text-slate-400 mt-1">
+                                                ~ {(item.total / item.size).toFixed(1)} fardos ({item.size})
+                                            </p>
+                                        )}
+                                    </div>
+                                ))}
+                                {relatorioProdutosProntos.individuais.length === 0 && (
+                                    <p className="col-span-full text-center py-4 text-xs text-slate-400 italic">Nenhum dado consolidado disponível.</p>
+                                )}
+                            </div>
+                        </div>
+
                         {/* Controles de Visualização e Filtro */}
                         <div className="flex justify-between items-center bg-white p-4 rounded-xl border mb-4">
                             <div className="flex gap-2">
@@ -1075,14 +1119,17 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                             <div className="flex justify-between items-start mb-4">
                                                 <div className="flex-1">
                                                     <div className="flex items-center gap-2 mb-1">
-                                                        <h3 className="font-black text-slate-800 uppercase tracking-tighter">{group.name}</h3>
+                                                        <h3 className="font-black text-slate-800 uppercase tracking-tighter text-lg">{group.name}</h3>
                                                         <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest ${isVolatil ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
                                                             }`}>
                                                             {isVolatil ? '⚡ Volátil' : '📊 Tradicional'}
                                                         </span>
                                                     </div>
-                                                    <p className="text-[10px] font-bold text-gray-400 mt-1 uppercase">Monitorando {group.item_codes.length} SKUs</p>
-                                                    {group.barcode && <p className="text-[9px] font-mono font-bold text-slate-500 mt-1 bg-white inline-block px-1 rounded border border-slate-200">{group.barcode}</p>}
+                                                    <div className="flex flex-wrap gap-2 mt-2">
+                                                        <p className="text-[10px] font-bold text-gray-500 uppercase bg-gray-100 px-2 py-1 rounded-lg">📦 Tamanho: {group.pack_size || 1} UN</p>
+                                                        <p className="text-[10px] font-bold text-gray-400 uppercase py-1">Monitorando {group.item_codes.length} SKUs</p>
+                                                    </div>
+                                                    {group.barcode && <p className="text-[9px] font-mono font-bold text-slate-500 mt-2 bg-white inline-block px-1 rounded border border-slate-200">{group.barcode}</p>}
                                                 </div>
                                                 <div className="flex gap-1">
 
@@ -1208,12 +1255,35 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                                         <div className="flex flex-col">
                                                             <span className={`text-sm font-black ${isBelowMin ? 'text-red-600' : 'text-emerald-600'}`}>{currentTotal.toFixed(0)} UN</span>
                                                             {(() => {
-                                                                let size = 1;
-                                                                const nameMatch = group.name.match(/(\d+)\s*un/i);
-                                                                if (nameMatch) size = parseInt(nameMatch[1], 10);
-                                                                else if (group.name.toLowerCase().includes('duplo') || group.name.toLowerCase().includes('par')) size = 2;
+                                                                const size = group.pack_size || 1;
                                                                 if (size > 1) return <span className="text-[10px] text-slate-400 font-bold">({(currentTotal / size).toFixed(1)} de {size})</span>;
                                                                 return null;
+                                                            })()}
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <div className="flex items-center justify-center gap-4">
+                                                            {(() => {
+                                                                const hojeStr = new Date().toISOString().split('T')[0];
+                                                                const movs = relatorioProdutosProntos.packMovements.filter(m => 
+                                                                    m.createdAt.toString().startsWith(hojeStr) && 
+                                                                    (m.stockItemCode === `PACK:${group.id}` || m.stockItemCode === `PACK:${group.name}`)
+                                                                );
+                                                                const e = movs.filter(m => m.qty_delta > 0).reduce((s, m) => s + m.qty_delta, 0);
+                                                                const s = movs.filter(m => m.qty_delta < 0).reduce((s, m) => s + Math.abs(m.qty_delta), 0);
+                                                                
+                                                                return (
+                                                                    <>
+                                                                        <div className="flex flex-col items-center">
+                                                                            <span className="text-[9px] font-black text-emerald-500 uppercase">Ent</span>
+                                                                            <span className="text-xs font-bold text-emerald-700">{e}</span>
+                                                                        </div>
+                                                                        <div className="flex flex-col items-center">
+                                                                            <span className="text-[9px] font-black text-red-500 uppercase">Sai</span>
+                                                                            <span className="text-xs font-bold text-red-700">{s}</span>
+                                                                        </div>
+                                                                    </>
+                                                                );
                                                             })()}
                                                         </div>
                                                     </td>
@@ -1246,6 +1316,96 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                 </table>
                             </div>
                         )}
+                        {/* Histórico de Movimentações (Modo Lista solicitado) */}
+                        <div className="pt-6 border-t border-slate-100">
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                    <History size={16} /> Histórico de Movimentações (Pacotes)
+                                </h3>
+                                <div className="flex bg-slate-100 p-1 rounded-xl">
+                                    <button
+                                        onClick={() => setViewModeHistoryPacks('card')}
+                                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${viewModeHistoryPacks === 'card' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}
+                                    >
+                                        Cards
+                                    </button>
+                                    <button
+                                        onClick={() => setViewModeHistoryPacks('list')}
+                                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${viewModeHistoryPacks === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500'}`}
+                                    >
+                                        Lista
+                                    </button>
+                                </div>
+                            </div>
+
+                            {viewModeHistoryPacks === 'card' ? (
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    {relatorioProdutosProntos.packMovements.slice(0, 12).map((m: any) => (
+                                        <div key={m.id} className="bg-slate-50 p-4 rounded-xl border border-slate-100 relative overflow-hidden">
+                                            <div className={`absolute top-0 right-0 w-1 h-full ${m.qty_delta > 0 ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                                            <div className="flex justify-between items-start mb-2">
+                                                <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${m.qty_delta > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                                    {m.qty_delta > 0 ? 'Entrada' : 'Saída'}
+                                                </span>
+                                                <span className="text-[10px] text-gray-400 font-bold">{new Date(m.createdAt).toLocaleString()}</span>
+                                            </div>
+                                            <p className="text-xs font-black text-slate-700 uppercase mb-1">{m.stockItemName || m.stockItemCode}</p>
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-[10px] font-bold text-slate-400">{m.createdBy || 'Sistema'}</span>
+                                                <span className={`text-lg font-black ${m.qty_delta > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                    {m.qty_delta > 0 ? '+' : ''}{m.qty_delta} UN
+                                                </span>
+                                            </div>
+                                            {m.ref && <p className="text-[9px] text-gray-400 mt-2 font-mono italic">Ref: {m.ref}</p>}
+                                        </div>
+                                    ))}
+                                    {relatorioProdutosProntos.packMovements.length === 0 && (
+                                        <p className="col-span-full text-center py-8 text-sm text-gray-400 font-bold italic">Nenhuma movimentação de pacote registrada ainda.</p>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="bg-white border text-center border-slate-100 rounded-2xl overflow-hidden">
+                                    <table className="w-full text-left text-xs">
+                                        <thead className="bg-slate-50 border-b">
+                                            <tr className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                                                <th className="px-4 py-3">Data</th>
+                                                <th className="px-4 py-3">Item / Pacote</th>
+                                                <th className="px-4 py-3">Tipo</th>
+                                                <th className="px-4 py-3 text-center">Quantidade</th>
+                                                <th className="px-4 py-3">Operador</th>
+                                                <th className="px-4 py-3">Referência</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100">
+                                            {relatorioProdutosProntos.packMovements.slice(0, 30).map((m: any) => (
+                                                <tr key={m.id} className="hover:bg-slate-50 transition-colors">
+                                                    <td className="px-4 py-3 font-bold text-gray-500">{new Date(m.created_at || m.createdAt).toLocaleString()}</td>
+                                                    <td className="px-4 py-3 font-black text-slate-700 uppercase">{m.stock_item_name || m.stock_item_code || m.stockItemName}</td>
+                                                    <td className="px-4 py-3">
+                                                        <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${m.qty_delta > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                                            {m.qty_delta > 0 ? 'Entrada' : 'Saída'}
+                                                        </span>
+                                                    </td>
+                                                    <td className={`px-4 py-3 text-center font-black text-sm ${m.qty_delta > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                        {m.qty_delta > 0 ? '+' : ''}{m.qty_delta}
+                                                    </td>
+                                                    <td className="px-4 py-2 text-gray-400">
+                                                        <div className="text-[10px] font-bold">{m.created_by_name || m.createdBy || 'Sistema'}</div>
+                                                        <div className="text-[8px] opacity-70">{m.origin}</div>
+                                                    </td>
+                                                    <td className="px-4 py-3 font-mono text-[10px] text-gray-400">{m.ref || '—'}</td>
+                                                </tr>
+                                            ))}
+                                            {relatorioProdutosProntos.packMovements.length === 0 && (
+                                                <tr>
+                                                    <td colSpan={6} className="px-4 py-8 text-center text-gray-400 font-bold italic">Nenhuma movimentação registrada.</td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 );
             case 'ensacamento': return (
@@ -1415,9 +1575,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                     onClose={() => setVolatilModal({ isOpen: false, group: null, type: 'entrada' })}
                     group={volatilModal.group}
                     stockItems={stockItems}
-                    onConfirm={async (groupId, delta, ref) => {
-                        await handleVolatilMovement(groupId, delta, ref);
-                    }}
+                    onConfirmAll={handleVolatilMovementAll}
                     movementType={volatilModal.type}
                 />
             )}

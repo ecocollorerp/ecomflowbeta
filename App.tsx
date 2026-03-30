@@ -61,6 +61,7 @@ import {
     StockDeductionMode,
     EtiquetasState,
     ZplIncludeMode,
+    ZplBatch,
     Setor
 } from './types';
 import { dbClient, loginUser, syncDatabase, resetDatabase, verifyDatabaseSetup, fetchAll, supabaseUrl } from './lib/supabaseClient';
@@ -110,9 +111,10 @@ const App: React.FC = () => {
 
     const [currentPage, _setCurrentPage] = useState('dashboard');
     const [estoqueInitialTab, setEstoqueInitialTab] = useState<any>(undefined);
+    const [calculadoraInitialSku, setCalculadoraInitialSku] = useState<string | undefined>(undefined);
 
     const handlePageClick = (page: string) => {
-        if (page === 'pacotes-prontos') {
+        if (page === 'pacotes') {
             setEstoqueInitialTab('pacotes');
             setCurrentPage('estoque');
             return;
@@ -165,7 +167,7 @@ const App: React.FC = () => {
     const [shoppingList, setShoppingList] = useState<ShoppingListItem[]>([]);
 
     const [biData, setBiData] = useState<BiDataItem[]>([]);
-
+    const [costCalculations, setCostCalculations] = useState<any[]>([]);
     const [generalSettings, setGeneralSettings] = useState<GeneralSettings>(defaultGeneralSettings);
     const [etiquetasSettings, setEtiquetasSettings] = useState<ZplSettings>(defaultZplSettings);
     const [uiSettings, setUiSettings] = useState<UiSettings>({
@@ -185,7 +187,8 @@ const App: React.FC = () => {
         previews: [],
         extractedData: new Map(),
         printedIndices: new Set(),
-        warnings: []
+        warnings: [],
+        showUnificadores: true
     });
     const [isProcessingLabels, setIsProcessingLabels] = useState(false);
     const [labelProgressMessage, setLabelProgressMessage] = useState('');
@@ -644,9 +647,10 @@ const App: React.FC = () => {
                 dbClient.from('vw_dados_analiticos').select('*'),
                 dbClient.from('stock_pack_groups').select('*'),
                 dbClient.from('setores').select('*').order('name', { ascending: true }),
+                dbClient.from('cost_calculations').select('*').order('created_at', { ascending: false }),
             ];
 
-            const tableNames = ['returns', 'skuLinks', 'users', 'productBoms', 'stockMovements', 'stockItems', 'weighingBatches', 'grindingBatches', 'productionPlans', 'shoppingList', 'settings', 'notices', 'importHistory', 'productionPlanItems', 'etiquetasHistory', 'biData', 'packGroups', 'sectors'];
+            const tableNames = ['returns', 'skuLinks', 'users', 'productBoms', 'stockMovements', 'stockItems', 'weighingBatches', 'grindingBatches', 'productionPlans', 'shoppingList', 'settings', 'notices', 'importHistory', 'productionPlanItems', 'etiquetasHistory', 'biData', 'packGroups', 'sectors', 'costCalculations'];
 
             const results = await Promise.allSettled(queries);
 
@@ -776,6 +780,7 @@ const App: React.FC = () => {
             if (dataMap.packGroups) setPackGroups(dataMap.packGroups);
             // Setores: sempre atualizar, mesmo vazio (para refletir estado real do banco)
             setSectors(dataMap.sectors || []);
+            if (dataMap.costCalculations) setCostCalculations(dataMap.costCalculations);
 
             if (dataMap.stockMovements) setStockMovements(dataMap.stockMovements.map((m: any) => ({ id: m.id, stockItemCode: m.stock_item_code, stockItemName: m.stock_item_name, origin: m.origin, qty_delta: parseFloat(m.qty_delta) || 0, ref: m.ref, createdAt: safeNewDate(m.created_at), createdBy: m.created_by_name, fromWeighing: m.from_weighing, productSku: m.product_sku })));
             if (dataMap.weighingBatches) setWeighingBatches(dataMap.weighingBatches.map((wb: any) => ({ 
@@ -830,6 +835,7 @@ const App: React.FC = () => {
             if (dataMap.notices) setAdminNotices(dataMap.notices.map((n: any) => ({ id: n.id, text: n.text, level: n.level, type: n.type, created_by: n.created_by, created_at: n.created_at })));
             if (dataMap.importHistory) setImportHistory(dataMap.importHistory.map((h: any) => ({ id: h.id, fileName: h.file_name, processedAt: h.processed_at, user: h.user_name, itemCount: h.item_count, unlinkedCount: h.unlinked_count, processed_data: h.processed_data, canal: h.canal })));
             if (dataMap.etiquetasHistory) setEtiquetasHistory(dataMap.etiquetasHistory as EtiquetaHistoryItem[]);
+            if (dataMap.biData) setBiData(dataMap.biData as BiDataItem[]);
             if (dataMap.biData) setBiData(dataMap.biData as BiDataItem[]);
 
             if (dataMap.settings) {
@@ -904,6 +910,7 @@ const App: React.FC = () => {
 
     // NEW: Moved ZPL Processing logic to App to support background execution
     const handleProcessZpl = useCallback(async (mode: 'completo' | 'rapido') => {
+        console.log('[DEBUG] Iniciando handleProcessZpl - Modo:', mode);
         setIsProcessingLabels(true);
         setLabelProgressMessage('Iniciando processamento...');
         setLabelProcessingProgress(0);
@@ -921,15 +928,18 @@ const App: React.FC = () => {
             setEtiquetasState(prev => ({ ...prev, includeDanfe: true }));
         }
 
+        let totalPages = 1;
         const processor = processZplStream(zplToProcess, etiquetasSettings, generalSettings, allOrders, mode, printedHashes);
 
         try {
             for await (const result of processor) {
                 switch (result.type) {
                     case 'progress':
+                        console.log('[DEBUG] Stream Progress:', result.message);
                         setLabelProgressMessage(result.message);
                         break;
                     case 'start':
+                        console.log('[DEBUG] Stream Start - Páginas:', result.zplPages.length);
                         if (result.warnings.length > 0) {
                             startTransition(() => {
                                 setEtiquetasState(prev => ({ ...prev, warnings: result.warnings }));
@@ -940,12 +950,14 @@ const App: React.FC = () => {
                                 setEtiquetasState(prev => ({ ...prev, includeDanfe: false }));
                             });
                         }
+                        totalPages = result.zplPages.length;
+                        console.log('[DEBUG] Stream Start - Páginas:', totalPages);
                         startTransition(() => {
                             setEtiquetasState(prev => ({
                                 ...prev,
                                 zplPages: result.zplPages,
                                 extractedData: result.extractedData,
-                                previews: new Array(result.zplPages.length).fill('')
+                                previews: new Array(totalPages).fill('')
                             }));
                         });
 
@@ -960,23 +972,19 @@ const App: React.FC = () => {
                         setEtiquetasState(prev => ({ ...prev, printedIndices: newPrintedIndices }));
                         break;
                     case 'preview':
+                        console.log('[DEBUG] Stream Preview index:', result.index, 'type:', typeof result.preview);
                         if (result.preview === 'ERROR') {
                             errorCount++;
                         }
                         // Usar startTransition para não bloquear inputs do usuário
                         // (ex: digitando no modal de vincular/criar produto)
-                        startTransition(() => {
-                            setEtiquetasState(prev => {
-                                const newPreviews = [...prev.previews];
-                                newPreviews[result.index] = result.preview;
-                                return { ...prev, previews: newPreviews };
-                            });
+                        setEtiquetasState(prev => {
+                            const newPreviews = [...prev.previews];
+                            newPreviews[result.index] = result.preview;
+                            return { ...prev, previews: newPreviews };
                         });
                         // Progress update fica fora, para feedback imediato
-                        {
-                            const totalPages = etiquetasState.zplInput.split('^XA').length - 1 || 1;
-                            setLabelProcessingProgress(Math.round(((result.index + 1) / Math.max(totalPages, 1)) * 100));
-                        }
+                        setLabelProcessingProgress(Math.round(((result.index + 1) / Math.max(totalPages, 1)) * 100));
                         break;
                     case 'done':
                         setLabelProgressMessage('Concluído');
@@ -1206,7 +1214,12 @@ const App: React.FC = () => {
 
     const handleUpdateUser = useCallback(async (user: User): Promise<boolean> => {
         const { id, ...updateData } = user;
-        const { error } = await dbClient.from('users').update(updateData as any).eq('id', id);
+        // Ensure permissions is a valid JSON object for Supabase
+        const payload = { ...updateData };
+        if (payload.permissions) {
+            payload.permissions = payload.permissions as any;
+        }
+        const { error } = await dbClient.from('users').update(payload as any).eq('id', id);
         if (!error) {
             setUsers(prev => prev.map(u => u.id === id ? { ...u, ...updateData } : u));
             if (currentUser?.id === id) setCurrentUser(prev => prev ? { ...prev, ...updateData } : null);
@@ -1239,8 +1252,8 @@ const App: React.FC = () => {
         if (!error) { addToast('Registros excluídos!', 'success'); loadData(); }
     }, [addToast, loadData]);
 
-    const handleAddNewUser = useCallback(async (name: string, setor: UserSetor[], role: UserRole, email?: string, password?: string): Promise<{ success: boolean; message?: string; }> => {
-        const payload: any = { name, setor, role, email: email || null };
+    const handleAddNewUser = useCallback(async (name: string, setor: UserSetor[], role: UserRole, email?: string, password?: string, permissions?: any): Promise<{ success: boolean; message?: string; }> => {
+        const payload: any = { name, setor, role, email: email || null, permissions: permissions || null };
         if (password) payload.password = password;
         const { error } = await dbClient.from('users').insert(payload);
         if (error) return { success: false, message: 'Falha ao adicionar.' };
@@ -1394,15 +1407,25 @@ const App: React.FC = () => {
 
     const handleSaveProductionPlan = useCallback(async (plan: Omit<ProductionPlan, 'id' | 'createdAt' | 'createdBy'>): Promise<ProductionPlan | null> => {
         if (!currentUser) return null;
-        const { data, error } = await dbClient.from('production_plans').insert({ ...plan, created_by: currentUser.name }).select().single();
-        if (!error) {
+        const { data, error } = await dbClient.from('production_plans').insert({ ...plan, created_by: currentUser.id } as any).select().single();
+        if (!error && data) {
             const planItemsToInsert = plan.items.map(item => ({ ...item, plan_id: data.id }));
             await dbClient.from('production_plan_items').insert(planItemsToInsert);
-            loadData(); addToast('Plano salvo.', 'success');
+            loadData();
+            addToast('Plano salvo!', 'success');
             return { ...data, items: planItemsToInsert } as ProductionPlan;
         }
         return null;
-    }, [currentUser, addToast, loadData]);
+    }, [currentUser, loadData, addToast]);
+
+    const handleSaveZplBatch = useCallback(async (batch: Omit<ZplBatch, 'id' | 'created_at'>): Promise<boolean> => {
+        const { error } = await dbClient.from('zpl_batches').insert(batch as any);
+        if (error) {
+            console.error('❌ Erro ao salvar lote ZPL:', error);
+            return false;
+        }
+        return true;
+    }, []);
 
     const handleDeleteProductionPlan = useCallback(async (planId: string): Promise<boolean> => {
         const { error } = await dbClient.from('production_plans').delete().eq('id', planId);
@@ -2129,9 +2152,9 @@ const App: React.FC = () => {
             case 'funcionarios': return <FuncionariosPage users={users} onSetAttendance={handleSetAttendance} onAddNewUser={handleAddNewUser} onUpdateAttendanceDetails={handleUpdateAttendanceDetails} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} currentUser={currentUser!} onDeleteUser={handleDeleteUser} sectors={sectors} />
             case 'relatorios': return <RelatoriosPage stockItems={stockItems} stockMovements={stockMovements} orders={allOrders} weighingBatches={weighingBatches} scanHistory={scanHistory} produtosCombinados={produtosCombinados} users={users} returns={returns} generalSettings={generalSettings} grindingBatches={grindingBatches} />
             case 'setores': return <SetoresPage sectors={sectors} users={users} onAddSector={handleAddSector} onDeleteSector={handleDeleteSector} onEditSector={handleEditSector} />
-            case 'calculadora': return <CalculadoraPage stockItems={stockItems} produtosCombinados={produtosCombinados} />
-            case 'financeiro': return <FinancePage allOrders={allOrders} stockItems={stockItems} stockMovements={stockMovements} skuLinks={skuLinks} produtosCombinados={produtosCombinados} generalSettings={generalSettings} onDeleteOrders={handleDeleteOrders} onLaunchOrders={handleLaunchSuccess} onSaveSettings={handleSaveGeneralSettings} onNavigateToSettings={() => { _setCurrentPage('configuracoes-gerais'); localStorage.setItem('erp_current_page', 'configuracoes-gerais'); }} setCurrentPage={setCurrentPage} />
-            case 'etiquetas': return <EtiquetasPage settings={etiquetasSettings} onSettingsSave={handleSaveEtiquetasSettings} generalSettings={generalSettings} uiSettings={uiSettings} onSetUiSettings={setUiSettings as any} stockItems={stockItems} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} onAddNewItem={handleAddNewItem} etiquetasState={etiquetasState} setEtiquetasState={setEtiquetasState} currentUser={currentUser!} allOrders={allOrders} etiquetasHistory={etiquetasHistory} onSaveHistory={handleSaveEtiquetaHistory} onGetHistoryDetails={handleGetEtiquetaHistoryDetails} onProcessZpl={handleProcessZpl} isProcessing={isProcessingLabels} progressMessage={labelProgressMessage} />
+            case 'calculadora': return <CalculadoraPage stockItems={stockItems} produtosCombinados={produtosCombinados} addToast={addToast} initialSku={calculadoraInitialSku} />
+            case 'financeiro': return <FinancePage allOrders={allOrders} stockItems={stockItems} stockMovements={stockMovements} skuLinks={skuLinks} produtosCombinados={produtosCombinados} generalSettings={generalSettings} onDeleteOrders={handleDeleteOrders} onLaunchOrders={handleLaunchSuccess} onSaveSettings={handleSaveGeneralSettings} onNavigateToSettings={() => { _setCurrentPage('configuracoes-gerais'); localStorage.setItem('erp_current_page', 'configuracoes-gerais'); }} setCurrentPage={setCurrentPage} costCalculations={costCalculations} onSelectSku={(sku) => { setCalculadoraInitialSku(sku); setCurrentPage('calculadora'); }} />
+            case 'etiquetas': return <EtiquetasPage settings={etiquetasSettings} onSettingsSave={handleSaveEtiquetasSettings} generalSettings={generalSettings} uiSettings={uiSettings} onSetUiSettings={setUiSettings as any} stockItems={stockItems} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} onAddNewItem={handleAddNewItem} etiquetasState={etiquetasState} setEtiquetasState={setEtiquetasState} currentUser={currentUser!} allOrders={allOrders} etiquetasHistory={etiquetasHistory} onSaveHistory={handleSaveEtiquetaHistory} onGetHistoryDetails={handleGetEtiquetaHistoryDetails} onProcessZpl={handleProcessZpl} isProcessing={isProcessingLabels} progressMessage={labelProgressMessage} progress={labelProcessingProgress} addToast={addToast} onSaveBatch={handleSaveZplBatch} />
             case 'bling': return <BlingPage generalSettings={generalSettings} onLaunchSuccess={handleLaunchSuccess} onUpdateOrdersBatch={handleUpdateOrdersBatch} addToast={addToast} setCurrentPage={setCurrentPage} onLoadZpl={handleLoadZplFromBling} onSaveSettings={handleSaveGeneralSettings} stockItems={stockItems} skuLinks={skuLinks} allOrders={allOrders} onLinkSku={handleLinkSku} />;
             case 'integracoes': return <IntegracoesPage generalSettings={generalSettings} onSaveSettings={handleSaveGeneralSettings} onLaunchSuccess={handleLaunchSuccess} addToast={addToast} setCurrentPage={setCurrentPage} />;
             case 'passo-a-passo': return <PassoAPassoPage />

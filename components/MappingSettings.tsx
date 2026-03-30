@@ -100,7 +100,8 @@ export const MappingPanel: React.FC<MappingSettingsProps> = ({ canalId, canalNam
                         <div className="space-y-4">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <MapRow label="Valor Bruto da Venda" field="priceGross" canalId={canalId} val={mapping.priceGross} onUpdate={handleUpdate} detectedHeaders={detectedHeaders} />
-                                <MapRow label="Frete / Envio / Dedutíveis (Opcional)" field="shippingFee" canalId={canalId} val={mapping.shippingFee} onUpdate={handleUpdate} detectedHeaders={detectedHeaders} />
+                                <MapRow label="Frete Pago pelo Cliente" field="shippingPaidByCustomer" canalId={canalId} val={mapping.shippingPaidByCustomer} onUpdate={handleUpdate} detectedHeaders={detectedHeaders} />
+                                <MapRow label="Logística / Nosso Custo Frete (Opcional)" field="shippingFee" canalId={canalId} val={mapping.shippingFee} onUpdate={handleUpdate} detectedHeaders={detectedHeaders} />
                                 <MapRow label="Valor Líquido Recebido" field="priceNet" canalId={canalId} val={mapping.priceNet} onUpdate={handleUpdate} detectedHeaders={detectedHeaders} />
                             </div>
                             

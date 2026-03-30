@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
+import JSZip from "jszip";
 import {
   GeneralSettings,
   OrderItem,
@@ -247,7 +248,7 @@ const BlingConfigModal: React.FC<{
   const processedPopupCodesRef = useRef<Set<string>>(new Set());
   const [authTab, setAuthTab] = useState<"token_manual" | "oauth">("oauth");
   const [configTab, setConfigTab] = useState<
-    "conexao" | "etiquetas" | "exportacao"
+    "conexao" | "etiquetas" | "exportacao" | "certificado"
   >("conexao");
 
   // Auth Data
@@ -285,6 +286,12 @@ const BlingConfigModal: React.FC<{
   const [expLimite, setExpLimite] = useState(100);
   const [expStatus, setExpStatus] = useState<number[]>([6, 9, 15]);
 
+  // Certificado Data
+  const [certBase64, setCertBase64] = useState("");
+  const [certPassword, setCertPassword] = useState("");
+  const [certFileName, setCertFileName] = useState("");
+  const [certExpiry, setCertExpiry] = useState<number | undefined>(undefined);
+
   // Pega a URL base atual do navegador (ex: https://erpecomflow.netlify.app ou http://localhost:5173)
   const currentOrigin = window.location.origin.replace(/\/$/, "");
 
@@ -312,6 +319,12 @@ const BlingConfigModal: React.FC<{
       setExpAutoRastreio(exp?.autoImportarRastreio ?? false);
       setExpLimite(exp?.limitePedidos ?? 100);
       setExpStatus(exp?.statusPadrao ?? [6, 9, 15]);
+      // Certificado config
+      const cert = currentSettings?.certificado;
+      setCertBase64(cert?.base64 || "");
+      setCertPassword(cert?.password || "");
+      setCertFileName(cert?.fileName || "");
+      setCertExpiry(cert?.expiryDate);
     }
   }, [isOpen, currentSettings]);
 
@@ -598,9 +611,28 @@ const BlingConfigModal: React.FC<{
         canalPadrao: expCanal,
         autoImportarRastreio: expAutoRastreio,
         limitePedidos: expLimite
+      },
+      certificado: {
+        base64: certBase64,
+        password: certPassword,
+        fileName: certFileName,
+        expiryDate: certExpiry
       }
     });
     onClose();
+  };
+
+  const handleCertFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const base64 = event.target?.result as string;
+        setCertBase64(base64);
+        setCertFileName(file.name);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   return (
@@ -632,10 +664,10 @@ const BlingConfigModal: React.FC<{
             Etiquetas
           </button>
           <button
-            onClick={() => setConfigTab("exportacao")}
-            className={`flex-1 py-2 text-xs font-black uppercase rounded-lg transition-all ${configTab === "exportacao" ? "bg-white shadow-sm text-green-600" : "text-slate-500 hover:text-slate-700"}`}
+            onClick={() => setConfigTab("certificado")}
+            className={`flex-1 py-2 text-xs font-black uppercase rounded-lg transition-all ${configTab === "certificado" ? "bg-white shadow-sm text-purple-600" : "text-slate-500 hover:text-slate-700"}`}
           >
-            Exportação
+            Certificado
           </button>
         </div>
 
@@ -3694,99 +3726,6 @@ const BlingPage: React.FC<BlingPageProps> = ({
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [nfeSaida]);
 
-  // ── Download XML em lote (todas notas autorizadas/emitidas do período) ──
-  const handleBaixarXmlLote = async () => {
-    const notasComXml = filteredNfeSaida.filter(
-      (n) => n.situacao === 5 || n.situacao === 6 || n.situacao === 8
-    );
-    if (notasComXml.length === 0) {
-      addToast("Nenhuma nota autorizada/emitida para baixar XML.", "warning");
-      return;
-    }
-    setIsDownloadingXml(true);
-    setXmlDownloadProgress({ current: 0, total: notasComXml.length });
-    try {
-      const token = await getValidToken();
-      if (!token) throw new Error("Token inválido.");
-      const xmlFiles: { name: string; content: string }[] = [];
-      for (let i = 0; i < notasComXml.length; i++) {
-        const nfe = notasComXml[i];
-        setXmlDownloadProgress({ current: i + 1, total: notasComXml.length });
-        try {
-          const detalhe = await fetchNfeDetalhe(token, nfe.id);
-          const xmlData = detalhe?.data?.xml || detalhe?.xml || nfe.linkXml;
-          if (xmlData) {
-            if (xmlData.startsWith("http")) {
-              // Baixa o XML via URL
-              try {
-                const resp = await fetch(xmlData);
-                if (resp.ok) {
-                  const xmlContent = await resp.text();
-                  xmlFiles.push({
-                    name: `NFe_${nfe.numero || nfe.id}.xml`,
-                    content: xmlContent
-                  });
-                }
-              } catch {
-                /* skip */
-              }
-            } else {
-              xmlFiles.push({
-                name: `NFe_${nfe.numero || nfe.id}.xml`,
-                content: xmlData
-              });
-            }
-          }
-        } catch {
-          /* skip individual */
-        }
-        // Rate limit delay
-        if (i < notasComXml.length - 1)
-          await new Promise((r) => setTimeout(r, 400));
-      }
-      if (xmlFiles.length === 0) {
-        addToast("Nenhum XML encontrado para download.", "warning");
-      } else if (xmlFiles.length === 1) {
-        // Download direto
-        const blob = new Blob([xmlFiles[0].content], {
-          type: "application/xml"
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = xmlFiles[0].name;
-        a.click();
-        URL.revokeObjectURL(url);
-        addToast(`XML baixado: ${xmlFiles[0].name}`, "success");
-      } else {
-        // Concatenar todos em um único arquivo de texto (sem JSZip)
-        const separator = "\n<!-- ═══════ PRÓXIMO XML ═══════ -->\n";
-        const combined = xmlFiles
-          .map((f) => `<!-- ${f.name} -->\n${f.content}`)
-          .join(separator);
-        const blob = new Blob([combined], { type: "application/xml" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        const periodo =
-          filters.startDate && filters.endDate
-            ? `${filters.startDate}_${filters.endDate}`
-            : new Date().toISOString().slice(0, 10);
-        a.href = url;
-        a.download = `XMLs_NFe_${periodo}_${xmlFiles.length}notas.xml`;
-        a.click();
-        URL.revokeObjectURL(url);
-        addToast(
-          `${xmlFiles.length} XMLs baixados em arquivo único!`,
-          "success"
-        );
-      }
-    } catch (err: any) {
-      addToast(`Erro ao baixar XMLs: ${err.message}`, "error");
-    } finally {
-      setIsDownloadingXml(false);
-      setXmlDownloadProgress(null);
-    }
-  };
 
   // ── Batch DANFE Simplificada ZPL (selecionadas) ───────────────────────────
   const handleBaixarDanfeZplSelecionados = async () => {
@@ -3861,90 +3800,6 @@ const BlingPage: React.FC<BlingPageProps> = ({
     }
   };
 
-  // ── Download XML apenas para NF-es selecionadas ──────────────────────────
-  const handleBaixarXmlSelecionados = async () => {
-    const notasComXml = nfeSaida.filter(
-      (n) =>
-        selectedNfeSaidaIds.has(n.id) &&
-        (n.situacao === 5 || n.situacao === 6 || n.situacao === 8)
-    );
-    if (notasComXml.length === 0) {
-      addToast("Nenhuma nota selecionada com XML disponível.", "warning");
-      return;
-    }
-    setIsDownloadingXml(true);
-    setXmlDownloadProgress({ current: 0, total: notasComXml.length });
-    try {
-      const token = await getValidToken();
-      if (!token) throw new Error("Token inválido.");
-      const xmlFiles: { name: string; content: string }[] = [];
-      for (let i = 0; i < notasComXml.length; i++) {
-        const nfe = notasComXml[i];
-        setXmlDownloadProgress({ current: i + 1, total: notasComXml.length });
-        try {
-          const detalhe = await fetchNfeDetalhe(token, nfe.id);
-          const xmlData = detalhe?.data?.xml || detalhe?.xml || nfe.linkXml;
-          if (xmlData) {
-            if (xmlData.startsWith("http")) {
-              try {
-                const resp = await fetch(xmlData);
-                if (resp.ok) {
-                  const xmlContent = await resp.text();
-                  xmlFiles.push({
-                    name: `NFe_${nfe.numero || nfe.id}.xml`,
-                    content: xmlContent
-                  });
-                }
-              } catch {
-                /* skip */
-              }
-            } else {
-              xmlFiles.push({
-                name: `NFe_${nfe.numero || nfe.id}.xml`,
-                content: xmlData
-              });
-            }
-          }
-        } catch {
-          /* skip individual */
-        }
-        if (i < notasComXml.length - 1)
-          await new Promise((r) => setTimeout(r, 400));
-      }
-      if (xmlFiles.length === 0) {
-        addToast("Nenhum XML encontrado para download.", "warning");
-      } else if (xmlFiles.length === 1) {
-        const blob = new Blob([xmlFiles[0].content], {
-          type: "application/xml"
-        });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = xmlFiles[0].name;
-        a.click();
-        URL.revokeObjectURL(url);
-        addToast(`XML baixado: ${xmlFiles[0].name}`, "success");
-      } else {
-        const separator = "\n<!-- ═══════ PRÓXIMO XML ═══════ -->\n";
-        const combined = xmlFiles
-          .map((f) => `<!-- ${f.name} -->\n${f.content}`)
-          .join(separator);
-        const blob = new Blob([combined], { type: "application/xml" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `XMLs_Selecionados_${xmlFiles.length}notas.xml`;
-        a.click();
-        URL.revokeObjectURL(url);
-        addToast(`${xmlFiles.length} XMLs baixados!`, "success");
-      }
-    } catch (err: any) {
-      addToast(`Erro ao baixar XMLs: ${err.message}`, "error");
-    } finally {
-      setIsDownloadingXml(false);
-      setXmlDownloadProgress(null);
-    }
-  };
 
   // ── Helper interno: abre DANFEs (linkDanfe) na mesma aba sequencialmente ──────────────
   const baixarDanfesLista = async (
@@ -4349,6 +4204,75 @@ const BlingPage: React.FC<BlingPageProps> = ({
     }
   };
 
+  const handleBaixarXmlSelecionados = async () => {
+    const targets = nfeSaida.filter((n) => selectedNfeSaidaIds.has(n.id) && n.chaveAcesso);
+    if (targets.length === 0) {
+      addToast("Nenhuma nota selecionada com chave de acesso disponível.", "error");
+      return;
+    }
+    handleEnrichAndDownloadXml(targets);
+  };
+
+  const handleBaixarXmlLote = async () => {
+    const targets = filteredNfeSaida.filter((n) => n.chaveAcesso);
+    if (targets.length === 0) {
+      addToast("Nenhuma nota com chave de acesso disponível na lista filtrada.", "error");
+      return;
+    }
+    handleEnrichAndDownloadXml(targets);
+  };
+
+  const handleEnrichAndDownloadXml = async (targets: NfeSaida[]) => {
+    setIsDownloadingXml(true);
+    setXmlDownloadProgress({ current: 0, total: targets.length });
+    const token = await getValidToken();
+    if (!token) {
+      addToast("Token expirado.", "error");
+      setIsDownloadingXml(false);
+      return;
+    }
+
+    const zip = new JSZip();
+    let successCount = 0;
+
+    for (let i = 0; i < targets.length; i++) {
+        const nfe = targets[i];
+        setXmlDownloadProgress({ current: i + 1, total: targets.length });
+        try {
+            const resp = await fetch(`/api/bling/nfe/${nfe.id}/xml`, {
+                headers: { Authorization: token }
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data.xml) {
+                    const fileName = `NFe_${nfe.numero || nfe.id}.xml`;
+                    zip.file(fileName, data.xml);
+                    successCount++;
+                }
+            }
+        } catch (e) {
+            console.error(`Erro ao baixar XML da nota ${nfe.id}`, e);
+        }
+        if (i < targets.length - 1) await new Promise(r => setTimeout(r, 300));
+    }
+
+    if (successCount > 0) {
+        const content = await zip.generateAsync({ type: "blob" });
+        const url = window.URL.createObjectURL(content);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `XMLs_NFe_${new Date().toISOString().slice(0, 10)}.zip`;
+        a.click();
+        addToast(`${successCount} XMLs baixados com sucesso!`, "success");
+    } else {
+        addToast("Não foi possível baixar nenhum XML.", "error");
+    }
+    setIsDownloadingXml(false);
+    setXmlDownloadProgress(null);
+  };
+
+
+
   const handleBatchEmitirNfe = async () => {
     const notasPendentes = nfeSaida.filter(
       (n) =>
@@ -4584,7 +4508,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
   const copyZplBatch = (
     zplContent: string,
     loteId: string,
-    source: "bling-notas" | "marketplace" | "individual" = "individual",
+    source: "bling-notas" | "marketplace" | "individual" | "manual" = "individual",
     descricao?: string
   ) => {
     const labelCount = (zplContent.match(/\^XA/gi) || []).length;
@@ -4739,83 +4663,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
     setBatchZplNotasProgress(null);
   };
 
-  const handleBatchGerarNFe = async (emitir = false) => {
-    if (selectedVendasIds.size === 0) return;
-    setShowBatchGerarNFeModal(false);
-    setIsBatchEmitindo(true);
-    try {
-      const token = await getValidToken();
-      if (!token) throw new Error("Token do Bling expirado.");
 
-      const ids = Array.from(selectedVendasIds);
-      const loteId = `GERACAO-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`;
-
-      const response = await fetch("/api/bling/nfe/batch-criar-emitir", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: token },
-        body: JSON.stringify({ blingOrderIds: ids, emitir })
-      });
-      const result = await response.json();
-
-      if (result.success) {
-        const results = result.results || [];
-        const okItems = results.filter((r: any) => r.success);
-        const ok = okItems.length;
-        const fail = results.filter((r: any) => !r.success).length;
-
-        if (ok > 0) {
-          addToast(`✅ ${ok} NF-e(s) processada(s) com sucesso!`, "success");
-
-          // Persistir lote localmente
-          try {
-            const cachedLotes = JSON.parse(
-              localStorage.getItem("nfe_lotes_diarios") || "[]"
-            );
-            const successfulNfes = okItems.map((r: any) => ({
-              nfeNumero: String(r.nfeId || r.blingOrderId),
-              pedidoVendaId: String(r.blingOrderId)
-            }));
-            const newLote = {
-              id: loteId,
-              data: new Date().toISOString(),
-              total: ok + fail,
-              ok,
-              fail,
-              nfes: successfulNfes
-            };
-            localStorage.setItem(
-              "nfe_lotes_diarios",
-              JSON.stringify([newLote, ...cachedLotes].slice(0, 50))
-            );
-          } catch (e) {
-            console.error("Erro ao salvar lote local:", e);
-          }
-
-          // Atualizar banco de dados
-          if (onUpdateOrdersBatch) {
-            const successfulOrderIds = okItems.map((r: any) =>
-              String(r.blingOrderId)
-            );
-            await onUpdateOrdersBatch(successfulOrderIds, loteId);
-          }
-
-          // Refresh para atualizar status e remover do "Em Aberto" se necessário
-          await handleFetchVendasEmAberto(true);
-          await handleFetchOrdersAndInvoices();
-          setSelectedVendasIds(new Set());
-        }
-        if (fail > 0) {
-          addToast(`⚠️ ${fail} pedido(s) falharam no lote.`, "warning");
-        }
-      } else {
-        addToast(`Erro ao processar lote: ${result.error}`, "error");
-      }
-    } catch (err: any) {
-      addToast(`Erro: ${err.message}`, "error");
-    } finally {
-      setIsBatchEmitindo(false);
-    }
-  };
 
   /**
    * Busca pedidos de vendas diretamente do Bling com “Situação: Em Aberto”.
@@ -7828,6 +7676,8 @@ const BlingPage: React.FC<BlingPageProps> = ({
             </div>
           </div>
 
+
+
           {/* Painel: Puxar etiquetas do Bling */}
           <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4">
             <p className="text-[10px] font-black text-blue-700 uppercase tracking-widest mb-3 flex items-center gap-2">
@@ -8539,14 +8389,14 @@ const BlingPage: React.FC<BlingPageProps> = ({
                 </p>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => handleBatchGerarNFe(false)}
+                    onClick={() => handleBatchGerarNfe(false)}
                     disabled={isBatchEmitindo}
                     className="flex-1 flex items-center justify-center gap-1.5 text-xs font-black uppercase bg-blue-50 text-blue-700 px-3 py-2 rounded-xl hover:bg-blue-100 border border-blue-200 disabled:opacity-50 transition-all"
                   >
                     <FileText size={12} /> Criar NF-es
                   </button>
                   <button
-                    onClick={() => handleBatchGerarNFe(true)}
+                    onClick={() => handleBatchGerarNfe(true)}
                     disabled={isBatchEmitindo}
                     className="flex-1 flex items-center justify-center gap-1.5 text-xs font-black uppercase bg-indigo-50 text-indigo-700 px-3 py-2 rounded-xl hover:bg-indigo-100 border border-indigo-200 disabled:opacity-50 transition-all"
                   >

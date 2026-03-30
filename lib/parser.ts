@@ -604,6 +604,7 @@ export const parseExcelFile = (
         fillMissingHeaderKey('qty', ['Quantidade', 'Unidades', 'Quantity']);
         fillMissingHeaderKey('tracking', ['Código de rastreamento', 'Número de rastreamento', 'Tracking']);
         fillMissingHeaderKey('date', ['Data da venda', 'Data de criação do pedido', 'Created Time']);
+        fillMissingHeaderKey('shippingPaidByCustomer', ['Custo de envio (pago pelo comprador)', 'Frete pago pelo cliente']);
         fillMissingHeaderKey('statusColumn', ['Estado', 'Status do pedido', 'Order Status']);
     } else if (canalDetectado === 'SHOPEE') {
         fillMissingHeaderKey('orderId', ['ID do pedido', 'N.º do pedido', 'Order ID']);
@@ -612,6 +613,7 @@ export const parseExcelFile = (
         fillMissingHeaderKey('tracking', ['Número de rastreamento', 'Código de rastreio', 'Tracking Number']);
         fillMissingHeaderKey('date', ['Data de criação do pedido', 'Created Time']);
         fillMissingHeaderKey('dateShipping', ['Data prevista de envio', 'Data de envio prevista', 'Ship By Date']);
+        fillMissingHeaderKey('shippingPaidByCustomer', ['Taxa de envio paga pelo comprador', 'Frete pago pelo comprador']);
         fillMissingHeaderKey('statusColumn', ['Status do pedido', 'Order Status']);
     } else {
         // SITE (TikTok / e-commerce próprio)

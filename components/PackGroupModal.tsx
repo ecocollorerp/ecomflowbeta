@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { X, Save, Search, Plus, Trash2, Package, Scan, ArrowRight, RefreshCw, Loader2 as LucideLoader2 } from 'lucide-react';
+import { X, Save, Search, Plus, Trash2, Package, Scan, ArrowRight, RefreshCw, Loader2 as LucideLoader2, PlusCircle } from 'lucide-react';
 import { StockItem, StockPackGroup } from '../types';
 import { dbClient } from '../lib/supabaseClient';
 
@@ -31,6 +31,7 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
     const [pallet, setPallet] = useState('');
     const [galpao, setGalpao] = useState('');
     const [comDesempenadeira, setComDesempenadeira] = useState(false);
+    const [packSize, setPackSize] = useState(1);
     const [isSaving, setIsSaving] = useState(false);
 
     const barcodeInputRef = useRef<HTMLInputElement>(null);
@@ -47,6 +48,7 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
             setPallet(groupToEdit?.pallet || '');
             setGalpao(groupToEdit?.galpao || '');
             setComDesempenadeira(groupToEdit?.com_desempenadeira || false);
+            setPackSize(groupToEdit?.pack_size || 1);
 
             const initialCodes = groupToEdit?.item_codes || [];
             setSelectedCodes(initialCodes);
@@ -90,7 +92,7 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
         setItemBarcodes(prev => ({ ...prev, [code]: newBarcode.toUpperCase() }));
     };
 
-    const handleSave = async () => {
+    const handleSave = async (keepOpen = false) => {
         if (!name.trim()) return;
         if (tipo === 'tradicional' && selectedCodes.length === 0) return;
 
@@ -122,10 +124,23 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
                 localizacao: localizacao.trim(),
                 pallet: pallet.trim(),
                 galpao: galpao.trim(),
-                com_desempenadeira: comDesempenadeira
+                com_desempenadeira: comDesempenadeira,
+                pack_size: packSize
             }, groupToEdit?.id);
 
-            onClose();
+            if (keepOpen) {
+                // Resetar campos para novo item, MAS manter localização/galpão/pallet
+                setName('');
+                setBarcode('');
+                setFinalProductCode('');
+                setSelectedCodes([]);
+                setItemBarcodes({});
+                setQuantidadeVolatil(0);
+                // localizacao, pallet, galpao, comDesempenadeira e packSize são mantidos para agilizar
+                if (barcodeInputRef.current) barcodeInputRef.current.focus();
+            } else {
+                onClose();
+            }
         } catch (error) {
             console.error("Erro ao salvar pacote e barcodes:", error);
             alert("Erro ao salvar alterações.");
@@ -218,7 +233,17 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
                             </div>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Meta Mínima de Estoque (UN)</label>
+                            <label className="block text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1 font-bold">Qtd de Itens por Pacote (Ex: 20)</label>
+                            <input
+                                type="number"
+                                min={1}
+                                value={packSize}
+                                onChange={e => setPackSize(Number(e.target.value))}
+                                className="w-full p-3 border-2 border-blue-200 rounded-xl font-bold focus:border-blue-500 outline-none bg-blue-50/30"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Meta Mínima de Estoque (Geral UN)</label>
                             <input
                                 type="number"
                                 value={minQty}
@@ -358,13 +383,23 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
 
                 <div className="mt-8 flex justify-end gap-3 pt-5 border-t border-slate-50">
                     <button onClick={onClose} className="px-6 py-3 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-slate-200 transition-all">Cancelar</button>
+                    {!groupToEdit && (
+                        <button
+                            onClick={() => handleSave(true)}
+                            disabled={!name.trim() || (tipo === 'tradicional' && selectedCodes.length === 0) || isSaving}
+                            className="px-6 py-3 bg-emerald-50 text-emerald-600 border-2 border-emerald-100 rounded-2xl font-black uppercase text-xs tracking-widest hover:bg-emerald-100 disabled:opacity-50 transition-all flex items-center gap-2"
+                        >
+                            {isSaving ? <Loader2 className="animate-spin" size={18} /> : <PlusCircle size={18} />}
+                            Salvar e Adicionar Outro
+                        </button>
+                    )}
                     <button
-                        onClick={handleSave}
+                        onClick={() => handleSave(false)}
                         disabled={!name.trim() || (tipo === 'tradicional' && selectedCodes.length === 0) || isSaving}
                         className="px-10 py-3 bg-blue-600 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 disabled:opacity-50 transition-all flex items-center gap-2"
                     >
                         {isSaving ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
-                        {isSaving ? 'Salvando...' : 'Salvar Alterações'}
+                        {isSaving ? 'Salvando...' : 'Salvar e Sair'}
                     </button>
                 </div>
             </div>

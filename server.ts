@@ -46,15 +46,16 @@ async function startServer() {
   // Load SSL certificates
   const certPath = path.join(__dirname, "cert.pem");
   const keyPath = path.join(__dirname, "key.pem");
+  let sslOptions = null;
 
-  if (!fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
-    console.error("❌ Certificados não encontrados!");
-    console.error(`   Execute primeiro: python generate_cert.py`);
-    process.exit(1);
+  if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+    sslOptions = {
+      cert: fs.readFileSync(certPath, "utf8"),
+      key: fs.readFileSync(keyPath, "utf8"),
+    };
+  } else {
+    console.warn("⚠️ Certificados SSL não encontrados. Iniciando em modo HTTP.");
   }
-
-  const cert = fs.readFileSync(certPath, "utf8");
-  const key = fs.readFileSync(keyPath, "utf8");
 
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
@@ -5409,6 +5410,40 @@ async function startServer() {
     }
   });
 
+  // ── Adicionar objetos a uma remessa existente ──
+  app.post(
+    "/api/bling/logisticas/remessas/:idRemessa/objetos",
+    async (req, res) => {
+      try {
+        const token = normalizeBearerToken(
+          (req.headers["authorization"] as string) || ""
+        );
+        if (!token) return res.status(401).json({ error: "Token obrigatório" });
+
+        const url = `https://www.bling.com.br/Api/v3/logisticas/remessas/${req.params.idRemessa}/objetos`;
+        console.log(
+          `📮 [ADICIONAR OBJETOS REMESSA] POST ${req.params.idRemessa}`,
+          url
+        );
+
+        const response = await blingFetchRetry(url, {
+          method: "POST",
+          headers: {
+            Authorization: token,
+            "Content-Type": "application/json",
+            Accept: "application/json"
+          },
+          body: JSON.stringify(req.body)
+        });
+        const data = await response.json().catch(() => ({}));
+        res.status(response.status).json(data);
+      } catch (error: any) {
+        console.error("❌ [ADICIONAR OBJETOS REMESSA ERROR]:", error);
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+
   // ── Remessas de uma logística ──
   app.get("/api/bling/logisticas/:idLogistica/remessas", async (req, res) => {
     try {
@@ -5431,8 +5466,15 @@ async function startServer() {
     }
   });
 
-  // Cria o servidor HTTPS antes do Vite para passar como referência ao HMR
-  const httpsServer = https.createServer({ key, cert }, app);
+  // Cria o servidor (HTTPS ou HTTP)
+  let server;
+  if (sslOptions) {
+    server = https.createServer(sslOptions, app);
+  } else {
+    // Import http dynamically to avoid top-level mixed imports if needed
+    const http = await import("http");
+    server = http.createServer(app);
+  }
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
@@ -5441,8 +5483,7 @@ async function startServer() {
       const vite = await createViteServer({
         server: {
           middlewareMode: true,
-          // Usa o mesmo servidor HTTPS para o WebSocket HMR (evita porta 24678 separada)
-          hmr: { server: httpsServer }
+          hmr: { server }
         },
         appType: "spa"
       });
@@ -5468,9 +5509,14 @@ async function startServer() {
     }
   }
 
-  httpsServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`✅ Server running on https://localhost:${PORT}`);
-    console.log(`🔒 SSL/TLS enabled with self-signed certificate`);
+  server.listen(PORT, "0.0.0.0", () => {
+    const protocol = sslOptions ? "https" : "http";
+    console.log(`✅ Server running on ${protocol}://localhost:${PORT}`);
+    if (sslOptions) {
+      console.log(`🔒 SSL/TLS enabled with self-signed certificate`);
+    } else {
+      console.log(`🔓 SSL/TLS disabled (HTTP mode)`);
+    }
   });
 }
 

@@ -19,8 +19,9 @@ const getReportTitle = (reportId: string) => {
         'pedidos/atrasados': 'Pedidos Atrasados',
         'pedidos/com-erro': 'Pedidos com Erro',
         'pedidos/devolucoes': 'Devoluções Registradas',
-        'producao/por-cor': 'Produção por Cor',
-        'producao/por-sku': 'Produção por SKU',
+        'producao/por-cor': 'Produção de Produtos por Cor',
+        'producao/por-sku': 'Produção de Produtos por SKU',
+        'producao/pacotes-resumo': 'Resumo Consolidado de Pacotes Prontos',
         'ensacamento/totais': 'Totais de Máquinas por Operador',
         'moagem/lotes': 'Lotes de Moagem',
         'moagem/producao-operador': 'Produção de Moagem por Operador',
@@ -488,6 +489,31 @@ const ComparativoCanalReport: React.FC<{ data: any[] }> = ({ data }) => {
     );
 };
 
+const ProducaoPorCorReport: React.FC<{ data: { color: string, total: number, skuCount: number }[] }> = ({ data }) => (
+    <ReportTable headers={['Cor / Atributo', 'Quantidade Total Produzida', 'Variedade de SKUs']}>
+        {data.length > 0 ? [...data].sort((a,b) => b.total - a.total).map(item => (
+            <tr key={item.color}>
+                <td className="py-2 px-3 font-bold text-gray-900 dark:text-gray-50 uppercase">{item.color || 'Sem Cor'}</td>
+                <td className="py-2 px-3 text-center font-black text-blue-600">{item.total.toFixed(2)}</td>
+                <td className="py-2 px-3 text-center text-gray-500">{item.skuCount} SKUs</td>
+            </tr>
+        )) : <NoData />}
+    </ReportTable>
+);
+
+const PacotesResumoReport: React.FC<{ data: { name: string, total: number, size: number, lastUpdate: string }[] }> = ({ data }) => (
+    <ReportTable headers={['Nome do Pacote', 'Tamanho (un)', 'Saldo Atual Total', 'Última Movimentação']}>
+        {data.length > 0 ? data.map((item, idx) => (
+            <tr key={idx}>
+                <td className="py-2 px-3 font-medium text-gray-900 dark:text-gray-50">{item.name}</td>
+                <td className="py-2 px-3 text-center">{item.size}</td>
+                <td className="py-2 px-3 text-center font-black text-emerald-600">{item.total}</td>
+                <td className="py-2 px-3 text-gray-500 text-xs">{item.lastUpdate}</td>
+            </tr>
+        )) : <NoData />}
+    </ReportTable>
+);
+
 // --- Main Page Component ---
 interface RelatoriosPageProps {
     stockItems: StockItem[];
@@ -529,6 +555,7 @@ const reportCategories = [
         id: 'producao', name: 'Produção', icon: <Factory size={18} />, reports: [
             { id: 'producao/por-cor', name: 'Produção por Cor' },
             { id: 'producao/por-sku', name: 'Produção por SKU' },
+            { id: 'producao/pacotes-resumo', name: 'Resumo de Pacotes Prontos' },
             { id: 'producao/material-gasto', name: 'Material Gasto do Período' },
         ]
     },
@@ -637,7 +664,7 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
         const finDailyMap = new Map<string, number>();
         finGroups.forEach(group => {
             const first = group[0];
-            const gGross = Number(first.price_total || 0);
+            const gGross = group.reduce((s, i) => s + (i.price_gross || 0), 0);
             const gFees = Number(first.platform_fees || 0);
             const gShip = Number(first.shipping_fee || 0);
             finGross += gGross; finFees += gFees; finShipping += gShip;
@@ -806,6 +833,46 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
         });
         data['funcionarios/pesagem'] = Array.from(ensacamentoPorFuncionario.values());
 
+        // --- PRODUCAO POR COR / SKU ---
+        const colorMap = new Map<string, { color: string, total: number, skus: Set<string> }>();
+        const skuProdMap = new Map<string, { code: string, total: number }>();
+
+        stockMovements.forEach(m => {
+            if (m.qty_delta > 0 && (m.origin === 'PRODUCAO_MANUAL' || m.origin === 'BIP' || m.origin === 'ENTRADA_PACOTE') && dateFilter(m.createdAt)) {
+                const item = stockItems.find(si => si.code === m.stockItemCode);
+                const color = item?.color || 'Sem Cor';
+                
+                // Agrupamento por Cor
+                const cEntry = colorMap.get(color) || { color, total: 0, skus: new Set() };
+                cEntry.total += m.qty_delta;
+                cEntry.skus.add(m.stockItemCode);
+                colorMap.set(color, cEntry);
+
+                // Agrupamento por SKU
+                const sEntry = skuProdMap.get(m.stockItemCode) || { code: m.stockItemCode, total: 0 };
+                sEntry.total += m.qty_delta;
+                skuProdMap.set(m.stockItemCode, sEntry);
+            }
+        });
+
+        data['producao/por-cor'] = Array.from(colorMap.values()).map(c => ({ color: c.color, total: c.total, skuCount: c.skus.size }));
+        data['producao/por-sku'] = Array.from(skuProdMap.values()).sort((a,b) => b.total - a.total);
+
+        // --- PACOTES RESUMO ---
+        // Aqui precisaríamos ter acesso aos pack_groups. Como não estão nas props, vamos simular ou idealmente passar via props no futuro.
+        // Por enquanto, vamos usar o que temos no stockMovements de pack
+        const packResumoMap = new Map<string, { name: string, total: number, size: number, lastUpdate: string }>();
+        stockMovements.forEach(m => {
+            if (m.origin === 'ENTRADA_PACOTE' || m.origin === 'SAIDA_PACOTE') {
+                const entry = packResumoMap.get(m.stockItemName) || { name: m.stockItemName, total: 0, size: 1, lastUpdate: '' };
+                entry.total += m.qty_delta;
+                const movDate = new Date(m.createdAt).toLocaleString('pt-BR');
+                if (!entry.lastUpdate || movDate > entry.lastUpdate) entry.lastUpdate = movDate;
+                packResumoMap.set(m.stockItemName, entry);
+            }
+        });
+        data['producao/pacotes-resumo'] = Array.from(packResumoMap.values());
+
         // --- ERROS ---
         data['erros/bom-faltante'] = stockItems.filter(i => i.kind === 'PRODUTO' && !produtosCombinados.some(b => b.productSku === i.code));
 
@@ -898,6 +965,8 @@ const RelatoriosPage: React.FC<RelatoriosPageProps> = (props) => {
             case 'funcionarios/pesagem': return <EnsacamentoPorFuncionarioReport data={data} />;
             case 'erros/bom-faltante': return <ErrosProdutoCombinadoFaltanteReport items={data} />;
             case 'erros/bip-sem-pedido': return <ErrosBipSemPedidoReport scans={data} />;
+            case 'producao/por-cor': return <ProducaoPorCorReport data={data} />;
+            case 'producao/pacotes-resumo': return <PacotesResumoReport data={data} />;
             case 'financeiro/faturamento': return <FaturamentoReport data={data} />;
             case 'financeiro/ranking-sku': return <RankingSkuReport data={data} />;
             case 'financeiro/por-canal': return <ComparativoCanalReport data={data} />;

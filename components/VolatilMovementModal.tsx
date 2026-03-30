@@ -7,11 +7,11 @@ interface VolatilMovementModalProps {
     onClose: () => void;
     group: StockPackGroup;
     stockItems: StockItem[];
-    onConfirm: (groupId: string, delta: number, ref: string, skuCode?: string) => Promise<void>;
+    onConfirmAll: (groupId: string, entries: { skuCode: string, delta: number }[], ref: string) => Promise<void>;
     movementType: 'entrada' | 'saida';
 }
 
-const VolatilMovementModal: React.FC<VolatilMovementModalProps> = ({ isOpen, onClose, group, stockItems, onConfirm, movementType }) => {
+const VolatilMovementModal: React.FC<VolatilMovementModalProps> = ({ isOpen, onClose, group, stockItems, onConfirmAll, movementType }) => {
     const isEntrada = movementType === 'entrada';
     const [reference, setReference] = useState('');
     const [isSaving, setIsSaving] = useState(false);
@@ -38,13 +38,12 @@ const VolatilMovementModal: React.FC<VolatilMovementModalProps> = ({ isOpen, onC
             const movementEntries = Object.entries(inputs)
                 .map(([skuCode, data]: [string, any]) => ({
                     skuCode,
-                    quantity: data.packCount * data.packSize
+                    delta: isEntrada ? (data.packCount * data.packSize) : -(data.packCount * data.packSize)
                 }))
-                .filter(m => m.quantity > 0);
+                .filter(m => Math.abs(m.delta) > 0);
 
-            for (const movement of movementEntries) {
-                const delta = isEntrada ? movement.quantity : -movement.quantity;
-                await onConfirm(group.id, delta, reference, movement.skuCode);
+            if (movementEntries.length > 0) {
+                await onConfirmAll(group.id, movementEntries, reference);
             }
             onClose();
             setInputs({});
@@ -99,8 +98,13 @@ const VolatilMovementModal: React.FC<VolatilMovementModalProps> = ({ isOpen, onC
                                     <div key={item.id} className={`p-4 rounded-xl border-2 transition-all ${itemTotal > 0 ? (isEntrada ? 'border-emerald-300 bg-emerald-50' : 'border-red-300 bg-red-50') : 'border-gray-100 bg-white'}`}>
                                         <div className="mb-3 flex justify-between items-start">
                                             <div className="flex-1">
-                                                <p className="font-bold text-gray-800 text-sm truncate">{item.name}</p>
-                                                <p className="text-[10px] opacity-70 font-bold uppercase tracking-wider text-gray-500">SKU: {item.code}</p>
+                                                <p className="text-xs font-black text-slate-800 uppercase leading-tight">{item.name}</p>
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.code}</p>
+                                                    <span className="text-[9px] font-black bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded uppercase border border-blue-100">
+                                                        Saldo: {item.current_qty} UN
+                                                    </span>
+                                                </div>
                                             </div>
                                             <div className="text-right">
                                                 <p className="text-[9px] font-black text-gray-400 uppercase">Saldo Atual</p>
@@ -130,13 +134,16 @@ const VolatilMovementModal: React.FC<VolatilMovementModalProps> = ({ isOpen, onC
                                         </div>
 
                                         {itemTotal > 0 && (
-                                            <div className="mt-3 flex justify-between items-center">
+                                            <div className="mt-4 flex justify-between items-center p-2 bg-white rounded-lg border border-dashed">
                                                 {!isEntrada && itemTotal > (item.current_qty || 0) && (
-                                                    <span className="text-[9px] font-black text-red-500">⚠️ Excede saldo deste SKU</span>
+                                                    <span className="text-[10px] font-black text-red-500 animate-pulse">⚠️ SALDO INSUFICIENTE</span>
                                                 )}
-                                                <span className={`ml-auto text-xs font-black uppercase tracking-widest px-2 py-1 rounded bg-white shadow-sm border ${isEntrada ? 'text-emerald-700 border-emerald-200' : 'text-red-700 border-red-200'}`}>
-                                                    {isEntrada ? '+' : '-'} {itemTotal} UN
-                                                </span>
+                                                <div className="flex flex-col">
+                                                    <span className="text-[9px] font-black text-gray-400 uppercase">Subtotal SKU</span>
+                                                    <span className={`text-sm font-black uppercase tracking-widest ${isEntrada ? 'text-emerald-700' : 'text-red-700'}`}>
+                                                        {isEntrada ? '+' : '-'} {itemTotal} UN
+                                                    </span>
+                                                </div>
                                             </div>
                                         )}
                                     </div>
@@ -168,12 +175,17 @@ const VolatilMovementModal: React.FC<VolatilMovementModalProps> = ({ isOpen, onC
                     </div>
 
                     {/* Preview Global */}
-                    <div className={`p-4 rounded-xl ${isEntrada ? 'bg-emerald-100' : 'bg-red-100'}`}>
+                    <div className={`p-4 rounded-2xl border-2 ${isEntrada ? 'bg-emerald-50 border-emerald-200 shadow-sm' : 'bg-red-50 border-red-200'}`}>
                         <div className="flex justify-between items-center">
-                            <span className="text-xs font-black text-gray-600 uppercase tracking-widest">Estoque Final Estimado</span>
-                            <span className={`text-xl font-black ${isEntrada ? 'text-emerald-700' : 'text-red-700'}`}>
-                                {(group.quantidade_volatil || 0)} → {Math.max(0, (group.quantidade_volatil || 0) + (isEntrada ? totalToChange : -totalToChange))} UN
-                            </span>
+                            <div className="flex flex-col">
+                                <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Saldo do Grupo Após Operação</span>
+                                <span className="text-[9px] font-bold text-gray-400 capitalize opacity-70">({group.name})</span>
+                            </div>
+                            <div className="text-right">
+                                <span className={`text-2xl font-black ${isEntrada ? 'text-emerald-700' : 'text-red-700'}`}>
+                                    {(group.quantidade_volatil || 0)} → {Math.max(0, (group.quantidade_volatil || 0) + (isEntrada ? totalToChange : -totalToChange))} UN
+                                </span>
+                            </div>
                         </div>
                     </div>
                 </div>

@@ -60,6 +60,18 @@ export interface Setor {
   created_at?: string;
 }
 
+export interface UserPermissions {
+  estoque?: boolean;
+  pacotes?: boolean;
+  calculadora?: boolean;
+  bling?: boolean;
+  financeiro?: boolean;
+  relatorios?: boolean;
+  funcionarios?: boolean;
+  configuracoes?: boolean;
+  etiquetas?: boolean;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -70,6 +82,7 @@ export interface User {
   prefix?: string;
   attendance: AttendanceRecord[];
   ui_settings?: UiSettings;
+  permissions?: UserPermissions;
 }
 
 // Dashboard & Stats
@@ -130,7 +143,6 @@ export interface AlertItemData {
   icon: React.ReactNode;
 }
 
-// FIX: Add missing properties showRecentActivity and showSystemAlerts
 export interface DashboardWidgetConfig {
   showProductionSummary: boolean;
   showMaterialDeductions: boolean;
@@ -191,7 +203,6 @@ export interface StockItem {
   base_type?: "branca" | "preta" | "especial";
   localizacao?: string;
   mixed_qty?: number;
-  // optional BOM/composition information (parent products may list children here)
   bom_composition?: {
     items: Array<{
       code?: string;
@@ -201,7 +212,6 @@ export interface StockItem {
       [key: string]: any;
     }>;
   };
-  // legacy field used elsewhere
   items?: any[];
 }
 
@@ -216,19 +226,12 @@ export type StockMovementOrigin =
 
 export interface StockMovement {
   id: string;
-  /** Código do produto */
   stockItemCode: string;
-  /** Nome do produto (display) */
   stockItemName?: string;
-  /** Operador/Usuário que registrou a movimentação */
   operatorName?: string;
-  /** Usuário que criou o registro (mapeado de created_by_name) */
   createdBy?: string;
-  /** Diferença na quantidade (positivo para entrada, negativo para saída) */
   qty_delta: number;
-  /** Dados do item no momento da movimentação (snapshot repassado pelo DB) */
   itemSnapshot?: { name: string, unit: string };
-  /** Novo total APÓS a movimentação (opcional/informativo) */
   new_total?: number;
   origin: StockMovementOrigin | string;
   ref: string;
@@ -260,6 +263,7 @@ export interface StockPackGroup {
   pallet?: string;
   galpao?: string;
   com_desempenadeira?: boolean;
+  pack_size?: number;
   created_at?: string;
 }
 
@@ -280,17 +284,16 @@ export interface WeighingBatch {
   id: string;
   stock_item_code: string;
   stock_item_name: string;
-  stockItemName: string; // Alias
+  stockItemName: string;
   initialQty: number;
-  initial_qty: number; // DB alias
+  initial_qty: number;
   usedQty: number;
-  used_qty: number; // DB alias
+  used_qty: number;
   createdAt: Date;
   userId: string;
   createdBy: string;
   weighingType: WeighingType;
   weighing_type?: WeighingType;
-  // Novos campos Ensacamento/Batedor
   operadorMaquina?: string;
   operador_maquina?: string;
   operadorBatedor?: string;
@@ -352,8 +355,8 @@ export interface OrderResolutionDetails {
 export interface OrderItem {
   id: string;
   orderId: string;
-  blingId?: string; // ID interno do Bling para vínculos
-  blingNumero?: string; // Número do pedido no Bling (ex: "153782")
+  blingId?: string;
+  blingNumero?: string;
   tracking: string;
   sku: string;
   qty_original: number;
@@ -441,31 +444,37 @@ export interface SkuLink {
 
 // Bling Integration
 export interface BlingExportacaoConfig {
-  statusPadrao?: number[]; // Códigos de situação do Bling: 6=Em Aberto, 9=Atendido, 15=Em Andamento
-  diasPadrao?: number; // Quantos dias atrás buscar (padrão: 7)
-  canalPadrao?: "ML" | "SHOPEE" | "SITE" | "TODOS"; // Canal padrão para sincronização
-  autoImportarRastreio?: boolean; // Importar código de rastreio automaticamente ao sincronizar
-  limitePedidos?: number; // Limite máximo de pedidos por sincronização
+  statusPadrao?: number[];
+  diasPadrao?: number;
+  canalPadrao?: "ML" | "SHOPEE" | "SITE" | "TODOS";
+  autoImportarRastreio?: boolean;
+  limitePedidos?: number;
 }
 
 export interface BlingEtiquetasConfig {
-  modoPadrao?: "danfe_etiqueta" | "apenas_etiqueta"; // Modo padrão de impressão
-  fonteZpl?: "bling_api" | "local"; // Preferir ZPL real do Bling ou gerar localmente
-  delayEntrePrintMs?: number; // Delay entre impressões em ms
+  modoPadrao?: "danfe_etiqueta" | "apenas_etiqueta";
+  fonteZpl?: "bling_api" | "local";
+  delayEntrePrintMs?: number;
 }
 
 export interface BlingSettings {
-  apiKey: string; // Access Token
+  apiKey: string;
   clientId?: string;
   clientSecret?: string;
-  refreshToken?: string; // NOVO: Para renovação automática
-  expiresIn?: number; // NOVO: Tempo em segundos
-  createdAt?: number; // NOVO: Timestamp da criação
+  refreshToken?: string;
+  expiresIn?: number;
+  createdAt?: number;
   autoSync: boolean;
-  autoSyncFromDate?: string; // Data mínima para sincronização automática (YYYY-MM-DD)
+  autoSyncFromDate?: string;
   scope: BlingScopeSettings;
-  exportacao?: BlingExportacaoConfig; // Configurações de exportação de pedidos
-  etiquetasConfig?: BlingEtiquetasConfig; // Configurações de etiquetas
+  exportacao?: BlingExportacaoConfig;
+  etiquetasConfig?: BlingEtiquetasConfig;
+  certificado?: {
+    base64?: string;
+    password?: string;
+    fileName?: string;
+    expiryDate?: number;
+  };
 }
 
 // Mercado Livre Integration
@@ -474,21 +483,21 @@ export interface MLSettings {
   clientSecret: string;
   accessToken?: string;
   refreshToken?: string;
-  expiresAt?: number; // Timestamp em ms quando o token expira
-  sellerId?: string; // ID do vendedor no ML
+  expiresAt?: number;
+  sellerId?: string;
   sellerNickname?: string;
   autoSync: boolean;
 }
 
 // Shopee Open Platform Integration
 export interface ShopeeSettings {
-  authMode?: "oauth" | "direct"; // 'oauth' = Partner ID+Key; 'direct' = token manual sem partner key
+  authMode?: "oauth" | "direct";
   partnerId: string;
   partnerKey: string;
   shopId?: string;
   accessToken?: string;
   refreshToken?: string;
-  expiresAt?: number; // Timestamp em ms quando o token expira
+  expiresAt?: number;
   shopName?: string;
   autoSync: boolean;
 }
@@ -545,13 +554,13 @@ export interface BlingInvoice {
 
 export interface BlingProduct {
   id: string;
-  codigo: string; // SKU
+  codigo: string;
   descricao: string;
   preco: number;
   estoqueAtual: number;
 }
 
-// Sync Infrastructure for PHASE 1
+// Sync Infrastructure
 export enum SyncStatus {
   PENDING = "PENDING",
   SYNCING = "SYNCING",
@@ -578,10 +587,10 @@ export interface SyncLog {
 
 export interface ProductVinculation {
   id: string;
-  erpProductId: string; // ID do produto interno
-  blingProductId: string; // ID do produto no Bling
-  blingCode: string; // SKU do Bling
-  erpSku: string; // SKU interno
+  erpProductId: string;
+  blingProductId: string;
+  blingCode: string;
+  erpSku: string;
   createdAt: number;
   lastSyncedAt?: number;
 }
@@ -601,19 +610,19 @@ export interface SyncResult {
 
 export interface BlingOrderSyncData {
   blingOrder: BlingSaleOrder;
-  internalOrderId?: string; // Se já vinculado
+  internalOrderId?: string;
   syncedAt: number;
   status: SyncStatus;
 }
 
 export interface BlingInvoiceSyncData {
   blingInvoice: BlingInvoice;
-  pedidoVendaId?: string; // Se já vinculado
+  pedidoVendaId?: string;
   syncedAt: number;
   status: SyncStatus;
 }
 
-// Advanced Filtering - PHASE 2
+// Advanced Filtering
 export enum BatchStatus {
   NOVO = "NOVO",
   EM_PROCESSAMENTO = "EM_PROCESSAMENTO",
@@ -623,32 +632,32 @@ export enum BatchStatus {
 }
 
 export interface AdvancedFilter {
-  searchTerm?: string; // Busca por texto (nome, SKU, pedido)
-  status?: string[]; // Array de status para filtrar
-  lote?: string; // ID do lote específico
-  dateFrom?: string; // Data de início (YYYY-MM-DD)
-  dateTo?: string; // Data de fim (YYYY-MM-DD)
-  skus?: string[]; // Array de SKUs para filtrar
-  productIds?: string[]; // Array de product IDs
-  excludeCompleted?: boolean; // Excluir já completados
-  minAmount?: number; // Valor mínimo
-  maxAmount?: number; // Valor máximo
-  sortBy?: "date" | "amount" | "status" | "name"; // Campo para ordenar
-  sortOrder?: "asc" | "desc"; // Ordem de classificação
+  searchTerm?: string;
+  status?: string[];
+  lote?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  skus?: string[];
+  productIds?: string[];
+  excludeCompleted?: boolean;
+  minAmount?: number;
+  maxAmount?: number;
+  sortBy?: "date" | "amount" | "status" | "name";
+  sortOrder?: "asc" | "desc";
 }
 
 export interface FilterResult {
-  items: any[]; // Itens filtrados
-  totalCount: number; // Total sem paginação
-  displayCount: number; // Total na página atual
-  hasMore: boolean; // Se há mais resultados
-  filters: AdvancedFilter; // Filtros aplicados
+  items: any[];
+  totalCount: number;
+  displayCount: number;
+  hasMore: boolean;
+  filters: AdvancedFilter;
 }
 
 export interface BatchOperation {
   id: string;
   type: "UPDATE_STATUS" | "VINCULATE" | "ASSIGN_LOTE" | "DELETE";
-  targetIds: string[]; // IDs dos itens afetados
+  targetIds: string[];
   createdAt: number;
   completedAt?: number;
   status: "PENDING" | "PROCESSING" | "SUCCESS" | "PARTIAL" | "ERROR";
@@ -659,17 +668,17 @@ export interface BatchOperation {
 
 export interface LoteInfo {
   id: string;
-  name: string; // Nome do lote (ex: "Lote 001", "Pedidos-2026-02")
+  name: string;
   description?: string;
   createdAt: number;
   itemsCount: number;
   completedCount: number;
   errorCount: number;
   status: BatchStatus;
-  tags?: string[]; // Para organização adicional
+  tags?: string[];
 }
 
-// NFe & SEFAZ Integration - PHASE 3
+// NFe & SEFAZ Integration
 export enum NFeStatus {
   PENDENTE = "PENDENTE",
   ASSINADA = "ASSINADA",
@@ -684,9 +693,9 @@ export enum NFeStatus {
 
 export interface NFeDados {
   id: string;
-  numero?: string; // Número sequencial da NF
-  serie?: string; // Série (padrão 1)
-  chaveAcesso?: string; // Chave de acesso 44 dígitos
+  numero?: string;
+  serie?: string;
+  chaveAcesso?: string;
   cnpjEmitente: string;
   nomeEmitente: string;
   cnpjDestinatario: string;
@@ -703,7 +712,7 @@ export interface NFeDados {
   valorPIS?: number;
   valorCOFINS?: number;
   valorTotal: number;
-  dataEmissao: string; // YYYY-MM-DD HH:mm:ss
+  dataEmissao: string;
   naturezaOperacao: string;
   descricaoNatureza: string;
   pedidoVendaId?: string;
@@ -720,11 +729,11 @@ export interface NFeDados {
 
 export interface NFeItem {
   numero: number;
-  codigo: string; // SKU
+  codigo: string;
   descricao: string;
-  ncm: string; // Nomenclatura Comum do Mercosul (8 dígitos)
-  cfop: string; // Código Fiscal de Operação (4 dígitos)
-  unidade: string; // UN, KG, etc
+  ncm: string;
+  cfop: string;
+  unidade: string;
   quantidade: number;
   valorUnitario: number;
   valorTotal: number;
@@ -739,17 +748,16 @@ export interface NFeAssinatura {
   nfeId: string;
   dataAssinatura: number;
   certificadoSerialNumber: string;
-  assinadaPor: string; // Nome do usuário
-  conteudoAssinado: boolean;
+  assinadaPor: string;
 }
 
 export interface NFeSefazEnvio {
   nfeId: string;
   dataEnvio: number;
-  versaoPadrao: string; // ex: "4.00"
+  versaoPadrao: string;
   ambiente: "PRODUÇÃO" | "HOMOLOGAÇÃO";
   statusSefaz: string;
-  recibo?: string; // Número do recibo da SEFAZ
+  recibo?: string;
   protocoloAutorizacao?: string;
   dataAutorizacao?: number;
   urlConsulta?: string;
@@ -761,10 +769,10 @@ export interface NFeRegistro {
   assinatura?: NFeAssinatura;
   sefazEnvio?: NFeSefazEnvio;
   status: NFeStatus;
-  xmlOriginal?: string; // XML gerado antes de assinar
-  xmlAssinado?: string; // XML assinado (com PKCS#7)
-  pdfRenderizado?: string; // Base64 ou URL do PDF
-  linkDanfe?: string; // Link para DANFE na SEFAZ
+  xmlOriginal?: string;
+  xmlAssinado?: string;
+  pdfRenderizado?: string;
+  linkDanfe?: string;
   erroDetalhes?: string;
   tentativasEnvio: number;
   ultimaTentativa?: number;
@@ -776,12 +784,12 @@ export interface CertificadoDigital {
   id: string;
   nome: string;
   nomeArquivo: string;
-  senhaArmazenada?: string; // Encrypted
+  senhaArmazenada?: string;
   cnpjAssociado: string;
   valido: boolean;
-  dataValidade: number; // Timestamp
+  dataValidade: number;
   dataCarregamento: number;
-  tipo: "A1" | "A3"; // A1=arquivo, A3=token
+  tipo: "A1" | "A3";
   instancia: "RAIZ" | "INTERMEDIÁRIA" | "FINAL";
 }
 
@@ -792,34 +800,13 @@ export interface ConfiguracaoNFe {
   certificadoDigital?: CertificadoDigital;
   cnpjEmitente: string;
   uf: string;
-  numSerieNFe: string; // Série usada para NFes
-  proxNumNFe: number; // Próximo número a ser usado
-  naturezaOperacao: string; // 'Venda' por padrão
-  sequencialAssinatura: number; // Para controle de assinaturas
-  estrategiaSefaz?: "bling" | "direto"; // PHASE 3 HÍBRIDO: Estratégia de envio
-  cnpj?: string; // Para configuração simplificada
+  numSerieNFe: string;
+  proxNumNFe: number;
+  naturezaOperacao: string;
+  sequencialAssinatura: number;
+  estrategiaSefaz?: "bling" | "direto";
 }
 
-export interface SefazResponse {
-  codStatus: string; // 100 = autorizado, 110 = arquivo registrado, 540 = NF duplicada
-  xMotivo: string; // Motivo da resposta
-  protNFe?: {
-    infProt: {
-      id: string;
-      tpAmb: string;
-      verAplic: string;
-      chNFe: string;
-      dhRecbto: string;
-      nProt: string;
-      digVal: string;
-      cStat: string;
-      xMotivo: string;
-    };
-  };
-  xmlResposta: string;
-}
-
-// ZPL & Labels
 export interface ZplPlatformSettings {
   imageAreaPercentage_even: number;
   footer: {
@@ -933,17 +920,30 @@ export interface EtiquetaHistoryItem {
   page_hashes: string[];
 }
 
-export type ZplIncludeMode = "both" | "only_label" | "only_danfe";
+export interface ZplBatch {
+  id: string;
+  created_at: string;
+  batch_id: string;
+  description?: string;
+  source: string | 'bling-notas' | 'marketplace' | 'individual' | 'manual';
+  label_count: number;
+  zpl_content: string;
+  created_by_name?: string;
+}
 
-export type EtiquetasState = {
+export interface EtiquetasState {
   zplInput: string;
-  includeMode: ZplIncludeMode; // Replaces includeDanfe
+  includeMode: "both" | "only_danfe" | "only_label";
   zplPages: string[];
   previews: string[];
   extractedData: Map<number, ExtractedZplData>;
   printedIndices: Set<number>;
   warnings: string[];
-};
+  useHalfCount?: boolean;
+  showUnificadores?: boolean;
+}
+
+export type ZplIncludeMode = "both" | "only_label" | "only_danfe";
 
 // Planning & Shopping
 export interface PlanningParameters {
@@ -1075,7 +1075,7 @@ export interface ColumnMapping {
   dateShipping: string;
   priceGross: string;
   totalValue?: string;
-  buyerPaidTotal?: string;        // Total pago pelo comprador (coluna específica)
+  buyerPaidTotal?: string;
   shippingFee: string;
   shippingPaidByCustomer?: string;
   fees: string[];
@@ -1084,7 +1084,7 @@ export interface ColumnMapping {
   customerCpf: string;
   statusColumn?: string;
   acceptedStatusValues?: string[];
-  storeName?: string;  // Nome amigável da loja para exibição em relatórios
+  storeName?: string;
 }
 
 export interface ExpeditionRule {
@@ -1161,30 +1161,21 @@ export interface GeneralSettings {
   setorDisplayNames: Record<string, string>;
   customSectors?: CustomSector[];
   customStores?: CustomStore[];
-  /** Modo de navegação: 'sidebar' = menu lateral ativo, 'topnav' = menu superior ativo sem lateral */
   navMode?: 'sidebar' | 'topnav';
-  /** Lista de despesas/deduções salvas (impostos, publicidade, funcionários, insumos...) */
   deductions?: TaxEntry[];
-  /** Cards personalizáveis do financeiro */
   financeCards?: FinanceCardConfig[];
-  /** Título personalizado para o relatório financeiro exportado */
   reportTitle?: string;
-  /** Logo em Base64 para incluir nos relatórios exportados */
   reportLogoBase64?: string;
-  /** Foto personalizada enviada pelo usuário para sair no relatório */
   customReportImageBase64?: string;
-  /** Template de PowerPoint em Base64 para adaptar a exportação */
   pptxTemplateBase64?: string;
 }
 
-/** Configuração de um card customizável no painel financeiro */
 export interface FinanceCardConfig {
   id: string;
   label: string;
-  metric: 'gross' | 'net' | 'buyerTotal' | 'fees' | 'shipping' | 'customerPaid' | 'taxTotal' | 'units' | 'totalPedidos' | 'ticketMedio' | 'margemPct' | 'deductions' | 'custom';
+  metric: 'gross' | 'net' | 'buyerTotal' | 'fees' | 'shipping' | 'customerPaid' | 'taxTotal' | 'units' | 'totalPedidos' | 'ticketMedio' | 'margemPct' | 'deductions' | 'estProfit' | 'estMargin' | 'custom';
   color: 'blue' | 'red' | 'orange' | 'emerald' | 'slate' | 'purple';
   enabled: boolean;
-  /** Fórmula customizada: tokens separados por espaço. Ex: "gross - fees - shipping" */
   customFormula?: string;
 }
 
@@ -1194,12 +1185,11 @@ export const defaultGeneralSettings: GeneralSettings = {
   dateSource: "sale_date",
   isRepeatedValue: false,
   bipagem: { debounceTime_ms: 50, scanSuffix: "", defaultOperatorId: "" },
-  // Configurações de etiquetas ajustadas para estabilidade
   etiquetas: {
     labelaryApiUrl:
       "https://api.labelary.com/v1/printers/{dpmm}dpmm/labels/{width}x{height}/0/",
-    apiRequestDelay_ms: 1200, // Aumentado para 1200ms
-    renderChunkSize: 3 // Reduzido para 3
+    apiRequestDelay_ms: 1200,
+    renderChunkSize: 3
   },
   estoque: {
     purchaseSuggestionMultiplier: 2,
@@ -1240,6 +1230,7 @@ export const defaultGeneralSettings: GeneralSettings = {
       priceGross: "Receita por produtos (BRL)",
       totalValue: "",
       shippingFee: "",
+      shippingPaidByCustomer: "Custo de envio (pago pelo comprador)",
       fees: ["Tarifa de venda e impostos (BRL)"],
       customerName: "Comprador",
       customerCpf: "Documento do comprador",
@@ -1348,9 +1339,7 @@ export interface TaxEntry {
   value: number;
   enabled?: boolean;
   calculatedAmount?: number;
-  /** Base de cálculo */
   appliesTo?: 'gross' | 'after_fees' | 'after_ship' | 'after_both';
-  /** Categoria da despesa */
   category?: 'imposto' | 'publicidade' | 'funcionarios' | 'insumos' | 'outro';
 }
 
@@ -1360,15 +1349,13 @@ export interface CustomStore {
   color?: string;
 }
 
-// ─── Bling Importação — campos editáveis por pedido antes de gerar NF-e ───────
 export interface PedidoOverride {
   ncm?: string;
-  origemProduto?: number; // 0=Nacional, 1=Estrangeira direta, 2=Estrangeira adquirida
-  desconto?: number; // Valor em R$
+  origemProduto?: number;
+  desconto?: number;
   clienteNome?: string;
 }
 
-// ─── Lote de NF-e gerado na Importação ───────────────────────────────────────
 export interface LoteNfeItem {
   pedidoVendaId: string;
   pedidoNumero?: string;
@@ -1383,8 +1370,8 @@ export interface LoteNfeFalha {
 }
 
 export interface LoteNfe {
-  id: string; // ex: "LOTE-1736000000000"
-  data: string; // ISO datetime
+  id: string;
+  data: string;
   tipo: "GERACAO_APENAS" | "GERACAO_EMISSAO";
   total: number;
   ok: number;
@@ -1393,7 +1380,6 @@ export interface LoteNfe {
   falhas?: LoteNfeFalha[];
 }
 
-// ─── Lote de etiquetas ZPL gerado ────────────────────────────────────────────
 export interface ZplBatch {
   id: string;
   timestamp: string;
@@ -1405,7 +1391,6 @@ export interface ZplBatch {
   nfes?: LoteNfeItem[];
 }
 
-// ─── Status de NF-e (Bling situacao codes) ───────────────────────────────────
 export type NfeSituacao =
   | "todas"
   | "pendentes"

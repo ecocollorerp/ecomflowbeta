@@ -23,6 +23,8 @@ interface FinancePageProps {
     onSaveSettings?: (settings: GeneralSettings) => void;
     onNavigateToSettings: () => void;
     setCurrentPage: (page: string) => void;
+    onSelectSku?: (sku: string) => void;
+    costCalculations?: any[];
 }
 
 interface FinanceStatCardProps {
@@ -130,7 +132,9 @@ const FinancePage: React.FC<FinancePageProps> = ({
     onLaunchOrders,
     onSaveSettings,
     onNavigateToSettings,
-    setCurrentPage
+    setCurrentPage,
+    onSelectSku,
+    costCalculations = []
 }) => {
     const [activeTab, setActiveTab] = useState<'overview' | 'reports' | 'materials'>('overview');
 
@@ -154,7 +158,9 @@ const FinancePage: React.FC<FinancePageProps> = ({
     const defaultCards: FinanceCardConfig[] = [
         { id: 'card_1', label: 'Faturado', metric: 'gross', color: 'blue', enabled: true },
         { id: 'card_2', label: 'Líquido Final', metric: 'net', color: 'emerald', enabled: true },
-        { id: 'card_3', label: 'Pago pelos Clientes', metric: 'buyerTotal', color: 'purple', enabled: true },
+        { id: 'card_3', label: 'Lucro (Calculadora)', metric: 'estProfit', color: 'emerald', enabled: true },
+        { id: 'card_4', label: 'Margem Real', metric: 'estMargin', color: 'emerald', enabled: true },
+        { id: 'card_5', label: 'Pago pelos Clientes', metric: 'buyerTotal', color: 'purple', enabled: true },
     ];
     const [financeCards, setFinanceCards] = useState<FinanceCardConfig[]>(() => {
         const saved = generalSettings.financeCards;
@@ -223,6 +229,13 @@ const FinancePage: React.FC<FinancePageProps> = ({
     const [isMappingModalOpen, setIsMappingModalOpen] = useState(false);
     const [mappingCanal, setMappingCanal] = useState<string>('shopee');
     const [dateSourceMode, setDateSourceMode] = useState<'sale_date' | 'import_date' | 'shipping_date'>(generalSettings.dateSource === 'import_date' ? 'import_date' : 'sale_date');
+    
+    // Forçar sale_date se não houver configuração explícita para evitar erros de importação recente
+    useEffect(() => {
+        if (!generalSettings.dateSource) {
+            setDateSourceMode('sale_date');
+        }
+    }, [generalSettings.dateSource]);
 
     const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
     const fmtPct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
@@ -247,7 +260,12 @@ const FinancePage: React.FC<FinancePageProps> = ({
         return null;
     };
 
-    const { stats, canalComparison, taxTotal, finalNetProfit, filteredOrders, taxBreakdown, dailyChart, totalPedidos, ticketMedio, margemPct, storeProfitability, materialList, totalMaterialCost, prevStats, prevTaxTotal, prevFinalNetProfit, prevTicketMedio, prevMargemPct, prevTotalMaterialCost } = useMemo(() => {
+    const { 
+        stats, canalComparison, taxTotal, finalNetProfit, filteredOrders, taxBreakdown, dailyChart, totalPedidos, 
+        ticketMedio, margemPct, storeProfitability, materialList, totalMaterialCost,
+        prevStats, prevTaxTotal, prevFinalNetProfit, prevTicketMedio, prevMargemPct, prevTotalMaterialCost,
+        estimatedProfitCalculated, estimatedMarginCalculated 
+    } = useMemo(() => {
         const now = new Date();
         let startLimit: Date | null = null;
         let endLimit: Date | null = null;
@@ -340,8 +358,8 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 base.fees += gFees / 100;
                 base.shipping += gShip / 100;
                 base.customerPaid += gCustomerShip / 100;
-                base.buyerTotal += (gTotal + gCustomerShip) / 100;
-                base.net += gGross / 100;
+                base.buyerTotal += gTotal / 100; // price_total já deve incluir o pago pelo cliente + frete
+                base.net += gNet / 100;
 
                 if (first.canal === 'ML') comparison.ml += gGross / 100;
                 else if (first.canal === 'SHOPEE') comparison.shopee += gGross / 100;
@@ -422,6 +440,41 @@ const FinancePage: React.FC<FinancePageProps> = ({
         
         const prevMaterialList = calculateMaterialList(prev.filtered, skuLinks, stockItems, produtosCombinados, generalSettings.expeditionRules, generalSettings);
         const prevTotalMaterialCost = prevMaterialList.reduce((s, m) => s + (m.cost || 0), 0);
+        
+        // --- LUCRO ESTIMADO PELA CALCULADORA ---
+        // Pegar o custo mais recente de cada SKU na calculadora (Map<SKU, {cost, date}>)
+        const recentCostsMap = new Map<string, { cost: number; date: number }>();
+        costCalculations.forEach(calc => {
+            const sku = calc.product_sku.toUpperCase();
+            const date = new Date(calc.created_at).getTime();
+            const existing = recentCostsMap.get(sku);
+            if (!existing || date > existing.date) {
+                // Aqui o calc.profit é o lucro unitário (Venda - Custo Direto)
+                // Mas precisamos do Custo Direto Unitário para subtrair do Preço do Pedido
+                // No saveCalculation, salvamos: selling_price, total_material_cost, profit, calculation.shipping_cost, etc.
+                const feesValue = (calc.selling_price * calc.platform_fee_percent) / 100;
+                const taxValue = (calc.selling_price * calc.tax_percent) / 100;
+                const directCostUnit = (calc.total_material_cost || 0) + (calc.other_costs || 0) + feesValue + (calc.shipping_cost || 0) + taxValue;
+                recentCostsMap.set(sku, { cost: directCostUnit, date });
+            }
+        });
+
+        let estimatedProfitCalculated = 0;
+        current.filtered.forEach(o => {
+            const linkedSku = skuLinks.find(l => l.importedSku.toUpperCase() === o.sku.toUpperCase());
+            const masterCode = linkedSku ? linkedSku.masterProductSku.toUpperCase() : o.sku.toUpperCase();
+            
+            const calcData = recentCostsMap.get(masterCode);
+            if (calcData) {
+                // Lucro = Preço de Venda do Pedido - Custo Direto Unitário da Calculadora
+                estimatedProfitCalculated += (o.price_gross - calcData.cost);
+            } else {
+                // Fallback: usar a lógica padrão (Lucro Bruto - Proporção do Material)
+                const product = stockItems.find(i => i.code.toUpperCase() === masterCode);
+                const itemCost = product?.cost_price || 0;
+                estimatedProfitCalculated += (o.price_gross - (itemCost * o.qty_final));
+            }
+        });
 
         return { 
             stats: current.base, canalComparison: current.comparison, taxTotal: current.taxCalculated, finalNetProfit: current.finalNet - totalMaterialCost, 
@@ -429,9 +482,10 @@ const FinancePage: React.FC<FinancePageProps> = ({
             ticketMedio: current.ticketMedio, margemPct: current.base.gross > 0 ? ((current.finalNet - totalMaterialCost) / current.base.gross) * 100 : 0, 
             storeProfitability: current.storeProfit, materialList: currentMaterialList, totalMaterialCost,
             prevStats: prev.base, prevTaxTotal: prev.taxCalculated, prevFinalNetProfit: prev.finalNet - prevTotalMaterialCost, prevTicketMedio: prev.ticketMedio,
-            prevMargemPct: prev.base.gross > 0 ? ((prev.finalNet - prevTotalMaterialCost) / prev.base.gross) * 100 : 0, prevTotalMaterialCost
+            prevMargemPct: prev.base.gross > 0 ? ((prev.finalNet - prevTotalMaterialCost) / prev.base.gross) * 100 : 0, prevTotalMaterialCost,
+            estimatedProfitCalculated, estimatedMarginCalculated: current.base.gross > 0 ? (estimatedProfitCalculated / current.base.gross) * 100 : 0
         };
-    }, [allOrders, period, canalFilter, customDates, compareMode, compareCustomDates, considerarInvalidos, dateSourceMode, rankingMetric, generalSettings.isRepeatedValue, taxes, deductPlatformFees, deductShipping, skuLinks, stockItems]);
+    }, [allOrders, period, canalFilter, customDates, compareMode, compareCustomDates, considerarInvalidos, dateSourceMode, rankingMetric, generalSettings.isRepeatedValue, taxes, deductPlatformFees, deductShipping, skuLinks, stockItems, produtosCombinados, costCalculations]);
 
     const handleAddTax = () => {
         const updated = [...taxes, { id: Date.now().toString(), name: 'Nova Despesa', type: 'percent' as const, value: 0, enabled: true, category: 'outro' as const, appliesTo: 'gross' as const }];
@@ -477,7 +531,8 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 reportTitle: generalSettings.reportTitle,
                 reportLogoBase64: generalSettings.reportLogoBase64,
                 stockMovements: stockMovements,
-                prevStats, prevNetProfit: prevFinalNetProfit, prevTicketMedio, prevMargemPct, prevTaxTotal
+                prevStats, prevNetProfit: prevFinalNetProfit, prevTicketMedio, prevMargemPct, prevTaxTotal,
+                estimatedProfitCalculated
             });
         } catch (e) {
             console.error("Erro ao exportar:", e);
@@ -506,7 +561,8 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 reportTitle: generalSettings.reportTitle,
                 reportLogoBase64: generalSettings.reportLogoBase64,
                 stockMovements: stockMovements,
-                prevStats, prevNetProfit: prevFinalNetProfit, prevTicketMedio, prevMargemPct, prevTaxTotal
+                prevStats, prevNetProfit: prevFinalNetProfit, prevTicketMedio, prevMargemPct, prevTaxTotal,
+                estimatedProfitCalculated
             });
         } catch (e) {
             console.error('Erro ao exportar PPTX:', e);
@@ -832,7 +888,8 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                 gross: stats.gross, net: finalNetProfit, buyerTotal: stats.buyerTotal,
                                 fees: stats.fees, shipping: stats.shipping, customerPaid: stats.customerPaid,
                                 taxTotal, cmv: totalMaterialCost, deductions: (deductPlatformFees ? stats.fees : 0) + (deductShipping ? stats.shipping : 0) + taxTotal + totalMaterialCost,
-                                units: stats.units, totalPedidos, ticketMedio, margemPct
+                                units: stats.units, totalPedidos, ticketMedio, margemPct,
+                                estProfit: estimatedProfitCalculated, estMargin: estimatedMarginCalculated
                             };
                             const evalFormula = (formula: string): number => {
                                 try {
@@ -895,6 +952,8 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                 totalPedidos: { value: `${totalPedidos}`, sub: `${stats.units} unidades`, trend: getTrend(totalPedidos, prevStats.orders) },
                                 ticketMedio: { value: fmt(ticketMedio), sub: 'Média por pedido', trend: getTrend(ticketMedio, prevTicketMedio) },
                                 margemPct: { value: fmtPct(margemPct), sub: 'Margem líquida sobre bruto', trend: getTrend(margemPct, prevMargemPct) },
+                                estProfit: { value: fmt(estimatedProfitCalculated), sub: 'Baseado no histórico da calculadora', highlight: true },
+                                estMargin: { value: `${(estimatedMarginCalculated || 0).toFixed(1)}%`, sub: 'Margem Calculadora / Bruto' }
                             };
 
                             // Se metric=custom e há fórmula, calcula
@@ -937,12 +996,14 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                                 <option value="totalPedidos">Total Pedidos</option>
                                                 <option value="ticketMedio">Ticket Médio</option>
                                                 <option value="margemPct">Margem %</option>
+                                                <option value="estProfit">Lucro (Calculadora)</option>
+                                                <option value="estMargin">Margem Real (%)</option>
                                                 <option value="custom">⚙️ Fórmula Personalizada</option>
                                             </select>
                                             {card.metric === 'custom' && (
                                                 <div>
                                                     <input type="text" value={card.customFormula || ''} onChange={e => handleUpdateCard(card.id, 'customFormula', e.target.value)} className="w-full p-1.5 border rounded-lg text-xs font-mono outline-none" placeholder="gross - fees - shipping" />
-                                                    <p className="text-[8px] text-slate-400 mt-1">Variáveis: gross, net, fees, shipping, customerPaid, buyerTotal, taxTotal, deductions, units, totalPedidos, ticketMedio, margemPct</p>
+                                                    <p className="text-[8px] text-slate-400 mt-1">Variáveis: gross, net, fees, shipping, customerPaid, buyerTotal, taxTotal, deductions, units, totalPedidos, ticketMedio, margemPct, estProfit, estMargin</p>
                                                 </div>
                                             )}
                                             <select value={card.color} onChange={e => handleUpdateCard(card.id, 'color', e.target.value)} className="w-full p-1.5 border rounded-lg text-xs font-bold">
@@ -1197,8 +1258,14 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                             <tr key={item.code} className="hover:bg-slate-50 transition-colors">
                                                 <td className="px-4 py-3 text-xs text-slate-400">#{idx + 1}</td>
                                                 <td className="px-4 py-3">
-                                                    <p className="text-slate-800 uppercase leading-tight text-xs">{displayName}</p>
-                                                    <p className="text-[9px] font-mono text-slate-400">{item.code}{link ? ` → ${masterSku}` : ''}</p>
+                                                    <button 
+                                                        onClick={() => onSelectSku && onSelectSku(item.code)}
+                                                        className="text-left group/sku"
+                                                        title="Ver na Calculadora"
+                                                    >
+                                                        <p className="text-slate-800 uppercase leading-tight text-xs group-hover/sku:text-blue-600 transition-colors">{displayName}</p>
+                                                        <p className="text-[9px] font-mono text-slate-400 group-hover/sku:underline">{item.code}{link ? ` → ${masterSku}` : ''}</p>
+                                                    </button>
                                                 </td>
                                                 <td className="px-4 py-3 text-center text-xs">{item.qty}</td>
                                                 <td className="px-4 py-3 text-right font-black text-slate-800 text-xs">{fmt(item.revenue)}</td>

@@ -128,13 +128,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, lowStock
 
         <NavSection title="Produção" isCollapsed={isCollapsed}>
           {canShow('importer') && <NavItem icon={<ScanLine size={20} />} text="Importação" page="importer" active={currentPage === 'importer'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
+          {canShow('pacotes') && <NavItem icon={<PackageOpen size={20} />} text="Pacotes Prontos" page="pacotes" active={currentPage === 'pacotes'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
           {canShow('bipagem') && <NavItem icon={<QrCode size={20} />} text="Bipagem" page="bipagem" active={currentPage === 'bipagem'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
           {canShow('pedidos') && <NavItem icon={<ShoppingCart size={20} />} text="Pedidos" page="pedidos" active={currentPage === 'pedidos'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
         </NavSection>
 
         <NavSection title="Estoque" isCollapsed={isCollapsed}>
           {canShow('estoque') && <NavItem icon={<Package size={20} />} text="Estoque" page="estoque" active={currentPage === 'estoque'} onClick={handlePageClick} alertCount={lowStockCount} isCollapsed={isCollapsed} />}
-          {canShow('pacotes-prontos') && <NavItem icon={<PackageOpen size={20} />} text="Pacotes Prontos" page="pacotes-prontos" active={currentPage === 'pacotes-prontos'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
           {canShow('pesagem') && <NavItem icon={<Weight size={20} />} text="Máquinas" page="pesagem" active={currentPage === 'pesagem'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
           {canShow('moagem') && <NavItem icon={<Recycle size={20} />} text="Moagem" page="moagem" active={currentPage === 'moagem'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
         </NavSection>

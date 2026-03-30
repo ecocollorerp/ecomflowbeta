@@ -11,7 +11,7 @@ export interface PendingZplItem {
   zplContent: string;
   labelCount: number;
   timestamp: string;    // ISO
-  source: 'bling-notas' | 'marketplace' | 'individual';
+  source: 'bling-notas' | 'marketplace' | 'individual' | 'manual';
   /** descricao extra: ex nº pedido, lista de IDs */
   descricao?: string;
 }

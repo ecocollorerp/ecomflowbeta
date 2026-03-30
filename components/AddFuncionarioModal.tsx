@@ -5,7 +5,7 @@ import { UserRole, UserSetor, GeneralSettings } from '../types';
 interface AddFuncionarioModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onAddUser: (name: string, setor: UserSetor[], role: UserRole, email?: string, password?: string) => Promise<{ success: boolean; message?: string; }>;
+    onAddUser: (name: string, setor: UserSetor[], role: UserRole, email?: string, password?: string, permissions?: any) => Promise<{ success: boolean; message?: string; }>;
     generalSettings: GeneralSettings;
     sectors: any[];
 }
@@ -17,6 +17,17 @@ const AddFuncionarioModal: React.FC<AddFuncionarioModalProps> = ({ isOpen, onClo
     const [newUserPassword, setNewUserPassword] = useState('');
     const [newUserEmail, setNewUserEmail] = useState('');
     const [isAdding, setIsAdding] = useState(false);
+    const [permissions, setPermissions] = useState<any>({
+        estoque: true,
+        pacotes: true,
+        calculadora: true,
+        bling: true,
+        financeiro: true,
+        relatorios: true,
+        funcionarios: true,
+        configuracoes: true,
+        etiquetas: true
+    });
 
     const handleSetorChange = (setor: UserSetor) => {
         setNewUserSetores(prev => 
@@ -29,7 +40,7 @@ const AddFuncionarioModal: React.FC<AddFuncionarioModalProps> = ({ isOpen, onClo
     const handleConfirm = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsAdding(true);
-        const result = await onAddUser(newUserName, newUserSetores, newUserRole, newUserEmail, newUserPassword);
+        const result = await onAddUser(newUserName, newUserSetores, newUserRole, newUserEmail, newUserPassword, permissions);
         setIsAdding(false);
         if (result.success) {
             onClose();
@@ -140,6 +151,33 @@ const AddFuncionarioModal: React.FC<AddFuncionarioModalProps> = ({ isOpen, onClo
                             </div>
                         </div>
                     )}
+
+                    <div className="border-t pt-4 mt-2">
+                        <label className="text-sm font-bold text-gray-800 mb-2 block">Permissões Iniciais (Módulos)</label>
+                        <div className="grid grid-cols-2 gap-2">
+                            {Object.entries({
+                                estoque: 'Estoque',
+                                pacotes: 'Pacotes Prontos',
+                                calculadora: 'Calculadora',
+                                bling: 'Integração Bling',
+                                etiquetas: 'Etiquetas ZPL',
+                                financeiro: 'Financeiro',
+                                relatorios: 'Relatórios',
+                                funcionarios: 'Funcionários',
+                                configuracoes: 'Configurações'
+                            }).map(([key, label]) => (
+                                <label key={key} className="flex items-center space-x-2 p-2 rounded hover:bg-gray-50 border border-transparent hover:border-gray-200 cursor-pointer transition-all">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={permissions[key] ?? false}
+                                        onChange={(e) => setPermissions(prev => ({ ...prev, [key]: e.target.checked }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                    />
+                                    <span className="text-xs font-medium text-gray-700">{label}</span>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
                 </div>
 
                 <div className="mt-6 flex justify-end space-x-3">

@@ -40,6 +40,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
         priceGross: '',
         platformFees: [] as string[],
         shippingFee: '',
+        shippingPaidByCustomer: '',
         priceNet: '',
         statusColumn: '',
         acceptedStatusValues: ''
@@ -64,7 +65,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
         setNewCustomChannelName('');
         setShowAddChannel(false);
         setImportToFiscal(false);
-        setColumnMapping({ priceGross: '', platformFees: [], shippingFee: '', priceNet: '', statusColumn: '', acceptedStatusValues: '' });
+        setColumnMapping({ priceGross: '', platformFees: [], shippingFee: '', shippingPaidByCustomer: '', priceNet: '', statusColumn: '', acceptedStatusValues: '' });
     };
 
     const handleClose = () => {
@@ -87,6 +88,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
             priceGross: config.priceGross || '',
             platformFees: config.fees || [],
             shippingFee: config.shippingFee || '',
+            shippingPaidByCustomer: config.shippingPaidByCustomer || '',
             priceNet: config.priceNet || '',
             statusColumn: config.statusColumn || '',
             acceptedStatusValues: config.acceptedStatusValues ? config.acceptedStatusValues.join(', ') : ''
@@ -114,6 +116,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
             priceGross: columnMapping.priceGross === OFF_VALUE ? '' : columnMapping.priceGross,
             fees: columnMapping.platformFees.filter(f => f !== OFF_VALUE),
             shippingFee: columnMapping.shippingFee === OFF_VALUE ? '' : columnMapping.shippingFee,
+            shippingPaidByCustomer: columnMapping.shippingPaidByCustomer === OFF_VALUE ? '' : columnMapping.shippingPaidByCustomer,
             priceNet: columnMapping.priceNet === OFF_VALUE ? '' : columnMapping.priceNet,
             statusColumn: columnMapping.statusColumn === OFF_VALUE ? '' : columnMapping.statusColumn,
             acceptedStatusValues: columnMapping.acceptedStatusValues ? columnMapping.acceptedStatusValues.split(',').map(s => s.trim()) : []
@@ -212,6 +215,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                             ...(effectiveGross ? { priceGross: effectiveGross } : {}),
                             ...(effectiveFees.length > 0 ? { fees: effectiveFees } : {}),
                             ...(effectiveShipping ? { shippingFee: effectiveShipping } : {}),
+                            ...(columnMapping.shippingPaidByCustomer ? { shippingPaidByCustomer: columnMapping.shippingPaidByCustomer } : {}),
                             ...(effectiveNet ? { priceNet: effectiveNet } : {}),
                             ...(effectiveStatus ? { statusColumn: effectiveStatus } : {}),
                             ...(columnMapping.acceptedStatusValues ? { acceptedStatusValues: columnMapping.acceptedStatusValues.split(',').map(s => s.trim()) } : {})
@@ -437,7 +441,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                                         </div>
                                     </div>
                                     <div>
-                                        <label className="text-[10px] font-bold text-slate-600 mb-1 block">Envio</label>
+                                        <label className="text-[10px] font-bold text-slate-600 mb-1 block">Envio (Pago por nós)</label>
                                         <select value={ignoreShipping ? OFF_VALUE : columnMapping.shippingFee} onChange={(e) => {
                                             if (e.target.value === OFF_VALUE) { setIgnoreShipping(true); setColumnMapping(p => ({ ...p, shippingFee: '' })); }
                                             else { setIgnoreShipping(false); setColumnMapping(p => ({ ...p, shippingFee: e.target.value })); }
@@ -448,7 +452,15 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="text-[10px] font-bold text-slate-600 mb-1 block">Líquido (pagos pelo comprador)</label>
+                                        <label className="text-[10px] font-bold text-slate-600 mb-1 block">Frete (Pago pelo Cliente)</label>
+                                        <select value={columnMapping.shippingPaidByCustomer} onChange={(e) => setColumnMapping(p => ({ ...p, shippingPaidByCustomer: e.target.value }))} className={`w-full p-2 border rounded text-xs bg-white ${columnMapping.shippingPaidByCustomer === OFF_VALUE ? 'border-red-300 bg-red-50 text-red-400' : 'border-slate-300'}`}>
+                                            <option value="">-- Auto --</option>
+                                            <option value={OFF_VALUE}>🚫 Desativado (Off)</option>
+                                            {availableHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-600 mb-1 block">Valor Líquido (Recebido após taxas)</label>
                                         <select value={columnMapping.priceNet} onChange={(e) => setColumnMapping(p => ({ ...p, priceNet: e.target.value }))} className={`w-full p-2 border rounded text-xs bg-white ${columnMapping.priceNet === OFF_VALUE ? 'border-red-300 bg-red-50 text-red-400' : 'border-slate-300'}`}>
                                             <option value="">-- Auto --</option>
                                             <option value={OFF_VALUE}>🚫 Desativado (Off)</option>

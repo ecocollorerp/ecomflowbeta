@@ -10,6 +10,7 @@ export type AppPage =
   | 'ensacamento'
   | 'moagem'
   | 'estoque'
+  | 'pacotes'
   | 'funcionarios'
   | 'relatorios'
   | 'financeiro'
@@ -34,6 +35,7 @@ export const ALL_APP_PAGES: { id: AppPage, label: string }[] = [
     { id: 'ensacamento', label: 'Máquinas' },
     { id: 'moagem', label: 'Moagem' },
     { id: 'estoque', label: 'Estoque' },
+    { id: 'pacotes', label: 'Pacotes Prontos' },
     { id: 'funcionarios', label: 'Funcionários' },
     { id: 'relatorios', label: 'Relatórios' },
     { id: 'calculadora', label: 'Calculadora' },
@@ -51,6 +53,32 @@ type AccessRule = {
   setores?: string[];
 };
 
+export const PAGE_TO_MODULE_MAP: Record<AppPage, keyof User['permissions'] | null> = {
+  dashboard: null, // Aberto a todos
+  importer: 'bling',
+  bipagem: 'estoque',
+  pedidos: 'bling',
+  planejamento: 'estoque',
+  compras: 'estoque',
+  ensacamento: 'estoque',
+  moagem: 'estoque',
+  estoque: 'estoque',
+  pacotes: 'pacotes',
+  funcionarios: 'funcionarios',
+  relatorios: 'relatorios',
+  calculadora: 'calculadora',
+  financeiro: 'financeiro',
+  etiquetas: 'etiquetas',
+  bling: 'bling',
+  integracoes: 'configuracoes',
+  'passo-a-passo': null,
+  ajuda: null,
+  powerbi: 'relatorios',
+  'powerbi-templates': 'relatorios',
+  configuracoes: 'configuracoes',
+  'configuracoes-gerais': 'configuracoes'
+};
+
 export const PAGE_ACCESS_RULES: Record<AppPage, AccessRule> = {
   dashboard: {},
   importer: {},
@@ -61,6 +89,7 @@ export const PAGE_ACCESS_RULES: Record<AppPage, AccessRule> = {
   ensacamento: {},
   moagem: {},
   estoque: {},
+  pacotes: {},
   funcionarios: { roles: ['SUPER_ADMIN', 'ADMIN'] },
   relatorios: {},
   calculadora: {},
@@ -102,6 +131,22 @@ export function canAccessPage(user: User | null, page: string, generalSettings?:
       if (sector.allowedPages.includes(page)) return true;
     }
   }
+
+  // 3. Verificar Permissões Granulares (Novo sistema Fase 4)
+  const moduleForKey = PAGE_TO_MODULE_MAP[page as AppPage];
+  if (moduleForKey && user.permissions) {
+    // Se o módulo está explicitamente desabilitado nas permissões do usuário
+    if (user.permissions[moduleForKey] === false) {
+      return false;
+    }
+    // Se estiver habilitado, permite acesso (mesmo que não seja ADMIN, se o módulo permitir)
+    if (user.permissions[moduleForKey] === true) {
+      return true;
+    }
+  }
+
+  // Fallback: Se for ADMIN e não houver proibição explícita acima, permite.
+  if (user.role === ('ADMIN' as any)) return true;
 
   return false;
 }

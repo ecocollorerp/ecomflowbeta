@@ -239,6 +239,7 @@ export const exportFinanceReport = async (payload: {
     reportTitle?: string; reportLogoBase64?: string; customReportImageBase64?: string; 
     pptxTemplateBase64?: string; stockMovements?: StockMovement[];
     prevStats?: any; prevNetProfit?: number; prevTicketMedio?: number; prevMargemPct?: number; prevTaxTotal?: number;
+    estimatedProfitCalculated?: number;
 }) => {
     const doc = new jsPDF();
     const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -326,7 +327,12 @@ export const exportFinanceReport = async (payload: {
         summaryBody.push([`(-) ${t.name}`, fmt(t.calculatedAmount)]);
     });
     
-    summaryBody.push(['(=) Líquido Final', fmt(netFinal - totalMaterialCost) + getTrendStr(netFinal - totalMaterialCost, payload.prevNetProfit)]);
+    summaryBody.push(['(=) Líquido Final (BOM)', fmt(netFinal - totalMaterialCost) + getTrendStr(netFinal - totalMaterialCost, payload.prevNetProfit)]);
+    
+    if (payload.estimatedProfitCalculated !== undefined) {
+        summaryBody.push(['(=) Lucro Estimado (Calculadora)', fmt(payload.estimatedProfitCalculated)]);
+    }
+
     summaryBody.push(['Total de Unidades Vendidas', String(payload.stats.units) + getTrendStr(payload.stats.units, payload.prevStats?.units)]);
     summaryBody.push(['Total de Pedidos Processados', String(payload.orders.length) + getTrendStr(payload.orders.length, payload.prevStats?.orders)]);
     summaryBody.push(['Pago pelos Clientes (inc. Frete)', fmt(payload.stats.buyerTotal)]);
@@ -696,6 +702,7 @@ export const exportFinancePptx = async (payload: {
     reportTitle?: string; reportLogoBase64?: string; customReportImageBase64?: string;
     pptxTemplateBase64?: string; stockMovements?: StockMovement[];
     prevStats?: any; prevNetProfit?: number; prevTicketMedio?: number; prevMargemPct?: number; prevTaxTotal?: number;
+    estimatedProfitCalculated?: number;
 }) => {
     const pptx = new PptxGenJS();
     pptx.author = 'EcomFlow';

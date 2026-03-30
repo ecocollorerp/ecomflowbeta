@@ -20,6 +20,7 @@ const EditAdminModal: React.FC<EditAdminModalProps> = ({ isOpen, onClose, userTo
     const [setores, setSetores] = useState<UserSetor[]>([]);
     const [error, setError] = useState('');
     const [isSaving, setIsSaving] = useState(false);
+    const [permissions, setPermissions] = useState<User['permissions']>({});
 
     useEffect(() => {
         if (isOpen && userToEdit) {
@@ -31,6 +32,17 @@ const EditAdminModal: React.FC<EditAdminModalProps> = ({ isOpen, onClose, userTo
             setConfirmPassword('');
             setError('');
             setIsSaving(false);
+            setPermissions(userToEdit.permissions || {
+                estoque: true,
+                pacotes: true,
+                calculadora: true,
+                bling: true,
+                financeiro: true,
+                relatorios: true,
+                funcionarios: true,
+                configuracoes: true,
+                etiquetas: true
+            });
         }
     }, [isOpen, userToEdit]);
 
@@ -83,6 +95,7 @@ const EditAdminModal: React.FC<EditAdminModalProps> = ({ isOpen, onClose, userTo
         updatedUser.email = isLoginRequired ? email.trim() : undefined;
         updatedUser.role = role;
         updatedUser.setor = setores;
+        updatedUser.permissions = permissions;
 
         if (password) {
             updatedUser.password = password;
@@ -178,6 +191,35 @@ const EditAdminModal: React.FC<EditAdminModalProps> = ({ isOpen, onClose, userTo
                             </div>
                         </>
                     )}
+
+                    <div className="border-t pt-4 mt-2">
+                        <label className="text-sm font-bold text-gray-800 mb-2 block">Permissões de Acesso (Módulos)</label>
+                        <div className="grid grid-cols-2 gap-2">
+                            {Object.entries({
+                                estoque: 'Estoque',
+                                pacotes: 'Pacotes Prontos',
+                                calculadora: 'Calculadora',
+                                bling: 'Integração Bling',
+                                etiquetas: 'Etiquetas ZPL',
+                                financeiro: 'Financeiro',
+                                relatorios: 'Relatórios',
+                                funcionarios: 'Funcionários',
+                                configuracoes: 'Configurações'
+                            }).map(([key, label]) => (
+                                <label key={key} className="flex items-center space-x-2 p-2 rounded hover:bg-gray-50 border border-transparent hover:border-gray-200 cursor-pointer transition-all">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={permissions?.[key as keyof typeof permissions] ?? false}
+                                        onChange={(e) => setPermissions(prev => ({ ...prev, [key]: e.target.checked }))}
+                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                    />
+                                    <span className="text-xs font-medium text-gray-700">{label}</span>
+                                </label>
+                            ))}
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-2 italic">* O Role "SUPER_ADMIN" sempre terá acesso total independente destas marcações.</p>
+                    </div>
+
                     {error && <p className="text-xs text-red-600">{error}</p>}
                 </div>
 
