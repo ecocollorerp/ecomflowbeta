@@ -442,6 +442,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
     const [pendSearch, setPendSearch] = useState('');
     const [selectedPendingIds, setSelectedPendingIds] = useState<Set<string>>(new Set());
     const [useHalfCount, setUseHalfCount] = useState(false);
+    const [showHistory, setShowHistory] = useState(true);
 
     useEffect(() => {
         const refresh = () => setPendingItems(loadPendingZpl());
@@ -524,14 +525,30 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
             }
 
             if (combinedZpl) {
-                setEtiquetasState(prev => ({ ...prev, zplInput: combinedZpl }));
-                addToast(`${zplFiles.length} arquivos ZPL/TXT unificados com sucesso.`, 'success');
+                // Se já houver conteúdo, perguntar se quer substituir ou anexar? 
+                // Para simplificar e atender ao "unir", vamos anexar por padrão se já houver algo.
+                setEtiquetasState(prev => ({ 
+                    ...prev, 
+                    zplInput: prev.zplInput ? prev.zplInput + '\n' + combinedZpl : combinedZpl 
+                }));
+                addToast(`${zplFiles.length} arquivos ZPL/TXT preparados para unificação.`, 'success');
             }
         } catch (err) {
             console.error('Erro ao unificar arquivos:', err);
             addToast('Erro ao ler arquivos para unificação.', 'error');
         } finally {
             e.target.value = '';
+        }
+    };
+
+    const handleAppendHistory = async (item: EtiquetaHistoryItem) => {
+        const fullItem = await onGetHistoryDetails(item.id);
+        if (fullItem) {
+            setEtiquetasState(prev => ({ 
+                ...prev, 
+                zplInput: prev.zplInput ? prev.zplInput + '\n' + fullItem.zpl_content : fullItem.zpl_content 
+            }));
+            addToast("ZPL do histórico anexado para unificação.", "success");
         }
     };
 
@@ -1167,28 +1184,39 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-xl shadow-sm flex flex-col overflow-hidden">
                         {/* header */}
                         <div className="flex-shrink-0 px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700">
-                            <div className="flex items-center gap-2 mb-3">
-                                <History size={16} className="text-blue-600 dark:text-blue-400" />
-                                <h2 className="text-sm font-black text-gray-900 dark:text-gray-50 uppercase tracking-tight">Histórico de Impressões</h2>
+                            <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-2">
+                                    <History size={16} className="text-blue-600 dark:text-blue-400" />
+                                    <h2 className="text-sm font-black text-gray-900 dark:text-gray-50 uppercase tracking-tight">Histórico de Impressões</h2>
+                                </div>
+                                <button 
+                                    onClick={() => setShowHistory(!showHistory)}
+                                    className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
+                                >
+                                    {showHistory ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                                </button>
                             </div>
                             {/* stats cards */}
-                            <div className="grid grid-cols-3 gap-2">
-                                <div className="bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700 text-center">
-                                    <p className="text-lg font-black text-blue-600 dark:text-blue-400">{histStats.totalRegistros}</p>
-                                    <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">Registros</p>
+                            {showHistory && (
+                                <div className="grid grid-cols-3 gap-2">
+                                    <div className="bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700 text-center">
+                                        <p className="text-lg font-black text-blue-600 dark:text-blue-400">{histStats.totalRegistros}</p>
+                                        <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">Registros</p>
+                                    </div>
+                                    <div className="bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700 text-center">
+                                        <p className="text-lg font-black text-emerald-600">{histStats.totalPaginas}</p>
+                                        <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">Pág. Total</p>
+                                    </div>
+                                    <div className="bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700 text-center">
+                                        <p className="text-lg font-black text-amber-600">{histStats.hojePaginas}</p>
+                                        <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">Pág. Hoje</p>
+                                    </div>
                                 </div>
-                                <div className="bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700 text-center">
-                                    <p className="text-lg font-black text-emerald-600">{histStats.totalPaginas}</p>
-                                    <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">Pág. Total</p>
-                                </div>
-                                <div className="bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700 text-center">
-                                    <p className="text-lg font-black text-amber-600">{histStats.hojePaginas}</p>
-                                    <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">Pág. Hoje</p>
-                                </div>
-                            </div>
+                            )}
                         </div>
                         {/* list */}
-                        <div className="overflow-y-auto flex-grow p-3">
+                        {showHistory && (
+                            <div className="overflow-y-auto flex-grow p-3">
                             {etiquetasHistory.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center py-10 text-gray-500 dark:text-gray-400">
                                     <LayoutList size={28} className="mb-2 opacity-30" />
@@ -1227,12 +1255,21 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                                 <CalendarDays size={10} className="text-gray-500 dark:text-gray-400" />
                                                 <p className="text-[10px] text-gray-500 dark:text-gray-400">{ts.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
                                             </div>
-                                            <button
-                                                onClick={() => handleReloadHistory(item)}
-                                                className="w-full px-3 py-1.5 text-[10px] font-black uppercase bg-blue-600 dark:bg-blue-500 text-white rounded-md hover:opacity-90 transition-all flex items-center justify-center gap-1"
-                                            >
-                                                <History size={10} /> Recarregar ZPL
-                                            </button>
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={() => handleReloadHistory(item)}
+                                                    className="flex-1 px-3 py-1.5 text-[10px] font-black uppercase bg-blue-600 dark:bg-blue-500 text-white rounded-md hover:opacity-90 transition-all flex items-center justify-center gap-1"
+                                                >
+                                                    <History size={10} /> Recarregar
+                                                </button>
+                                                <button
+                                                    onClick={() => handleAppendHistory(item)}
+                                                    className="flex-1 px-3 py-1.5 text-[10px] font-black uppercase bg-emerald-600 dark:bg-emerald-500 text-white rounded-md hover:opacity-90 transition-all flex items-center justify-center gap-1"
+                                                    title="Anexar ao unificador"
+                                                >
+                                                    <PlusCircle size={10} /> Unificar
+                                                </button>
+                                            </div>
                                         </div>
                                     );
                                 };
@@ -1260,6 +1297,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                 );
                             })()}
                         </div>
+                        )}
                     </div>
 
                     <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} currentSettings={settings} onSave={onSettingsSave} previews={previews} extractedData={extractedData} />
