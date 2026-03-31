@@ -83,6 +83,7 @@ export interface User {
   attendance: AttendanceRecord[];
   ui_settings?: UiSettings;
   permissions?: UserPermissions;
+  avatar_base64?: string;
 }
 
 // Dashboard & Stats
@@ -1092,6 +1093,14 @@ export interface ColumnMapping {
   sumMultipleLines?: boolean;
   fixedFeePerItem?: number;
   commissionPercent?: number;
+  // Produção
+  productionEnabled?: boolean;
+  productionSku?: string;
+  productionQty?: string;
+  productionBatchName?: string;
+  productionBaseType?: string;
+  productionOperationType?: string;
+  productionOperator?: string;
 }
 
 export interface ExpeditionRule {
@@ -1179,6 +1188,9 @@ export interface GeneralSettings {
   navMode?: 'sidebar' | 'topnav';
   deductions?: TaxEntry[];
   financeCards?: FinanceCardConfig[];
+  despesaCategorias?: DespesaCategoria[];
+  despesaFornecedores?: DespesaFornecedor[];
+  despesaLancamentos?: DespesaLancamento[];
   reportTitle?: string;
   reportLogoBase64?: string;
   customReportImageBase64?: string;
@@ -1188,7 +1200,7 @@ export interface GeneralSettings {
 export interface FinanceCardConfig {
   id: string;
   label: string;
-  metric: 'gross' | 'net' | 'buyerTotal' | 'fees' | 'shipping' | 'customerPaid' | 'taxTotal' | 'units' | 'totalPedidos' | 'ticketMedio' | 'margemPct' | 'deductions' | 'estProfit' | 'estMargin' | 'custom';
+  metric: 'gross' | 'net' | 'buyerTotal' | 'fees' | 'shipping' | 'customerPaid' | 'taxTotal' | 'units' | 'totalPedidos' | 'ticketMedio' | 'margemPct' | 'deductions' | 'estProfit' | 'estMargin' | 'despesasLancadas' | 'custom';
   color: 'blue' | 'red' | 'orange' | 'emerald' | 'slate' | 'purple';
   enabled: boolean;
   customFormula?: string;
@@ -1381,6 +1393,53 @@ export interface CustomStore {
   id: string;
   name: string;
   color?: string;
+}
+
+// ── Lançamento de Pagamentos (Despesas) ──
+export interface DespesaCategoria {
+  id: string;
+  name: string;
+  color?: string;
+}
+
+export interface DespesaFornecedor {
+  id: string;
+  name: string;
+  cnpj?: string;
+}
+
+export interface DespesaLancamento {
+  id: string;
+  tipo: 'mensal' | 'faturado';
+  categoriaId: string;
+  categoriaNome: string;
+  fornecedorId?: string;
+  fornecedorNome: string;
+  fornecedorCnpj?: string;
+  produtoSku?: string;
+  produtoNome?: string;
+  funcionarioId?: string;
+  funcionarioNome?: string;
+  valor: number;
+  pagoCartao?: boolean;
+  competencia: string; // formato "YYYY-MM" (principal / retrocompatibilidade)
+  competencias?: string[]; // múltiplas competências "YYYY-MM" para mensal
+  dataLancamento: string; // ISO date
+  // Campos para faturado
+  dataInicial?: string; // ISO date
+  parcelasDias?: number[]; // ex: [15, 30, 45, 60, 90]
+  parcelasGeradas?: DespesaParcela[];
+  observacao?: string;
+  created_at: string;
+}
+
+export interface DespesaParcela {
+  id: string;
+  despesaId: string;
+  competencia: string; // "YYYY-MM"
+  dataVencimento: string; // ISO date
+  valor: number;
+  pago?: boolean;
 }
 
 export interface PedidoOverride {

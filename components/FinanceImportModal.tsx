@@ -49,6 +49,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
     });
     
     const [importToFiscal, setImportToFiscal] = useState(false);
+    const [includeErrorOrders, setIncludeErrorOrders] = useState(true);
 
     const resetState = () => {
         setFiles([]);
@@ -67,6 +68,7 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
         setNewCustomChannelName('');
         setShowAddChannel(false);
         setImportToFiscal(false);
+        setIncludeErrorOrders(true);
         setColumnMapping({ priceGross: '', platformFees: [], shippingFee: '', shippingPaidByCustomer: '', priceNet: '', statusColumn: '', acceptedStatusValues: '', importStartRow: undefined, sumMultipleLines: false });
     };
 
@@ -260,6 +262,22 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                 throw new Error("Nenhum pedido encontrado no período selecionado.");
             }
 
+            // Tratar pedidos com erro de SOB_ENCOMENDA
+            const sobEncomendaCount = ordersToProcess.filter(o => o.status === 'ERRO' && o.error_reason === 'SOB_ENCOMENDA').length;
+            if (sobEncomendaCount > 0) {
+                if (includeErrorOrders) {
+                    // Importar mesmo assim — converte para NORMAL
+                    ordersToProcess = ordersToProcess.map(o => 
+                        o.status === 'ERRO' && o.error_reason === 'SOB_ENCOMENDA'
+                            ? { ...o, status: 'NORMAL' as any, error_reason: undefined }
+                            : o
+                    );
+                } else {
+                    // Ignorar pedidos sob encomenda
+                    ordersToProcess = ordersToProcess.filter(o => !(o.status === 'ERRO' && o.error_reason === 'SOB_ENCOMENDA'));
+                }
+            }
+
             const existingOrdersMap = new Map<string, OrderItem>();
             allOrders.forEach(o => existingOrdersMap.set(`${o.orderId}|${o.sku}`, o));
 
@@ -327,7 +345,13 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
 
             if (finalOrdersPayload.length > 0) {
                 await onLaunchOrders(finalOrdersPayload);
-                setResultSummary({ updated: updatedCount, created: createdCount, errors: importErrors });
+                // Se não há erros relevantes, fecha automaticamente para mostrar dados na tela
+                const hasRelevantErrors = importErrors.filter(e => !e.reason.includes('possível devolução')).length > 0;
+                if (!hasRelevantErrors) {
+                    handleClose();
+                } else {
+                    setResultSummary({ updated: updatedCount, created: createdCount, errors: importErrors });
+                }
             } else {
                 setError("Nenhum dado válido encontrado para processar.");
             }
@@ -614,6 +638,21 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                                 />
                                 <label htmlFor="importToFiscalCheckbox" className="text-xs font-bold text-red-800 cursor-pointer">
                                     Importar também para o Fiscal (Incluir CPF / CNPJ do Cliente)
+                                </label>
+                            </div>
+                        )}
+
+                        {isExcel && (
+                            <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-100 rounded-xl">
+                                <input 
+                                    type="checkbox" 
+                                    id="includeErrorOrdersCheckbox" 
+                                    checked={includeErrorOrders} 
+                                    onChange={(e) => setIncludeErrorOrders(e.target.checked)}
+                                    className="w-4 h-4 text-amber-600 rounded bg-white border-amber-300 focus:ring-amber-500 cursor-pointer" 
+                                />
+                                <label htmlFor="includeErrorOrdersCheckbox" className="text-xs font-bold text-amber-800 cursor-pointer">
+                                    Incluir pedidos com erro (sob encomenda) — importar como NORMAL
                                 </label>
                             </div>
                         )}

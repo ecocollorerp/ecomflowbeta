@@ -72,13 +72,19 @@ export const calculateMaterialList = (
         });
     });
 
-    return Array.from(materialQuantities.entries()).map(([code, quantity]) => {
-        const item = stockMap.get(code);
-        return { 
-            name: item?.name || code, 
-            quantity, 
-            unit: item?.unit || 'un',
-            cost: (item?.cost_price || 0) * quantity
-        };
-    }).sort((a,b) => a.name.localeCompare(b.name));
+    return Array.from(materialQuantities.entries())
+        .filter(([code]) => {
+            const item = stockMap.get(code);
+            // Matéria Prima: somente insumos (exclui PRODUTO e PROCESSADO)
+            return !item || item.kind === 'INSUMO';
+        })
+        .map(([code, quantity]) => {
+            const item = stockMap.get(code);
+            return { 
+                name: item?.name || code, 
+                quantity, 
+                unit: item?.unit || 'un',
+                cost: (item?.cost_price || 0) * quantity
+            };
+        }).sort((a,b) => a.name.localeCompare(b.name));
 };

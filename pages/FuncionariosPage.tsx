@@ -239,8 +239,19 @@ const FuncionariosPage: React.FC<FuncionariosPageProps> = ({ users, onSetAttenda
                                                 </button>
                                             </td>
                                             <td className="py-2 px-3">
-                                                <p className="font-medium text-gray-900 dark:text-gray-50">{user.name}</p>
-                                                <p className="text-xs text-gray-500 dark:text-gray-400">{user.role}</p>
+                                                <div className="flex items-center gap-2">
+                                                    {user.avatar_base64 ? (
+                                                        <img src={user.avatar_base64} alt="Avatar" className="w-8 h-8 rounded-full object-cover border border-gray-200" />
+                                                    ) : (
+                                                        <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-black">
+                                                            {user.name?.trim()?.charAt(0)?.toUpperCase() || 'U'}
+                                                        </div>
+                                                    )}
+                                                    <div>
+                                                        <p className="font-medium text-gray-900 dark:text-gray-50">{user.name}</p>
+                                                        <p className="text-xs text-gray-500 dark:text-gray-400">{user.role}</p>
+                                                    </div>
+                                                </div>
                                             </td>
                                             <td className="py-2 px-3">
                                                  <div className="flex flex-wrap gap-1">
@@ -425,12 +436,21 @@ const UserCard: React.FC<{
     return (
         <div className="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
             <div className="flex justify-between items-start">
-                <div>
+                <div className="flex items-start gap-2">
+                    {user.avatar_base64 ? (
+                        <img src={user.avatar_base64} alt="Avatar" className="w-9 h-9 rounded-full object-cover border border-gray-200" />
+                    ) : (
+                        <div className="w-9 h-9 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-black">
+                            {user.name?.trim()?.charAt(0)?.toUpperCase() || 'U'}
+                        </div>
+                    )}
+                    <div>
                     <p className="font-bold">{user.name}</p>
                     <div className="flex flex-wrap gap-1 mt-1">
                         {Array.isArray(user.setor) && user.setor.map(s => (
                             <span key={s} className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">{s}</span>
                         ))}
+                    </div>
                     </div>
                 </div>
                 <div className="flex gap-1">

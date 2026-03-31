@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { X, User as UserIcon, Mail, KeyRound, Loader2, Save } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, User as UserIcon, Mail, KeyRound, Loader2, Save, Camera } from 'lucide-react';
 import { User, UserSetor, UserRole, GeneralSettings } from '../types';
 
 interface EditAdminModalProps {
@@ -21,6 +21,21 @@ const EditAdminModal: React.FC<EditAdminModalProps> = ({ isOpen, onClose, userTo
     const [error, setError] = useState('');
     const [isSaving, setIsSaving] = useState(false);
     const [permissions, setPermissions] = useState<User['permissions']>({});
+    const [avatarBase64, setAvatarBase64] = useState<string | undefined>(undefined);
+    const avatarInputRef = useRef<HTMLInputElement>(null);
+
+    const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (file.size > 500 * 1024) { setError('A imagem deve ter no máximo 500KB.'); return; }
+        if (!file.type.startsWith('image/')) { setError('Selecione um arquivo de imagem.'); return; }
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = reader.result as string;
+            setAvatarBase64(result);
+        };
+        reader.readAsDataURL(file);
+    };
 
     useEffect(() => {
         if (isOpen && userToEdit) {
@@ -43,6 +58,7 @@ const EditAdminModal: React.FC<EditAdminModalProps> = ({ isOpen, onClose, userTo
                 configuracoes: true,
                 etiquetas: true
             });
+            setAvatarBase64(userToEdit.avatar_base64 || undefined);
         }
     }, [isOpen, userToEdit]);
 
@@ -96,6 +112,7 @@ const EditAdminModal: React.FC<EditAdminModalProps> = ({ isOpen, onClose, userTo
         updatedUser.role = role;
         updatedUser.setor = setores;
         updatedUser.permissions = permissions;
+        updatedUser.avatar_base64 = avatarBase64;
 
         if (password) {
             updatedUser.password = password;
@@ -125,6 +142,28 @@ const EditAdminModal: React.FC<EditAdminModalProps> = ({ isOpen, onClose, userTo
                 </div>
                 
                 <div className="space-y-4">
+                    {/* Avatar Upload */}
+                    <div className="flex items-center gap-4">
+                        <div className="relative group cursor-pointer" onClick={() => avatarInputRef.current?.click()}>
+                            {avatarBase64 ? (
+                                <img src={avatarBase64} alt="Avatar" className="w-16 h-16 rounded-full object-cover border-2 border-gray-200" />
+                            ) : (
+                                <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center border-2 border-gray-200">
+                                    <UserIcon size={28} className="text-gray-400" />
+                                </div>
+                            )}
+                            <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Camera size={18} className="text-white" />
+                            </div>
+                        </div>
+                        <div>
+                            <button type="button" onClick={() => avatarInputRef.current?.click()} className="text-xs font-semibold text-blue-600 hover:text-blue-800">Alterar foto</button>
+                            {avatarBase64 && <button type="button" onClick={() => setAvatarBase64(undefined)} className="text-xs text-red-500 hover:text-red-700 ml-3">Remover</button>}
+                            <p className="text-[10px] text-gray-400 mt-0.5">JPG, PNG. Máx 500KB.</p>
+                        </div>
+                        <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
+                    </div>
+
                     <div className="relative">
                         <UserIcon className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
                         <input

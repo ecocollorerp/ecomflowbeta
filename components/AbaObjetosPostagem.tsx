@@ -28,6 +28,7 @@ import {
 import {
   fetchLogisticas,
   fetchLogisticasObjetos,
+  fetchNfeEtiquetaZpl,
 } from "../lib/blingApi";
 
 interface NfeSaidaMinimal {
@@ -53,6 +54,7 @@ interface ObjetoPostagem {
   id?: number;
   bling_id: string;
   nfe_id: number;
+  id_venda?: string;
   nfe_numero: string;
   numero_pedido_loja: string;
   destinatario: string;
@@ -77,6 +79,7 @@ export const AbaObjetosPostagem: React.FC<Props> = ({
   addToast,
   startDate,
   endDate,
+  nfeSaida,
 }) => {
   const [transportadoras, setTransportadoras] = useState<any[]>([]);
   const [selectedTransp, setSelectedTransp] = useState<string>("todos");
@@ -85,6 +88,18 @@ export const AbaObjetosPostagem: React.FC<Props> = ({
   const [isLoadingTransp, setIsLoadingTransp] = useState(false);
   const [searchFilter, setSearchFilter] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const downloadTextFile = (content: string, filename: string) => {
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   // ── Fetch directly from Bling API (paginado) ──
   const fetchFromBling = useCallback(async () => {
@@ -110,7 +125,8 @@ export const AbaObjetosPostagem: React.FC<Props> = ({
       }
       const mapped: ObjetoPostagem[] = allObjetos.map((obj: any) => ({
         bling_id: String(obj.id || Math.random()),
-        nfe_id: 0,
+        nfe_id: Number(obj.nota?.id || 0),
+        id_venda: obj.idVenda ? String(obj.idVenda) : undefined,
         nfe_numero: obj.nota?.numero || obj.nfe?.numero || "—",
         numero_pedido_loja: obj.pedidoLoja?.numeroPedido || obj.numeroPedidoLoja || "—",
         destinatario: obj.contato?.nome || "—",
@@ -175,6 +191,34 @@ export const AbaObjetosPostagem: React.FC<Props> = ({
       await navigator.clipboard.writeText(codigo);
       addToast("Código de rastreio copiado!", "success");
     } catch { addToast("Não foi possível copiar.", "error"); }
+  };
+
+  const handleDownloadEtiqueta = async (obj: ObjetoPostagem) => {
+    if (!token) {
+      addToast("Token do Bling não configurado.", "error");
+      return;
+    }
+
+    let nfeId = obj.nfe_id;
+    if (!nfeId && obj.nfe_numero) {
+      const match = nfeSaida.find(n => String(n.numero || "") === String(obj.nfe_numero));
+      nfeId = match?.id || 0;
+    }
+
+    if (!nfeId) {
+      addToast("Não foi possível identificar a NF-e para gerar etiqueta.", "warning");
+      return;
+    }
+
+    const zpl = await fetchNfeEtiquetaZpl(token, nfeId, undefined, obj.numero_pedido_loja);
+    if (!zpl) {
+      addToast(`Etiqueta não disponível para NF-e ${obj.nfe_numero || nfeId}.`, "error");
+      return;
+    }
+
+    const pedidoSafe = String(obj.numero_pedido_loja || nfeId).replace(/[^a-zA-Z0-9_-]/g, "_");
+    downloadTextFile(zpl, `etiqueta_${pedidoSafe}.zpl`);
+    addToast(`Etiqueta da NF-e ${obj.nfe_numero || nfeId} baixada com sucesso.`, "success");
   };
 
   const toggleSelect = (blingId: string) => {
@@ -393,6 +437,13 @@ export const AbaObjetosPostagem: React.FC<Props> = ({
                         <td className="px-3 py-2.5 text-slate-500 text-[10px]">{formatDate(obj.data_criacao)}</td>
                         <td className="px-3 py-2.5 text-center">
                           <div className="flex items-center gap-1 justify-center">
+                            <button
+                              onClick={() => handleDownloadEtiqueta(obj)}
+                              className="inline-flex items-center text-emerald-600 hover:text-emerald-700 text-[10px] font-bold px-1.5 py-1 rounded hover:bg-emerald-50"
+                              title="Baixar etiqueta ZPL"
+                            >
+                              <Download size={11} />
+                            </button>
                             {obj.rastreio && (
                               <a
                                 href={`https://www.google.com/search?q=${encodeURIComponent(obj.rastreio)}`}

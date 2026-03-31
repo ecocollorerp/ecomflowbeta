@@ -310,6 +310,10 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
                             <MapRow label="Data da Venda" field="date" canal="ml" />
                             <MapRow label="Data de Envio Prev." field="dateShipping" canal="ml" />
                             <MapRow label="Receita Bruta" field="priceGross" canal="ml" />
+                            <MapRow label="Valor Total" field="totalValue" canal="ml" />
+                            <MapRow label="Frete Vendedor" field="shippingFee" canal="ml" />
+                            <MapRow label="Frete Pago p/ Comprador" field="shippingPaidByCustomer" canal="ml" />
+                            <MapRow label="Receita Líquida" field="priceNet" canal="ml" />
                             <MapRow label="Nome do Comprador" field="customerName" canal="ml" />
                         </div>
                         <FeeSelector canal="ml" />
@@ -323,6 +327,10 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
                             <MapRow label="Data da Venda" field="date" canal="shopee" />
                             <MapRow label="Data de Envio Prev." field="dateShipping" canal="shopee" />
                             <MapRow label="Preço Acordado" field="priceGross" canal="shopee" />
+                            <MapRow label="Valor Total" field="totalValue" canal="shopee" />
+                            <MapRow label="Frete Vendedor" field="shippingFee" canal="shopee" />
+                            <MapRow label="Frete Pago p/ Comprador" field="shippingPaidByCustomer" canal="shopee" />
+                            <MapRow label="Receita Líquida" field="priceNet" canal="shopee" />
                             <MapRow label="Nome do Comprador" field="customerName" canal="shopee" />
                         </div>
                         <FeeSelector canal="shopee" />

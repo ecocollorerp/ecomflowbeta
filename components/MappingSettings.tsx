@@ -1,6 +1,6 @@
 import React from 'react';
 import { ColumnMapping, GeneralSettings } from '../types';
-import { PackageOpen, Database, Filter, Info, X, Check } from 'lucide-react';
+import { PackageOpen, Database, Filter, Info, X, Check, Factory, ToggleLeft, ToggleRight } from 'lucide-react';
 
 interface MappingSettingsProps {
     canalId: string;
@@ -8,7 +8,7 @@ interface MappingSettingsProps {
     settings: GeneralSettings;
     onUpdateMapping: (canalId: string, field: string, value: any) => void;
     detectedHeaders?: string[];
-    mode: 'import' | 'fiscal';
+    mode: 'import' | 'fiscal' | 'all';
 }
 
 export const MapRow: React.FC<{
@@ -73,7 +73,7 @@ export const MappingPanel: React.FC<MappingSettingsProps> = ({ canalId, canalNam
 
     return (
         <div className="space-y-6 animate-in fade-in duration-300">
-            {mode === 'import' && (
+            {(mode === 'import' || mode === 'all') && (
                 <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100">
                     <h4 className="text-xs font-black text-blue-800 uppercase mb-4 flex items-center gap-2">
                         <PackageOpen size={14}/> Dados do Pedido (Importação)
@@ -130,7 +130,7 @@ export const MappingPanel: React.FC<MappingSettingsProps> = ({ canalId, canalNam
                 </div>
             )}
 
-            {mode === 'fiscal' && (
+            {(mode === 'fiscal' || mode === 'all') && (
                 <>
                     <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-100">
                         <h4 className="text-xs font-black text-emerald-800 uppercase mb-4 flex items-center gap-2">
@@ -210,6 +210,42 @@ export const MappingPanel: React.FC<MappingSettingsProps> = ({ canalId, canalNam
                         </div>
                     </div>
                 </>
+            )}
+
+            {/* Seção de Importação de Produção */}
+            {(mode === 'fiscal' || mode === 'all') && (
+                <div className="p-4 bg-violet-50/50 rounded-2xl border border-violet-100">
+                    <div className="flex items-center justify-between mb-4">
+                        <h4 className="text-xs font-black text-violet-800 uppercase flex items-center gap-2">
+                            <Factory size={14}/> Importação de Produção
+                        </h4>
+                        <button
+                            onClick={() => handleUpdate('productionEnabled', !mapping.productionEnabled)}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all border ${
+                                mapping.productionEnabled
+                                    ? 'bg-violet-600 text-white border-violet-700 shadow-md'
+                                    : 'bg-white text-violet-400 border-violet-200 hover:border-violet-400'
+                            }`}
+                        >
+                            {mapping.productionEnabled ? <ToggleRight size={14}/> : <ToggleLeft size={14}/>}
+                            {mapping.productionEnabled ? 'Ativado' : 'Desativado'}
+                        </button>
+                    </div>
+                    <p className="text-[10px] text-violet-600 font-medium mb-4">
+                        Ao ativar, a planilha importada deste canal também poderá conter dados de produção (SKU produzido, quantidade, lote, tipo de operação). 
+                        As colunas serão lidas junto com os dados financeiros e de pedido.
+                    </p>
+                    {mapping.productionEnabled && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 animate-in fade-in duration-200">
+                            <MapRow label="SKU do Produto Produzido" field="productionSku" canalId={canalId} val={mapping.productionSku} onUpdate={handleUpdate} detectedHeaders={detectedHeaders} />
+                            <MapRow label="Quantidade Produzida" field="productionQty" canalId={canalId} val={mapping.productionQty} onUpdate={handleUpdate} detectedHeaders={detectedHeaders} />
+                            <MapRow label="Nome do Lote / Batch" field="productionBatchName" canalId={canalId} val={mapping.productionBatchName} onUpdate={handleUpdate} detectedHeaders={detectedHeaders} />
+                            <MapRow label="Tipo de Base (Branca/Preta/Especial)" field="productionBaseType" canalId={canalId} val={mapping.productionBaseType} onUpdate={handleUpdate} detectedHeaders={detectedHeaders} />
+                            <MapRow label="Tipo de Operação" field="productionOperationType" canalId={canalId} val={mapping.productionOperationType} onUpdate={handleUpdate} detectedHeaders={detectedHeaders} />
+                            <MapRow label="Operador / Responsável" field="productionOperator" canalId={canalId} val={mapping.productionOperator} onUpdate={handleUpdate} detectedHeaders={detectedHeaders} />
+                        </div>
+                    )}
+                </div>
             )}
         </div>
     );

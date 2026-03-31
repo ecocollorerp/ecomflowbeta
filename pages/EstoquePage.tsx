@@ -688,6 +688,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
 
     const relatorioProdutosProntos = useMemo(() => {
         let totalGeral = 0;
+        let totalPronto = 0;
         const individuaisMap = new Map<string, { nome: string, sku: string, total: number, size: number }>();
         const packageSizeMap = new Map<number, number>();
 
@@ -696,7 +697,12 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                 ? (group.quantidade_volatil || 0)
                 : stockItems.filter(i => group.item_codes.includes(i.code)).reduce((sum, i) => sum + i.current_qty, 0);
 
+            const currentReady = group.tipo === 'volatil'
+                ? (group.quantidade_volatil || 0)
+                : stockItems.filter(i => group.item_codes.includes(i.code)).reduce((sum, i) => sum + (i.ready_qty || 0), 0);
+
             totalGeral += currentTotal;
+            totalPronto += currentReady;
 
             // Tenta detectar o tamanho do pacote pelo campo pack_size, nome ou min_pack_qty
             let size = group.pack_size || 1;
@@ -786,7 +792,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
             });
         });
 
-        return { totalGeral, individuais, packageSizes, setores, ultimaEntrada, ultimaSaida, packMovements, materialUsage };
+        return { totalGeral, totalPronto, individuais, packageSizes, setores, ultimaEntrada, ultimaSaida, packMovements, materialUsage };
     }, [packGroups, stockItems, stockMovements, users, produtos, selectedPacks, produtosCombinados]);
 
     const generateProdutosProntosPDF = () => {
@@ -998,8 +1004,12 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                 </h3>
                                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                                     <div className="bg-blue-50 p-4 rounded-xl border border-blue-100">
-                                        <p className="text-[10px] font-black text-blue-500 uppercase">Total Geral Adicionado</p>
+                                        <p className="text-[10px] font-black text-blue-500 uppercase">Estoque Total (Atual)</p>
                                         <p className="text-3xl font-black text-blue-700">{relatorioProdutosProntos.totalGeral} <span className="text-xs">UN</span></p>
+                                    </div>
+                                    <div className="bg-purple-50 p-4 rounded-xl border border-purple-100">
+                                        <p className="text-[10px] font-black text-purple-500 uppercase">Lançado em Prontos</p>
+                                        <p className="text-3xl font-black text-purple-700">{relatorioProdutosProntos.totalPronto} <span className="text-xs">UN</span></p>
                                     </div>
                                     <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
                                         <p className="text-[10px] font-black text-emerald-500 uppercase">Última Entrada</p>
@@ -1164,6 +1174,76 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                                     <p className="text-xl font-black text-slate-600">{group.min_pack_qty} <span className="text-xs">UN</span></p>
                                                 </div>
                                             </div>
+
+                                            {/* Datas de entrada por produto */}
+                                            {(() => {
+                                                const groupMovs = relatorioProdutosProntos.packMovements.filter(m =>
+                                                    m.stockItemCode === `PACK:${group.id}` || m.stockItemCode === `PACK:${group.name}` ||
+                                                    group.item_codes.includes(m.stockItemCode)
+                                                );
+                                                const entradas = groupMovs.filter(m => m.qty_delta > 0);
+                                                const ultimasEntradas = new Map<string, { date: string, qty: number }>();
+                                                entradas.forEach(m => {
+                                                    const sku = m.stockItemCode.replace('PACK:', '');
+                                                    const existing = ultimasEntradas.get(sku);
+                                                    const mDate = new Date(m.createdAt).getTime();
+                                                    if (!existing || mDate > new Date(existing.date).getTime()) {
+                                                        ultimasEntradas.set(sku, { date: m.createdAt.toString(), qty: m.qty_delta });
+                                                    }
+                                                });
+
+                                                if (ultimasEntradas.size > 0) {
+                                                    return (
+                                                        <div className="mt-3 pt-2 border-t border-slate-100">
+                                                            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Última Entrada por Item</p>
+                                                            <div className="space-y-1">
+                                                                {Array.from(ultimasEntradas.entries()).slice(0, 5).map(([sku, info]) => {
+                                                                    const item = stockItems.find(i => i.code === sku);
+                                                                    return (
+                                                                        <div key={sku} className="flex justify-between items-center text-[9px] px-2 py-1 bg-emerald-50 rounded-lg">
+                                                                            <span className="font-bold text-slate-600 truncate max-w-[60%]">{item?.name || sku}</span>
+                                                                            <div className="flex items-center gap-2">
+                                                                                <span className="font-black text-emerald-600">+{info.qty}</span>
+                                                                                <span className="text-slate-400">{new Date(info.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</span>
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }
+                                                return null;
+                                            })()}
+
+                                            {/* Breakdown de saída: quantos de 1, de 2, etc. */}
+                                            {(() => {
+                                                const size = group.pack_size || 1;
+                                                if (size <= 1 || currentTotal <= 0) return null;
+                                                const pacotesCompletos = Math.floor(currentTotal / size);
+                                                const resto = currentTotal % size;
+                                                return (
+                                                    <div className="mt-2 pt-2 border-t border-slate-100">
+                                                        <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Composição do Estoque</p>
+                                                        <div className="flex flex-wrap gap-1.5">
+                                                            {pacotesCompletos > 0 && (
+                                                                <span className="px-2 py-1 bg-blue-50 text-blue-700 text-[9px] font-black rounded-lg border border-blue-100">
+                                                                    {pacotesCompletos}x de {size}
+                                                                </span>
+                                                            )}
+                                                            {resto > 0 && (
+                                                                <span className="px-2 py-1 bg-amber-50 text-amber-700 text-[9px] font-black rounded-lg border border-amber-100">
+                                                                    {resto}x avulso(s)
+                                                                </span>
+                                                            )}
+                                                            <span className="px-2 py-1 bg-slate-50 text-slate-500 text-[9px] font-bold rounded-lg border border-slate-100">
+                                                                = {currentTotal} un total
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })()}
+
                                             <div className="flex gap-2 mt-4 pt-3 border-t border-slate-100">
                                                 <button onClick={() => {
                                                     const data = {
@@ -1260,7 +1340,16 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                                             <span className={`text-sm font-black ${isBelowMin ? 'text-red-600' : 'text-emerald-600'}`}>{currentTotal.toFixed(0)} UN</span>
                                                             {(() => {
                                                                 const size = group.pack_size || 1;
-                                                                if (size > 1) return <span className="text-[10px] text-slate-400 font-bold">({(currentTotal / size).toFixed(1)} de {size})</span>;
+                                                                if (size > 1) {
+                                                                    const pacotesCompletos = Math.floor(currentTotal / size);
+                                                                    const resto = currentTotal % size;
+                                                                    return (
+                                                                        <div className="flex flex-wrap gap-1 mt-0.5">
+                                                                            {pacotesCompletos > 0 && <span className="text-[9px] text-blue-600 font-bold bg-blue-50 px-1 rounded">{pacotesCompletos}x de {size}</span>}
+                                                                            {resto > 0 && <span className="text-[9px] text-amber-600 font-bold bg-amber-50 px-1 rounded">{resto}x avulso</span>}
+                                                                        </div>
+                                                                    );
+                                                                }
                                                                 return null;
                                                             })()}
                                                         </div>

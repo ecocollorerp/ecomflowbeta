@@ -544,27 +544,40 @@ export default function CalculadoraPage({ stockItems, produtosCombinados, addToa
         pdf.text("1. Detalhamento do Custo Direto", 15, currentY);
         currentY += 8;
 
-        const costRows = items.map(item => [
-            item.name,
-            `${item.quantityUsed} ${item.unit}`,
-            new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.basePrice),
-            new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.totalCost)
-        ]);
+        const isConjunto = calculationType === 'conjunto';
+        const costHead = isConjunto
+            ? [['SKU Mestre', 'Item / Insumo', 'Qtd. Utilizada', 'Preço Unit.', 'Subtotal']]
+            : [['Item / Insumo', 'Qtd. Utilizada', 'Preço Unit.', 'Subtotal']];
+
+        const costRows = items.map(item => {
+            const row = [
+                item.name,
+                `${item.quantityUsed} ${item.unit}`,
+                new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.basePrice),
+                new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(item.totalCost)
+            ];
+            if (isConjunto) row.unshift(item.productSku || '-');
+            return row;
+        });
 
         if (otherCosts > 0) {
-            costRows.push(["Outros Custos Operacionais", "-", "-", new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(otherCosts)]);
+            const otherRow = ["Outros Custos Operacionais", "-", "-", new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(otherCosts)];
+            if (isConjunto) otherRow.unshift('-');
+            costRows.push(otherRow);
         }
 
         autoTable(pdf, {
             startY: currentY,
-            head: [['Item / Insumo', 'Qtd. Utilizada', 'Preço Unit.', 'Subtotal']],
+            head: costHead,
             body: costRows,
             theme: 'striped',
             headStyles: { fillColor: [79, 70, 229], textColor: 255, fontStyle: 'bold' },
             styles: { fontSize: 9 },
-            columnStyles: { 3: { halign: 'right', fontStyle: 'bold' } },
+            columnStyles: isConjunto
+                ? { 0: { fontStyle: 'bold', cellWidth: 28 }, 4: { halign: 'right', fontStyle: 'bold' } }
+                : { 3: { halign: 'right', fontStyle: 'bold' } },
             foot: [[
-                { content: 'CUSTO TOTAL DE MATERIAIS E OPERAÇÃO', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } },
+                { content: 'CUSTO TOTAL DE MATERIAIS E OPERAÇÃO', colSpan: isConjunto ? 4 : 3, styles: { halign: 'right', fontStyle: 'bold' } },
                 { content: new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(totalMaterialCost + otherCosts), styles: { halign: 'right', fontStyle: 'bold' } }
             ]]
         });
@@ -641,14 +654,6 @@ export default function CalculadoraPage({ stockItems, produtosCombinados, addToa
                 return impact > 0 
                     ? `Gasto Extra: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(impact)}`
                     : `Economia: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Math.abs(impact))}`;
-            })],
-            ['Veredito Estratégico', ...allPrices.map(p => {
-                const fees = (p * platformFeePercent) / 100;
-                const taxes = (p * taxPercent) / 100;
-                const dCost = totalMaterialCost + otherCosts + fees + taxes + shippingCost;
-                const prof = p - dCost;
-                const marg = p > 0 ? (prof / p) * 100 : 0;
-                return getVerdict(marg);
             })]
         ];
 
@@ -664,45 +669,36 @@ export default function CalculadoraPage({ stockItems, produtosCombinados, addToa
 
         currentY = (pdf as any).lastAutoTable.finalY + 15;
 
-        // --- VEREDITO FINAL ESTRATÉGICO ---
-        if (targetRevenue > 0) {
+        // --- PRODUTOS DO CONJUNTO (SKU Mestre) ---
+        if (calculationType === 'conjunto' && selectedProducts.length > 0) {
             pdf.setFontSize(14);
             pdf.setFont("helvetica", "bold");
             pdf.setTextColor(30, 41, 59);
-            pdf.text("3. Veredito Estratégico Final", 15, currentY);
+            pdf.text("3. Produtos do Conjunto", 15, currentY);
             currentY += 8;
-            
-            pdf.setFontSize(10);
-            pdf.setFont("helvetica", "normal");
-            pdf.setTextColor(100);
-            
-            const bestScenario = allPrices.reduce((prev, curr) => {
-                const getProfit = (p: number) => {
-                    const fees = (p * platformFeePercent) / 100;
-                    const taxes = (p * taxPercent) / 100;
-                    const dCost = totalMaterialCost + otherCosts + fees + taxes + shippingCost;
-                    const prof = p - dCost;
-                    const qty = Math.ceil(targetRevenue / p);
-                    return prof * qty;
-                };
-                return getProfit(curr) > getProfit(prev) ? curr : prev;
-            }, allPrices[0]);
 
-            const bestProfit = (() => {
-                const fees = (bestScenario * platformFeePercent) / 100;
-                const taxes = (bestScenario * taxPercent) / 100;
-                const dCost = totalMaterialCost + otherCosts + fees + taxes + shippingCost;
-                const prof = bestScenario - dCost;
-                const qty = Math.ceil(targetRevenue / bestScenario);
-                return prof * qty;
-            })();
+            const conjuntoRows = selectedProducts.map(p => {
+                const productItems = items.filter(it => it.productSku === p.sku);
+                const subtotal = productItems.reduce((s, it) => s + it.totalCost, 0);
+                return [
+                    p.sku,
+                    p.name,
+                    `${productItems.length} insumo(s)`,
+                    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(subtotal)
+                ];
+            });
 
-            pdf.text(`Análise baseada na meta de faturamento de ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(targetRevenue)}:`, 15, currentY);
-            pdf.setFont("helvetica", "bold");
-            pdf.setTextColor(30, 41, 59);
-            pdf.text(`O cenário recomendado é vender por ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(bestScenario)},`, 15, currentY + 6);
-            pdf.text(`gerando um Lucro Total de ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(bestProfit)} com a venda de ${Math.ceil(targetRevenue/bestScenario)} unidades.`, 15, currentY + 11);
-            currentY += 20;
+            autoTable(pdf, {
+                startY: currentY,
+                head: [['SKU Mestre', 'Produto', 'Composição', 'Custo']],
+                body: conjuntoRows,
+                theme: 'striped',
+                headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold' },
+                styles: { fontSize: 9 },
+                columnStyles: { 3: { halign: 'right', fontStyle: 'bold' } }
+            });
+
+            currentY = (pdf as any).lastAutoTable.finalY + 15;
         }
 
         pdf.setFontSize(8);

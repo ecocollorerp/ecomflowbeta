@@ -235,11 +235,14 @@ export const exportFinanceReport = async (payload: {
     period: string; canal: string; stats: any; materialList: MaterialItem[]; 
     orders: OrderItem[]; taxes?: any[]; dailyChart?: { date: string, value: number }[]; 
     canalComparison?: { ml: number, shopee: number, site: number }; 
+    storeProfitData?: Record<string, { gross: number, fees: number, shipping: number }>;
+    channelNames?: Record<string, string>;
     deductPlatformFees?: boolean; deductShipping?: boolean; showCustomerPaid?: boolean;
     reportTitle?: string; reportLogoBase64?: string; customReportImageBase64?: string; 
     pptxTemplateBase64?: string; stockMovements?: StockMovement[];
     prevStats?: any; prevNetProfit?: number; prevTicketMedio?: number; prevMargemPct?: number; prevTaxTotal?: number;
     estimatedProfitCalculated?: number;
+    despesasLancadas?: number; despesaCompetencia?: string;
 }) => {
     const doc = new jsPDF();
     const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -329,6 +332,12 @@ export const exportFinanceReport = async (payload: {
     
     summaryBody.push(['(=) Líquido Final (BOM)', fmt(netFinal - totalMaterialCost) + getTrendStr(netFinal - totalMaterialCost, payload.prevNetProfit)]);
     
+    if (payload.despesasLancadas && payload.despesasLancadas > 0) {
+        const compLabel = payload.despesaCompetencia ? ` (${payload.despesaCompetencia.split('-').reverse().join('/')})` : '';
+        summaryBody.push(['(-) Despesas Lançadas' + compLabel, fmt(payload.despesasLancadas)]);
+        summaryBody.push(['(=) Líquido Após Despesas', fmt(netFinal - totalMaterialCost - payload.despesasLancadas)]);
+    }
+
     if (payload.estimatedProfitCalculated !== undefined) {
         summaryBody.push(['(=) Lucro Estimado (Calculadora)', fmt(payload.estimatedProfitCalculated)]);
     }
@@ -564,13 +573,29 @@ export const exportFinanceReport = async (payload: {
         doc.text(`Total: ${fmt(totalDC)} | Média/dia: ${fmt(totalDC / chartData.length)}`, chartX, chartY + chartH + 10);
 
         // 6. Comparativo por Canal
-        if (payload.canalComparison) {
-            const comp = payload.canalComparison;
-            const channels = [
-                { name: 'Mercado Livre', value: comp.ml, color: [255, 230, 0] as [number, number, number] },
-                { name: 'Shopee', value: comp.shopee, color: [238, 77, 45] as [number, number, number] },
-                { name: 'TikTok/Site', value: comp.site, color: [0, 0, 0] as [number, number, number] },
-            ].filter(c => c.value > 0);
+        {
+            const defaultColors: [number, number, number][] = [
+                [255, 230, 0], [238, 77, 45], [59, 130, 246], [0, 0, 0],
+                [139, 92, 246], [16, 185, 129], [244, 63, 94], [251, 146, 60]
+            ];
+
+            // Usar storeProfitData dinâmico se disponível, senão fallback para canalComparison legado
+            let channels: { name: string, value: number, color: [number, number, number] }[] = [];
+
+            if (payload.storeProfitData && Object.keys(payload.storeProfitData).length > 0) {
+                channels = Object.entries(payload.storeProfitData).map(([key, data], i) => ({
+                    name: payload.channelNames?.[key] || key,
+                    value: data.gross,
+                    color: defaultColors[i % defaultColors.length]
+                })).filter(c => c.value > 0);
+            } else if (payload.canalComparison) {
+                const comp = payload.canalComparison;
+                channels = [
+                    { name: payload.channelNames?.['ML'] || 'Mercado Livre', value: comp.ml, color: [255, 230, 0] as [number, number, number] },
+                    { name: payload.channelNames?.['SHOPEE'] || 'Shopee', value: comp.shopee, color: [238, 77, 45] as [number, number, number] },
+                    { name: payload.channelNames?.['SITE'] || 'TikTok/Site', value: comp.site, color: [0, 0, 0] as [number, number, number] },
+                ].filter(c => c.value > 0);
+            }
 
             if (channels.length > 0) {
                 const cY = chartY + chartH + 20;
@@ -698,11 +723,14 @@ export const exportFinancePptx = async (payload: {
     period: string; canal: string; stats: any; materialList: MaterialItem[];
     orders: OrderItem[]; taxes?: any[]; dailyChart?: { date: string, value: number }[];
     canalComparison?: { ml: number, shopee: number, site: number };
+    storeProfitData?: Record<string, { gross: number, fees: number, shipping: number }>;
+    channelNames?: Record<string, string>;
     deductPlatformFees?: boolean; deductShipping?: boolean; showCustomerPaid?: boolean;
     reportTitle?: string; reportLogoBase64?: string; customReportImageBase64?: string;
     pptxTemplateBase64?: string; stockMovements?: StockMovement[];
     prevStats?: any; prevNetProfit?: number; prevTicketMedio?: number; prevMargemPct?: number; prevTaxTotal?: number;
     estimatedProfitCalculated?: number;
+    despesasLancadas?: number; despesaCompetencia?: string;
 }) => {
     const pptx = new PptxGenJS();
     pptx.author = 'EcomFlow';
@@ -757,6 +785,11 @@ export const exportFinancePptx = async (payload: {
     if (payload.deductShipping !== false) rows.push([{ text: '(-) Frete' }, { text: fmt(payload.stats.shipping) + getTrendStr(payload.stats.shipping, payload.prevStats?.shipping) }]);
     enabledTaxes.forEach((t: any) => rows.push([{ text: `(-) ${t.name}` }, { text: fmt(t.calculatedAmount) }]));
     rows.push([{ text: '(=) Líquido Final', options: { bold: true } }, { text: fmt(netFinal) + getTrendStr(netFinal, payload.prevNetProfit), options: { bold: true } }]);
+    if (payload.despesasLancadas && payload.despesasLancadas > 0) {
+        const compLabel = payload.despesaCompetencia ? ` (${payload.despesaCompetencia.split('-').reverse().join('/')})` : '';
+        rows.push([{ text: '(-) Despesas Lançadas' + compLabel }, { text: fmt(payload.despesasLancadas) }]);
+        rows.push([{ text: '(=) Líquido Após Despesas', options: { bold: true } }, { text: fmt(netFinal - payload.despesasLancadas), options: { bold: true } }]);
+    }
     rows.push([{ text: 'Unidades Vendidas' }, { text: String(payload.stats.units) }]);
     rows.push([{ text: 'Pedidos Processados' }, { text: String(payload.orders.length) }]);
     if (payload.showCustomerPaid && payload.stats.customerPaid) {
@@ -815,14 +848,25 @@ export const exportFinancePptx = async (payload: {
         s4.addText(`Total: ${fmt(totalDC)} | Média/dia: ${fmt(totalDC / payload.dailyChart.length)}`, { x: 0.5, y: 5.1, w: 9, h: 0.3, fontSize: 9, color: '6b7280' });
     }
 
-    // Slide 5 — Comparativo por Canal
-    if (payload.canalComparison) {
-        const comp = payload.canalComparison;
-        const channels = [
-            { name: 'Mercado Livre', value: comp.ml },
-            { name: 'Shopee', value: comp.shopee },
-            { name: 'TikTok/Site', value: comp.site },
-        ].filter(c => c.value > 0);
+    // Slide 5 — Comparativo por Canal (dinâmico)
+    {
+        const defaultPptxColors = ['FFE600', 'EE4D2D', '3b82f6', '111111', '8b5cf6', '10b981', 'f43f5e', 'fb923c'];
+
+        let channels: { name: string, value: number }[] = [];
+
+        if (payload.storeProfitData && Object.keys(payload.storeProfitData).length > 0) {
+            channels = Object.entries(payload.storeProfitData).map(([key, data]) => ({
+                name: payload.channelNames?.[key] || key,
+                value: data.gross,
+            })).filter(c => c.value > 0);
+        } else if (payload.canalComparison) {
+            const comp = payload.canalComparison;
+            channels = [
+                { name: payload.channelNames?.['ML'] || 'Mercado Livre', value: comp.ml },
+                { name: payload.channelNames?.['SHOPEE'] || 'Shopee', value: comp.shopee },
+                { name: payload.channelNames?.['SITE'] || 'TikTok/Site', value: comp.site },
+            ].filter(c => c.value > 0);
+        }
 
         if (channels.length > 0) {
             const s5 = pptx.addSlide();
@@ -839,7 +883,7 @@ export const exportFinancePptx = async (payload: {
                 showPercent: true,
                 showLegend: true,
                 legendPos: 'b',
-                chartColors: ['FFE600', 'EE4D2D', '111111'],
+                chartColors: channels.map((_, i) => defaultPptxColors[i % defaultPptxColors.length]),
             });
 
             const cRows: PptxGenJS.TableRow[] = [
@@ -903,6 +947,11 @@ export const exportFinancePptx = async (payload: {
         });
     }
     dreRows.push([{ text: 'TOTAL DEDUZIDO', options: { bold: true } }, { text: fmt(totalOp), options: { bold: true } }]);
+    if (payload.despesasLancadas && payload.despesasLancadas > 0) {
+        const compLabel = payload.despesaCompetencia ? ` (${payload.despesaCompetencia.split('-').reverse().join('/')})` : '';
+        dreRows.push([{ text: 'Despesas Lançadas' + compLabel, options: { bold: true, color: 'be123c' } }, { text: fmt(payload.despesasLancadas), options: { bold: true, color: 'be123c' } }]);
+        dreRows.push([{ text: 'TOTAL GERAL (c/ Despesas)', options: { bold: true } }, { text: fmt(totalOp + payload.despesasLancadas), options: { bold: true } }]);
+    }
 
     s7.addTable(dreRows, { x: 0.5, y: 1.2, w: 9, fontSize: 12, border: { type: 'solid', pt: 0.5, color: 'e5e7eb' }, colW: [6, 3] });
 

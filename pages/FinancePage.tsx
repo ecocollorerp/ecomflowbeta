@@ -1,15 +1,17 @@
 
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
-import { OrderItem, Canal, StockItem, ProdutoCombinado, SkuLink, GeneralSettings, MaterialItem, TaxEntry, FinanceCardConfig, StockMovement } from '../types';
+import { OrderItem, Canal, StockItem, ProdutoCombinado, SkuLink, GeneralSettings, MaterialItem, TaxEntry, FinanceCardConfig, StockMovement, DespesaCategoria, DespesaFornecedor, DespesaLancamento, User } from '../types';
 import {
     DollarSign, TrendingUp,
-    FileUp, FileDown, Calendar, ArrowRight, Loader2, ShoppingBag, Box, Trash2, Settings, CheckCircle, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, FileSpreadsheet, AlertCircle, Percent, PieChart, Landmark, Plus, Minus, FileCode, AlertTriangle, Edit2, X, Save, BarChart3, Lock, Unlock, CalendarClock, Calculator
+    FileUp, FileDown, Calendar, ArrowRight, Loader2, ShoppingBag, Box, Trash2, Settings, CheckCircle, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, FileSpreadsheet, AlertCircle, Percent, PieChart, Landmark, Plus, Minus, FileCode, AlertTriangle, Edit2, X, Save, BarChart3, Lock, Unlock, CalendarClock, Calculator, Receipt, Info
 } from 'lucide-react';
 import { calculateMaterialList } from '../lib/estoque';
 import { exportFinanceReport, exportFinancePptx } from '../lib/export';
 import ConfirmActionModal from '../components/ConfirmActionModal';
 import FinanceImportModal from '../components/FinanceImportModal';
 import { MappingPanel } from '../components/MappingSettings';
+import LancarPagamentoModal from '../components/LancarPagamentoModal';
+import DespesasLancamentosCard from '../components/DespesasLancamentosCard';
 
 interface FinancePageProps {
     allOrders: OrderItem[];
@@ -25,6 +27,8 @@ interface FinancePageProps {
     setCurrentPage: (page: string) => void;
     onSelectSku?: (sku: string) => void;
     costCalculations?: any[];
+    users?: User[];
+    importHistory?: { id: string; filename: string; canal: string; created_at: string }[];
 }
 
 interface FinanceStatCardProps {
@@ -134,7 +138,9 @@ const FinancePage: React.FC<FinancePageProps> = ({
     onNavigateToSettings,
     setCurrentPage,
     onSelectSku,
-    costCalculations = []
+    costCalculations = [],
+    users = [],
+    importHistory = []
 }) => {
     const [activeTab, setActiveTab] = useState<'overview' | 'reports' | 'materials'>('overview');
 
@@ -196,11 +202,38 @@ const FinancePage: React.FC<FinancePageProps> = ({
     const [editingCardId, setEditingCardId] = useState<string | null>(null);
 
     const canaisDisponiveis = useMemo(() => {
-        const setCanais = new Set<string>();
-        allOrders.forEach(o => { if (o.canal) setCanais.add(o.canal); });
-        (generalSettings.customStores || []).forEach(s => setCanais.add(s.id));
-        return Array.from(setCanais).sort();
+        const normalizedMap = new Map<string, string>();
+        allOrders.forEach(o => {
+            if (!o.canal) return;
+            const key = String(o.canal).trim().toUpperCase();
+            if (!key) return;
+            if (!normalizedMap.has(key)) normalizedMap.set(key, String(o.canal).trim());
+        });
+        (generalSettings.customStores || []).forEach(s => {
+            const raw = String(s.id || s.name || '').trim();
+            if (!raw) return;
+            const key = raw.toUpperCase();
+            normalizedMap.set(key, raw);
+        });
+        return Array.from(normalizedMap.values()).sort((a, b) => a.localeCompare(b, 'pt-BR'));
     }, [allOrders, generalSettings.customStores]);
+
+    // Resolve nome legível de canal a partir do preset / customStores
+    const resolveChannelName = (key: string): string => {
+        const upper = key.toUpperCase();
+        // Verificar storeName configurado no importer
+        const importerMapping = (generalSettings.importer as any)[key.toLowerCase()] || (generalSettings as any)[`importer_${key.toLowerCase()}`];
+        if (importerMapping?.storeName) return importerMapping.storeName;
+        // Verificar customStores
+        const custom = (generalSettings.customStores || []).find(s => s.id.toUpperCase() === upper || s.name.toUpperCase() === upper);
+        if (custom) return custom.name;
+        // Fallback padrão
+        if (upper === 'ML') return 'Mercado Livre';
+        if (upper === 'SHOPEE') return 'Shopee';
+        if (upper === 'SITE') return generalSettings?.importer?.site?.storeName || 'Site / Outros';
+        if (upper === 'TIKTOK') return 'TikTok';
+        return key;
+    };
 
     const [rankingMetric, setRankingMetric] = useState<'revenue' | 'quantity'>('revenue');
     const [period, setPeriod] = useState<'today' | 'last7days' | 'thisMonth' | 'lastMonth' | 'custom' | 'last_upload'>('thisMonth');
@@ -209,6 +242,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
     const [compareMode, setCompareMode] = useState<'prev_period' | 'same_month_last_year' | 'same_day_last_month' | 'custom'>('prev_period');
     const [compareCustomDates, setCompareCustomDates] = useState({ start: '', end: '' });
     const [considerarInvalidos, setConsiderarInvalidos] = useState(false);
+    const [statusFilter, setStatusFilter] = useState<string>('ALL');
     const [isExporting, setIsExporting] = useState(false);
     const [isExportingPptx, setIsExportingPptx] = useState(false);
     const [chartPage, setChartPage] = useState(0);
@@ -237,6 +271,78 @@ const FinancePage: React.FC<FinancePageProps> = ({
             setDateSourceMode('sale_date');
         }
     }, [generalSettings.dateSource]);
+
+    // ── Lançamento de Pagamentos ──
+    const [isLancarPagamentoOpen, setIsLancarPagamentoOpen] = useState(false);
+    const [despesaCategorias, setDespesaCategorias] = useState<DespesaCategoria[]>(() => generalSettings.despesaCategorias || []);
+    const [despesaFornecedores, setDespesaFornecedores] = useState<DespesaFornecedor[]>(() => generalSettings.despesaFornecedores || []);
+    const [despesaLancamentos, setDespesaLancamentos] = useState<DespesaLancamento[]>(() => generalSettings.despesaLancamentos || []);
+
+    useEffect(() => {
+        if (generalSettings.despesaCategorias) setDespesaCategorias(generalSettings.despesaCategorias);
+        if (generalSettings.despesaFornecedores) setDespesaFornecedores(generalSettings.despesaFornecedores);
+        if (generalSettings.despesaLancamentos) setDespesaLancamentos(generalSettings.despesaLancamentos);
+    }, [generalSettings.despesaCategorias, generalSettings.despesaFornecedores, generalSettings.despesaLancamentos]);
+
+    const handleSaveDespesaCategorias = (cats: DespesaCategoria[]) => {
+        setDespesaCategorias(cats);
+        if (onSaveSettings) onSaveSettings({ ...generalSettings, despesaCategorias: cats });
+    };
+    const handleSaveDespesaFornecedores = (forns: DespesaFornecedor[]) => {
+        setDespesaFornecedores(forns);
+        if (onSaveSettings) onSaveSettings({ ...generalSettings, despesaFornecedores: forns });
+    };
+    const handleLancarDespesa = (lancamento: DespesaLancamento) => {
+        const updated = [...despesaLancamentos, lancamento];
+        setDespesaLancamentos(updated);
+        if (onSaveSettings) onSaveSettings({ ...generalSettings, despesaLancamentos: updated });
+    };
+    const handleDeleteDespesa = (id: string) => {
+        const updated = despesaLancamentos.filter(l => l.id !== id);
+        setDespesaLancamentos(updated);
+        if (onSaveSettings) onSaveSettings({ ...generalSettings, despesaLancamentos: updated });
+    };
+
+    // Competência atual para o card de despesas
+    const now_date = new Date();
+    const despesaCompetencia = useMemo(() => {
+        // Usa o mesmo período do filtro principal
+        if (period === 'lastMonth') {
+            const d = new Date();
+            d.setMonth(d.getMonth() - 1);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        }
+        if (period === 'custom' && customDates.start) {
+            const d = new Date(customDates.start + 'T12:00:00');
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        }
+        return `${now_date.getFullYear()}-${String(now_date.getMonth() + 1).padStart(2, '0')}`;
+    }, [period, customDates.start]);
+
+    // Total de despesas lançadas para a competência atual (para uso nos cards)
+    const totalDespesasLancadas = useMemo(() => {
+        return despesaLancamentos.reduce((sum, l) => {
+            if (l.tipo === 'mensal') {
+                // Suporta múltiplas competências
+                const matchComp = l.competencias && l.competencias.length > 0
+                    ? l.competencias.includes(despesaCompetencia)
+                    : l.competencia === despesaCompetencia;
+                if (matchComp) return sum + l.valor;
+            }
+            if (l.tipo === 'faturado' && l.parcelasGeradas) {
+                const parcelaDoMes = l.parcelasGeradas.filter(p => p.competencia === despesaCompetencia);
+                return sum + parcelaDoMes.reduce((s, p) => s + p.valor, 0);
+            }
+            return sum;
+        }, 0);
+    }, [despesaLancamentos, despesaCompetencia]);
+
+    // ── Delete por canal ou por arquivo ──
+    const [isDeleteByFilterOpen, setIsDeleteByFilterOpen] = useState(false);
+    const [deleteByMode, setDeleteByMode] = useState<'canal' | 'arquivo'>('canal');
+    const [deleteByCanal, setDeleteByCanal] = useState('');
+    const [deleteByArquivo, setDeleteByArquivo] = useState('');
+    const [showCalcImportacao, setShowCalcImportacao] = useState(false);
 
     const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
     const fmtPct = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
@@ -324,6 +430,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
             const filtered = allOrders.filter(order => {
                 if (canalFilter !== 'ALL' && order.canal !== canalFilter) return false;
                 if (!considerarInvalidos && (order.status === 'ERRO' || order.status === 'DEVOLVIDO' || order.status === 'CANCELADO')) return false;
+                if (statusFilter !== 'ALL' && order.status !== statusFilter) return false;
                 const d = parseOrderDate(order);
                 if (!d) return false;
                 if (sLimit && d < sLimit) return false;
@@ -522,7 +629,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
             prevMargemPct: prev.base.gross > 0 ? ((prev.finalNet - prevTotalMaterialCost) / prev.base.gross) * 100 : 0, prevTotalMaterialCost,
             estimatedProfitCalculated, estimatedMarginCalculated: current.base.gross > 0 ? (estimatedProfitCalculated / current.base.gross) * 100 : 0
         };
-    }, [allOrders, period, canalFilter, customDates, compareMode, compareCustomDates, considerarInvalidos, dateSourceMode, rankingMetric, generalSettings.isRepeatedValue, taxes, deductPlatformFees, deductShipping, useNetShipping, skuLinks, stockItems, produtosCombinados, costCalculations]);
+    }, [allOrders, period, canalFilter, customDates, compareMode, compareCustomDates, considerarInvalidos, statusFilter, dateSourceMode, rankingMetric, generalSettings.isRepeatedValue, taxes, deductPlatformFees, deductShipping, useNetShipping, skuLinks, stockItems, produtosCombinados, costCalculations]);
 
     const handleAddTax = () => {
         const updated = [...taxes, { id: Date.now().toString(), name: 'Nova Despesa', type: 'percent' as const, value: 0, enabled: true, category: 'outro' as const, appliesTo: 'gross' as const }];
@@ -562,6 +669,8 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 taxes: taxBreakdown,
                 dailyChart,
                 canalComparison,
+                storeProfitData: storeProfitability as Record<string, { gross: number, fees: number, shipping: number }>,
+                channelNames: Object.fromEntries(Object.keys(storeProfitability).map(k => [k, resolveChannelName(k)])),
                 deductPlatformFees,
                 deductShipping,
                 showCustomerPaid: false,
@@ -569,7 +678,9 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 reportLogoBase64: generalSettings.reportLogoBase64,
                 stockMovements: stockMovements,
                 prevStats, prevNetProfit: prevFinalNetProfit, prevTicketMedio, prevMargemPct, prevTaxTotal,
-                estimatedProfitCalculated
+                estimatedProfitCalculated,
+                despesasLancadas: totalDespesasLancadas,
+                despesaCompetencia
             });
         } catch (e) {
             console.error("Erro ao exportar:", e);
@@ -592,6 +703,8 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 taxes: taxBreakdown,
                 dailyChart,
                 canalComparison,
+                storeProfitData: storeProfitability as Record<string, { gross: number, fees: number, shipping: number }>,
+                channelNames: Object.fromEntries(Object.keys(storeProfitability).map(k => [k, resolveChannelName(k)])),
                 deductPlatformFees,
                 deductShipping,
                 showCustomerPaid: false,
@@ -599,7 +712,9 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 reportLogoBase64: generalSettings.reportLogoBase64,
                 stockMovements: stockMovements,
                 prevStats, prevNetProfit: prevFinalNetProfit, prevTicketMedio, prevMargemPct, prevTaxTotal,
-                estimatedProfitCalculated
+                estimatedProfitCalculated,
+                despesasLancadas: totalDespesasLancadas,
+                despesaCompetencia
             });
         } catch (e) {
             console.error('Erro ao exportar PPTX:', e);
@@ -642,7 +757,10 @@ const FinancePage: React.FC<FinancePageProps> = ({
                         Financeiro Estratégico
                     </h1>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                    <button onClick={() => setIsLancarPagamentoOpen(true)} className="bg-purple-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-purple-100 hover:bg-purple-700 transition-all flex items-center gap-2">
+                        <Receipt size={16} /> Lançar Pagamento
+                    </button>
                     <button onClick={() => setCurrentPage('calculadora')} className="bg-emerald-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-emerald-100 hover:bg-emerald-700 transition-all flex items-center gap-2">
                         <Calculator size={16} /> Calculadora de Margem
                     </button>
@@ -809,12 +927,12 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                                         }}
                                                         className={`px-2 py-0.5 rounded text-[9px] font-black border transition-all ${selected ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-500 border-slate-200 hover:border-blue-300'}`}
                                                     >
-                                                        {ch === 'ML' ? 'Mercado Livre' : ch === 'SHOPEE' ? 'Shopee' : ch === 'SITE' ? 'Site' : ch}
+                                                        {resolveChannelName(ch)}
                                                     </button>
                                                 );
                                             })}
                                         </div>
-                                        <p className="text-[8px] text-slate-400 mt-0.5">{(!tax.appliesToChannels || tax.appliesToChannels.length === 0) ? 'Nenhum selecionado = aplica em todos' : `Aplicado em: ${tax.appliesToChannels.join(', ')}`}</p>
+                                        <p className="text-[8px] text-slate-400 mt-0.5">{(!tax.appliesToChannels || tax.appliesToChannels.length === 0) ? 'Nenhum selecionado = aplica em todos' : `Aplicado em: ${(tax.appliesToChannels || []).map(resolveChannelName).join(', ')}`}</p>
                                     </div>
                                     <div>
                                         <label className="flex items-center gap-2 cursor-pointer mt-1">
@@ -872,19 +990,23 @@ const FinancePage: React.FC<FinancePageProps> = ({
                             <select value={canalFilter} onChange={e => setCanalFilter(e.target.value as any)} className="w-full p-3 bg-slate-50 border rounded-xl text-xs font-black outline-none focus:ring-2 focus:ring-blue-500">
                                 <option value="ALL">Todos os Canais</option>
                                 {canaisDisponiveis.map(c => {
-                                    const val = String(c).toUpperCase();
-                                    let label = val;
-                                    if (val === 'ML') label = 'Mercado Livre';
-                                    else if (val === 'SHOPEE') label = 'Shopee';
-                                    else if (val === 'SITE') label = 'Site / Outros';
-                                    else if (val === 'TIKTOK') label = 'TikTok Shop';
-                                    else {
-                                        const custom = (generalSettings.customStores || []).find(s => s.id.toUpperCase() === val);
-                                        if (custom) label = custom.name;
-                                    }
-                                    return <option key={c} value={c}>{label}</option>;
+                                    return <option key={c} value={c}>{resolveChannelName(c)}</option>;
                                 })}
                             </select>
+                            {/* Filtro de Status */}
+                            <div>
+                                <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1 block">Filtrar por Status</label>
+                                <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="w-full p-3 bg-slate-50 border rounded-xl text-xs font-black outline-none focus:ring-2 focus:ring-blue-500">
+                                    <option value="ALL">Todos os Status</option>
+                                    {Array.from(new Set(allOrders.map(o => o.status).filter(Boolean))).sort().map(s => (
+                                        <option key={s} value={s}>{s}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <label className="flex items-center gap-2 p-2 bg-slate-50 rounded-xl border border-slate-100 cursor-pointer hover:bg-slate-100 transition-colors">
+                                <input type="checkbox" checked={considerarInvalidos} onChange={e => setConsiderarInvalidos(e.target.checked)} className="rounded text-blue-600" />
+                                <span className="text-[10px] font-bold text-slate-600">Incluir ERRO / DEVOLVIDO / CANCELADO</span>
+                            </label>
                         </div>
                     </div>
 
@@ -920,23 +1042,19 @@ const FinancePage: React.FC<FinancePageProps> = ({
                             <SimplePieChart 
                                 title="Despesas vs Lucro Líquido" 
                                 data={[
-                                    { label: 'Lucro Líquido', value: Math.max(0, finalNetProfit), color: '#10b981' },
+                                    { label: 'Lucro Líquido', value: Math.max(0, finalNetProfit - totalDespesasLancadas), color: '#10b981' },
                                     ...(deductPlatformFees ? [{ label: 'Comissões', value: stats.fees, color: '#f59e0b' }] : []),
                                     ...(deductShipping ? [{ label: 'Frete Empresa', value: stats.shipping, color: '#3b82f6' }] : []),
-                                    ...taxBreakdown.filter(t => t.enabled !== false && t.calculatedAmount > 0).map((t, i) => ({ label: t.name, value: t.calculatedAmount, color: ['#8b5cf6', '#ec4899', '#ef4444', '#14b8a6', '#f97316'][i % 5] }))
+                                    ...taxBreakdown.filter(t => t.enabled !== false && t.calculatedAmount > 0).map((t, i) => ({ label: t.name, value: t.calculatedAmount, color: ['#8b5cf6', '#ec4899', '#ef4444', '#14b8a6', '#f97316'][i % 5] })),
+                                    ...(totalDespesasLancadas > 0 ? [{ label: 'Despesas Lançadas', value: totalDespesasLancadas, color: '#be123c' }] : [])
                                 ]} 
                             />
                             {Object.keys(storeProfitability).length > 0 && (
                                 <SimplePieChart 
                                     title="Distribuição por Canal" 
                                     data={Object.entries(storeProfitability).map(([key, val]: [string, any], i) => {
-                                        let label = key;
-                                        if (key === 'ML') label = 'Mercado Livre';
-                                        if (key === 'SHOPEE') label = 'Shopee';
-                                        if (key === 'SITE') label = generalSettings.importer.site.storeName || 'Loja Própria';
-                                        
                                         return { 
-                                            label: label, value: val.gross, 
+                                            label: resolveChannelName(key), value: val.gross, 
                                             color: key === 'ML' ? '#eab308' : key === 'SHOPEE' ? '#ee4d2d' : ['#3b82f6', '#8b5cf6', '#10b981', '#ec4899'][i % 4] 
                                         };
                                     })} 
@@ -954,11 +1072,197 @@ const FinancePage: React.FC<FinancePageProps> = ({
                             <Trash2 size={14} /> Limpar Filtro Atual
                         </button>
                         <button
+                            onClick={() => setIsDeleteByFilterOpen(!isDeleteByFilterOpen)}
+                            className="w-full py-3 bg-orange-100 text-orange-700 rounded-xl font-bold uppercase text-xs tracking-widest hover:bg-orange-200 transition-all flex items-center justify-center gap-2 border border-orange-200"
+                        >
+                            <Trash2 size={14} /> Apagar por Canal / Arquivo
+                        </button>
+                        {isDeleteByFilterOpen && (
+                            <div className="p-4 bg-orange-50 rounded-2xl border border-orange-200 space-y-3">
+                                <div className="flex gap-1 p-1 bg-orange-100 rounded-xl">
+                                    <button onClick={() => setDeleteByMode('canal')} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${deleteByMode === 'canal' ? 'bg-white text-orange-800 shadow-sm' : 'text-orange-400'}`}>
+                                        Por Canal
+                                    </button>
+                                    <button onClick={() => setDeleteByMode('arquivo')} className={`flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${deleteByMode === 'arquivo' ? 'bg-white text-orange-800 shadow-sm' : 'text-orange-400'}`}>
+                                        Por Arquivo
+                                    </button>
+                                </div>
+                                {deleteByMode === 'canal' && (
+                                    <>
+                                        <select value={deleteByCanal} onChange={e => setDeleteByCanal(e.target.value)} className="w-full p-2.5 bg-white border border-orange-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-orange-500">
+                                            <option value="">Selecionar canal...</option>
+                                            {canaisDisponiveis.map(c => <option key={c} value={c}>{resolveChannelName(c)}</option>)}
+                                        </select>
+                                        {deleteByCanal && (
+                                            <button onClick={async () => {
+                                                const ids = filteredOrders.filter(o => o.canal === deleteByCanal).map(o => o.id);
+                                                if (ids.length > 0 && confirm(`Apagar ${ids.length} pedidos do canal ${deleteByCanal}?`)) {
+                                                    await onDeleteOrders(ids);
+                                                    setDeleteByCanal('');
+                                                }
+                                            }} className="w-full py-2.5 bg-orange-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-700 transition-all">
+                                                Apagar {filteredOrders.filter(o => o.canal === deleteByCanal).length} pedidos de {deleteByCanal}
+                                            </button>
+                                        )}
+                                    </>
+                                )}
+                                {deleteByMode === 'arquivo' && (
+                                    <>
+                                        <select value={deleteByArquivo} onChange={e => setDeleteByArquivo(e.target.value)} className="w-full p-2.5 bg-white border border-orange-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-orange-500">
+                                            <option value="">Selecionar arquivo...</option>
+                                            {importHistory.map(h => <option key={h.id} value={h.id}>{h.filename} ({h.canal}) - {new Date(h.created_at).toLocaleDateString('pt-BR')}</option>)}
+                                        </select>
+                                        {deleteByArquivo && (
+                                            <button onClick={async () => {
+                                                const histItem = importHistory.find(h => h.id === deleteByArquivo);
+                                                const ids = allOrders.filter(o => (o as any).import_batch_id === deleteByArquivo).map(o => o.id);
+                                                if (ids.length > 0 && confirm(`Apagar ${ids.length} pedidos do arquivo "${histItem?.filename}"?`)) {
+                                                    await onDeleteOrders(ids);
+                                                    setDeleteByArquivo('');
+                                                }
+                                            }} className="w-full py-2.5 bg-orange-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-700 transition-all">
+                                                Apagar pedidos deste arquivo
+                                            </button>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        )}
+                        <button
                             onClick={() => setIsDeleteAllModalOpen(true)}
                             className="w-full py-3 bg-red-100 text-red-700 rounded-xl font-bold uppercase text-xs tracking-widest hover:bg-red-200 transition-all flex items-center justify-center gap-2 border border-red-200"
                         >
                             <AlertTriangle size={14} /> Zerar Tudo (Reset)
                         </button>
+                    </div>
+
+                    {/* Como é calculado a importação */}
+                    <div className="bg-white p-4 rounded-3xl border border-slate-100 shadow-sm">
+                        <button onClick={() => setShowCalcImportacao(!showCalcImportacao)} className="w-full flex justify-between items-center">
+                            <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2">
+                                <Info size={14} className="text-blue-500" /> Como é Calculado o Financeiro
+                            </h3>
+                            {showCalcImportacao ? <ChevronDown size={14} className="text-slate-400" /> : <ChevronRight size={14} className="text-slate-400" />}
+                        </button>
+                        {showCalcImportacao && (
+                            <div className="mt-4 space-y-3 text-[10px] text-slate-600 leading-relaxed">
+                                {/* 1. Importação / Parser */}
+                                <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+                                    <p className="font-black text-indigo-700 uppercase tracking-widest mb-1">1. Importação da Planilha (Parser)</p>
+                                    <p className="mb-1">Ao importar, o parser identifica o canal pelo nome do arquivo e aplica aliases de colunas automaticamente (ex: ML: "N.º de venda" → orderId, "SKU" → sku).</p>
+                                    <div className="bg-white p-2 rounded-lg border border-indigo-100 font-mono text-[9px] space-y-0.5 mt-1">
+                                        <p><strong>calculatedTotal</strong> = totalValue || (price_product + shipping_paid_by_customer)</p>
+                                        <p><strong>calculatedProduct</strong> = totalValue − shipping_paid_by_customer</p>
+                                        <p><strong>calculatedNet</strong> = price_product − Σ(fees) − shipping_fee</p>
+                                    </div>
+                                    <p className="mt-1 italic">Todos os canais usam a mesma lógica de processamento (detecção de coluna, cálculo de preço, filtro de status).</p>
+                                </div>
+
+                                {/* 2. Faturamento Bruto */}
+                                <div className="p-3 bg-blue-50 rounded-xl border border-blue-100">
+                                    <p className="font-black text-blue-700 uppercase tracking-widest mb-1">2. Faturamento Bruto (Gross)</p>
+                                    <div className="bg-white p-2 rounded-lg border border-blue-100 font-mono text-[9px] space-y-0.5">
+                                        <p><strong>gross</strong> = Σ price_gross (por grupo de pedido)</p>
+                                        <p>Se <em>sumMultipleLines = false</em>: pega apenas a 1ª linha de cada pedido</p>
+                                        <p>Se <em>sumMultipleLines = true</em>: soma todas as linhas do mesmo pedido</p>
+                                    </div>
+                                </div>
+
+                                {/* 3. Comissões / Taxas */}
+                                <div className="p-3 bg-orange-50 rounded-xl border border-orange-100">
+                                    <p className="font-black text-orange-700 uppercase tracking-widest mb-1">3. Comissões / Taxas (Platform Fees)</p>
+                                    <div className="bg-white p-2 rounded-lg border border-orange-100 font-mono text-[9px] space-y-0.5">
+                                        <p><strong>fees</strong> = Σ platform_fees (colunas mapeadas)</p>
+                                        <p>ML: "Tarifa de venda e impostos"</p>
+                                        <p>Shopee: "Taxa de comissão" + "Taxa de serviço"</p>
+                                    </div>
+                                </div>
+
+                                {/* 4. Frete */}
+                                <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-100">
+                                    <p className="font-black text-emerald-700 uppercase tracking-widest mb-1">4. Frete (Shipping)</p>
+                                    <div className="bg-white p-2 rounded-lg border border-emerald-100 font-mono text-[9px] space-y-0.5">
+                                        <p><strong>shipping</strong> = Σ shipping_fee (custo total de frete)</p>
+                                        <p><strong>customerPaid</strong> = Σ shipping_paid_by_customer</p>
+                                        <p><strong>effectiveShipping</strong> = useNetShipping ? max(0, shipping − customerPaid) : shipping</p>
+                                    </div>
+                                    <p className="mt-1 italic">Com "Frete Líquido" ativo, o frete pago pelo cliente é abatido do custo total.</p>
+                                </div>
+
+                                {/* 5. Impostos / Deduções Configuradas */}
+                                <div className="p-3 bg-red-50 rounded-xl border border-red-100">
+                                    <p className="font-black text-red-700 uppercase tracking-widest mb-1">5. Impostos / Deduções (Tax Entries)</p>
+                                    <div className="bg-white p-2 rounded-lg border border-red-100 font-mono text-[9px] space-y-0.5">
+                                        <p>Para cada TaxEntry configurada:</p>
+                                        <p>• <strong>appliesTo = "gross"</strong>: taxBase = gross</p>
+                                        <p>• <strong>appliesTo = "after_fees"</strong>: taxBase = gross − fees</p>
+                                        <p>• <strong>appliesTo = "after_ship"</strong>: taxBase = gross − shipping</p>
+                                        <p>• <strong>appliesTo = "after_both"</strong>: taxBase = gross − fees − shipping</p>
+                                        <p className="mt-1">• <strong>type = "percent"</strong>: amount = taxBase × (value / 100)</p>
+                                        <p>• <strong>type = "fixed"</strong>: amount = value (fixo)</p>
+                                        <p className="mt-1">Se <em>appliesToChannels[]</em> definido, usa gross/fees/shipping apenas dos canais selecionados.</p>
+                                        <p><strong>taxCalculated</strong> = Σ amount (de todas as entradas ativas)</p>
+                                    </div>
+                                </div>
+
+                                {/* 6. Total Deduções */}
+                                <div className="p-3 bg-amber-50 rounded-xl border border-amber-100">
+                                    <p className="font-black text-amber-700 uppercase tracking-widest mb-1">6. Total de Deduções</p>
+                                    <div className="bg-white p-2 rounded-lg border border-amber-100 font-mono text-[9px] space-y-0.5">
+                                        <p><strong>totalDeductions</strong> =</p>
+                                        <p className="pl-3">(deductPlatformFees ? fees : 0)</p>
+                                        <p className="pl-3">+ (deductShipping ? effectiveShipping : 0)</p>
+                                        <p className="pl-3">+ taxCalculated</p>
+                                    </div>
+                                </div>
+
+                                {/* 7. Líquido Final */}
+                                <div className="p-3 bg-purple-50 rounded-xl border border-purple-100">
+                                    <p className="font-black text-purple-700 uppercase tracking-widest mb-1">7. Líquido Final (Net Profit)</p>
+                                    <div className="bg-white p-2 rounded-lg border border-purple-100 font-mono text-[9px] space-y-0.5">
+                                        <p><strong>baseValue</strong> = useNetShipping ? buyerTotal : gross</p>
+                                        <p><strong>finalNet</strong> = baseValue − totalDeductions</p>
+                                        <p><strong>finalNetProfit</strong> = finalNet − totalMaterialCost (CMV)</p>
+                                    </div>
+                                </div>
+
+                                {/* 8. CMV / Custo de Materiais */}
+                                <div className="p-3 bg-cyan-50 rounded-xl border border-cyan-100">
+                                    <p className="font-black text-cyan-700 uppercase tracking-widest mb-1">8. CMV — Custo de Materiais Vendidos</p>
+                                    <div className="bg-white p-2 rounded-lg border border-cyan-100 font-mono text-[9px] space-y-0.5">
+                                        <p><strong>totalMaterialCost</strong> = Σ custo dos materiais da BOM de cada item vendido</p>
+                                        <p>Para cada pedido, o sistema resolve o SKU mestre via vínculo (skuLinks) e calcula o custo dos insumos pela receita (BOM).</p>
+                                    </div>
+                                </div>
+
+                                {/* 9. Despesas Lançadas */}
+                                <div className="p-3 bg-pink-50 rounded-xl border border-pink-100">
+                                    <p className="font-black text-pink-700 uppercase tracking-widest mb-1">9. Despesas Lançadas</p>
+                                    <div className="bg-white p-2 rounded-lg border border-pink-100 font-mono text-[9px] space-y-0.5">
+                                        <p><strong>despesasLancadas</strong> = Σ (parcelas com competência no período selecionado)</p>
+                                        <p>Despesas Débito Mensal: competência = mês configurado</p>
+                                        <p>Despesas Faturado: cada parcela tem competência própria (baseada no vencimento)</p>
+                                    </div>
+                                </div>
+
+                                {/* 10. Métricas */}
+                                <div className="p-3 bg-teal-50 rounded-xl border border-teal-100">
+                                    <p className="font-black text-teal-700 uppercase tracking-widest mb-1">10. Métricas Derivadas</p>
+                                    <div className="bg-white p-2 rounded-lg border border-teal-100 font-mono text-[9px] space-y-0.5">
+                                        <p><strong>ticketMédio</strong> = gross / totalPedidos</p>
+                                        <p><strong>margemPct</strong> = (finalNetProfit / gross) × 100</p>
+                                        <p><strong>lucroEstimado</strong> = Σ (preço_venda − custo_direto_calculadora) por item</p>
+                                        <p><strong>margemEstimada</strong> = (lucroEstimado / gross) × 100</p>
+                                    </div>
+                                </div>
+
+                                {/* 11. Status */}
+                                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                                    <p className="font-black text-slate-700 uppercase tracking-widest mb-1">11. Filtro de Status</p>
+                                    <p>Pedidos com status ERRO, DEVOLVIDO ou CANCELADO são excluídos por padrão. A coluna de status e os valores aceitos são configurados no mapeamento de cada canal (statusColumn + acceptedStatusValues). Mesma lógica para todos os canais (ML, Shopee, TikTok, Site).</p>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -986,7 +1290,8 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                 fees: stats.fees, shipping: stats.shipping, customerPaid: stats.customerPaid,
                                 taxTotal, cmv: totalMaterialCost, deductions: (deductPlatformFees ? stats.fees : 0) + (deductShipping ? stats.shipping : 0) + taxTotal + totalMaterialCost,
                                 units: stats.units, totalPedidos, ticketMedio, margemPct,
-                                estProfit: estimatedProfitCalculated, estMargin: estimatedMarginCalculated
+                                estProfit: estimatedProfitCalculated, estMargin: estimatedMarginCalculated,
+                                despesasLancadas: totalDespesasLancadas
                             };
                             const evalFormula = (formula: string): number => {
                                 try {
@@ -1017,13 +1322,14 @@ const FinancePage: React.FC<FinancePageProps> = ({
                             const metricMap: Record<string, { value: string; sub?: string; highlight?: boolean; breakdown?: { label: string; value: string; colorClass?: string }[]; trend?: { value: number; label: string } }> = {
                                 gross: { value: fmt(stats.gross), sub: `Faturado sem taxas (${stats.units} un · ${totalPedidos} pedidos)`, trend: getTrend(stats.gross, prevStats.gross) },
                                 net: {
-                                    value: fmt(finalNetProfit), highlight: true, trend: getTrend(finalNetProfit, prevFinalNetProfit),
+                                    value: fmt(finalNetProfit - totalDespesasLancadas), highlight: true, trend: getTrend(finalNetProfit - totalDespesasLancadas, prevFinalNetProfit),
                                     breakdown: [
-                                        { label: 'Margem sobre bruto', value: fmtPct(margemPct), colorClass: margemPct >= 0 ? 'text-emerald-600' : 'text-red-600' },
+                                        { label: 'Margem sobre bruto', value: fmtPct(stats.gross > 0 ? ((finalNetProfit - totalDespesasLancadas) / stats.gross) * 100 : 0), colorClass: (finalNetProfit - totalDespesasLancadas) >= 0 ? 'text-emerald-600' : 'text-red-600' },
                                         ...(deductPlatformFees ? [{ label: 'Comissões', value: fmt(stats.fees) }] : []),
                                         ...(deductShipping ? [{ label: 'Frete/Expedição', value: fmt(stats.shipping) }] : []),
                                         { label: 'Materiais (CMV)', value: fmt(totalMaterialCost) },
                                         ...taxBreakdown.filter(t => t.enabled !== false && !(t as any)._skippedAsCommission).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) })),
+                                        ...(totalDespesasLancadas > 0 ? [{ label: 'Despesas Lançadas', value: fmt(totalDespesasLancadas), colorClass: 'text-rose-600' }] : []),
                                     ]
                                 },
                                 buyerTotal: { value: fmt(stats.buyerTotal), sub: 'Pago pelos Clientes + Frete deles', trend: getTrend(stats.buyerTotal, prevStats.buyerTotal) },
@@ -1036,13 +1342,14 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                     breakdown: taxBreakdown.filter(t => t.enabled !== false && !(t as any)._skippedAsCommission).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) }))
                                 },
                                 deductions: {
-                                    value: fmt((deductPlatformFees ? stats.fees : 0) + (deductShipping ? stats.shipping : 0) + taxTotal + totalMaterialCost),
-                                    trend: getTrend((deductPlatformFees ? stats.fees : 0) + (deductShipping ? stats.shipping : 0) + taxTotal + totalMaterialCost, prevDeductions),
+                                    value: fmt((deductPlatformFees ? stats.fees : 0) + (deductShipping ? stats.shipping : 0) + taxTotal + totalMaterialCost + totalDespesasLancadas),
+                                    trend: getTrend((deductPlatformFees ? stats.fees : 0) + (deductShipping ? stats.shipping : 0) + taxTotal + totalMaterialCost + totalDespesasLancadas, prevDeductions),
                                     breakdown: [
                                         ...(deductPlatformFees ? [{ label: 'Comissões', value: fmt(stats.fees) }] : []),
                                         ...(deductShipping ? [{ label: 'Frete/Expedição', value: fmt(stats.shipping) }] : []),
                                         { label: 'Materiais (CMV)', value: fmt(totalMaterialCost) },
                                         ...taxBreakdown.filter(t => t.enabled !== false && !(t as any)._skippedAsCommission).map(t => ({ label: t.name, value: fmt(t.calculatedAmount || 0) })),
+                                        ...(totalDespesasLancadas > 0 ? [{ label: 'Despesas Lançadas', value: fmt(totalDespesasLancadas), colorClass: 'text-rose-600' }] : []),
                                     ]
                                 },
                                 units: { value: `${stats.units}`, sub: `${totalPedidos} pedidos`, trend: getTrend(stats.units, prevStats.units) },
@@ -1050,7 +1357,8 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                 ticketMedio: { value: fmt(ticketMedio), sub: 'Média por pedido', trend: getTrend(ticketMedio, prevTicketMedio) },
                                 margemPct: { value: fmtPct(margemPct), sub: 'Margem líquida sobre bruto', trend: getTrend(margemPct, prevMargemPct) },
                                 estProfit: { value: fmt(estimatedProfitCalculated), sub: 'Baseado no histórico da calculadora', highlight: true },
-                                estMargin: { value: `${(estimatedMarginCalculated || 0).toFixed(1)}%`, sub: 'Margem Calculadora / Bruto' }
+                                estMargin: { value: `${(estimatedMarginCalculated || 0).toFixed(1)}%`, sub: 'Margem Calculadora / Bruto' },
+                                despesasLancadas: { value: fmt(totalDespesasLancadas), sub: `Despesas lançadas (${despesaCompetencia.split('-').reverse().join('/')})`, highlight: totalDespesasLancadas > 0 }
                             };
 
                             // Se metric=custom e há fórmula, calcula
@@ -1095,6 +1403,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                                 <option value="margemPct">Margem %</option>
                                                 <option value="estProfit">Lucro (Calculadora)</option>
                                                 <option value="estMargin">Margem Real (%)</option>
+                                                <option value="despesasLancadas">Despesas Lançadas</option>
                                                 <option value="custom">⚙️ Fórmula Personalizada</option>
                                             </select>
                                             {card.metric === 'custom' && (
@@ -1251,20 +1560,28 @@ const FinancePage: React.FC<FinancePageProps> = ({
                         );
                     })()}
 
-                    {canalFilter === 'ALL' && (
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div className="p-5 bg-yellow-50 border border-yellow-100 rounded-3xl flex justify-between items-center">
-                                <div><p className="text-[9px] font-black text-yellow-600 uppercase mb-1">Mercado Livre</p><p className="text-xl font-black text-yellow-800">{fmt(canalComparison.ml)}</p></div>
-                                <Landmark size={24} className="text-yellow-200" />
-                            </div>
-                            <div className="p-5 bg-orange-50 border border-orange-100 rounded-3xl flex justify-between items-center">
-                                <div><p className="text-[9px] font-black text-orange-600 uppercase mb-1">Shopee</p><p className="text-xl font-black text-orange-800">{fmt(canalComparison.shopee)}</p></div>
-                                <Landmark size={24} className="text-orange-200" />
-                            </div>
-                            <div className="p-5 bg-blue-50 border border-blue-100 rounded-3xl flex justify-between items-center">
-                                <div><p className="text-[9px] font-black text-blue-600 uppercase mb-1">Site / Outros</p><p className="text-xl font-black text-blue-800">{fmt(canalComparison.site)}</p></div>
-                                <Landmark size={24} className="text-blue-200" />
-                            </div>
+                    {canalFilter === 'ALL' && Object.keys(storeProfitability).length > 0 && (
+                        <div className={`grid grid-cols-1 ${Object.keys(storeProfitability).length === 2 ? 'md:grid-cols-2' : Object.keys(storeProfitability).length >= 3 ? 'md:grid-cols-3' : ''} gap-4`}>
+                            {Object.entries(storeProfitability as Record<string, { gross: number, fees: number, shipping: number }>).map(([storeKey, data]) => {
+                                const name = resolveChannelName(storeKey);
+                                const colorMap: Record<string, { bg: string, border: string, text: string, icon: string }> = {
+                                    ML: { bg: 'bg-yellow-50', border: 'border-yellow-100', text: 'text-yellow-800', icon: 'text-yellow-200' },
+                                    SHOPEE: { bg: 'bg-orange-50', border: 'border-orange-100', text: 'text-orange-800', icon: 'text-orange-200' },
+                                    SITE: { bg: 'bg-blue-50', border: 'border-blue-100', text: 'text-blue-800', icon: 'text-blue-200' },
+                                    TIKTOK: { bg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-800', icon: 'text-slate-200' },
+                                };
+                                const colors = colorMap[storeKey] || { bg: 'bg-purple-50', border: 'border-purple-100', text: 'text-purple-800', icon: 'text-purple-200' };
+                                const labelColor = storeKey === 'ML' ? 'text-yellow-600' : storeKey === 'SHOPEE' ? 'text-orange-600' : storeKey === 'SITE' ? 'text-blue-600' : storeKey === 'TIKTOK' ? 'text-slate-600' : 'text-purple-600';
+                                return (
+                                    <div key={storeKey} className={`p-5 ${colors.bg} border ${colors.border} rounded-3xl flex justify-between items-center`}>
+                                        <div>
+                                            <p className={`text-[9px] font-black ${labelColor} uppercase mb-1`}>{name}</p>
+                                            <p className={`text-xl font-black ${colors.text}`}>{fmt(data.gross)}</p>
+                                        </div>
+                                        <Landmark size={24} className={colors.icon} />
+                                    </div>
+                                );
+                            })}
                         </div>
                     )}
 
@@ -1380,6 +1697,13 @@ const FinancePage: React.FC<FinancePageProps> = ({
                             </table>
                         </div>
                     </div>
+
+                    {/* ── Card de Despesas Lançadas ── */}
+                    <DespesasLancamentosCard
+                        lancamentos={despesaLancamentos}
+                        competenciaFiltro={despesaCompetencia}
+                        onDelete={handleDeleteDespesa}
+                    />
                 </div>
             </div>
 
@@ -1420,9 +1744,9 @@ const FinancePage: React.FC<FinancePageProps> = ({
                             <div>
                                 <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3">
                                     <Landmark className="text-emerald-600" />
-                                    Mapeamento Fiscal & Financeiro
+                                    Mapeamento Completo
                                 </h2>
-                                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Configure colunas de preços, taxas e filtros de status</p>
+                                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">Pedidos, financeiro, status e produção — tudo configurado num só lugar</p>
                             </div>
                             <button onClick={() => setIsMappingModalOpen(false)} className="p-3 bg-white text-gray-400 hover:text-red-500 rounded-2xl transition-all shadow-sm">
                                 <X size={24} />
@@ -1463,7 +1787,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                 onUpdateMapping={(cid, f, v) => {
                                     const key = cid.toLowerCase();
                                     const newSettings = { ...generalSettings };
-                                    if (['ml', 'shopee', 'site'].includes(key)) {
+                                    if (['ml', 'shopee', 'site', 'tiktok'].includes(key)) {
                                         newSettings.importer = {
                                             ...newSettings.importer,
                                             [key]: { ...(newSettings.importer as any)[key], [f]: v }
@@ -1473,7 +1797,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
                                     }
                                     if (onSaveSettings) onSaveSettings(newSettings);
                                 }}
-                                mode="fiscal"
+                                mode="all"
                             />
                         </div>
 
@@ -1488,6 +1812,19 @@ const FinancePage: React.FC<FinancePageProps> = ({
                     </div>
                 </div>
             )}
+
+            {/* Modal Lançar Pagamento */}
+            <LancarPagamentoModal
+                isOpen={isLancarPagamentoOpen}
+                onClose={() => setIsLancarPagamentoOpen(false)}
+                categorias={despesaCategorias}
+                fornecedores={despesaFornecedores}
+                onSaveCategorias={handleSaveDespesaCategorias}
+                onSaveFornecedores={handleSaveDespesaFornecedores}
+                onLancar={handleLancarDespesa}
+                stockItems={stockItems}
+                users={users}
+            />
         </div>
     );
 };

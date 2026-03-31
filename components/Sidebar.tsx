@@ -27,20 +27,26 @@ const NavItem = ({ icon, text, page, active = false, onClick, alertCount, isColl
         active
           ? 'bg-[var(--color-primary-bg-subtle)] text-[var(--color-primary-text-subtle)]'
           : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)] hover:text-[var(--color-text-primary)]'
-      } ${isCollapsed ? 'justify-center' : ''}`}
+      } ${isCollapsed ? 'justify-center px-0' : ''}`}
     >
-      {icon}
+      <span className="flex-shrink-0">{icon}</span>
       {!isCollapsed && <span className="ml-3 flex-1">{text}</span>}
       {!isCollapsed && typeof alertCount === 'number' && alertCount > 0 && (
         <span className="ml-auto bg-red-500 text-white text-xs font-bold w-5 h-5 flex items-center justify-center rounded-full">
           {alertCount}
         </span>
       )}
+      {isCollapsed && typeof alertCount === 'number' && alertCount > 0 && (
+        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold w-4 h-4 flex items-center justify-center rounded-full">
+          {alertCount}
+        </span>
+      )}
     </a>
     {isCollapsed && (
-      <div className="absolute left-full ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 whitespace-nowrap z-20">
-        {text}
-        {typeof alertCount === 'number' && alertCount > 0 && <span className="ml-2 bg-red-500 rounded-full px-1.5 py-0.5">{alertCount}</span>}
+      <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 hidden group-hover:flex items-center z-[9999] pointer-events-none">
+        <div className="bg-gray-900 text-white text-xs font-semibold rounded-lg py-1.5 px-3 whitespace-nowrap shadow-lg">
+          {text}
+        </div>
       </div>
     )}
   </li>
@@ -50,7 +56,7 @@ const NavSection: React.FC<{ title: string, isCollapsed: boolean, children: Reac
     const [isOpen, setIsOpen] = useState(true);
 
     if (isCollapsed) {
-        return <>{children}</>;
+        return <ul className="space-y-0.5 py-1 border-t border-[var(--color-border)]/30">{children}</ul>;
     }
 
     return (
@@ -174,7 +180,11 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, lowStock
       </nav>
       <div className="p-2 border-t border-[var(--color-border)]">
         <div className={`flex items-center px-2 py-3 rounded-lg ${isCollapsed ? 'justify-center' : ''}`}>
-          <UserCircle size={36} className="text-[var(--color-text-secondary)] flex-shrink-0" />
+          {currentUser?.avatar_base64 ? (
+            <img src={currentUser.avatar_base64} alt="Avatar" className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
+          ) : (
+            <UserCircle size={36} className="text-[var(--color-text-secondary)] flex-shrink-0" />
+          )}
           {!isCollapsed && currentUser && (
             <div className="ml-3 overflow-hidden flex-grow">
               <p className="text-sm font-semibold text-[var(--color-text-primary)] whitespace-nowrap">{currentUser.name}</p>
@@ -204,7 +214,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, lowStock
           {sidebarContent}
         </div>
 
-        <div className={`hidden md:flex flex-col h-screen bg-[var(--color-surface)] fixed transition-all duration-300 border-r border-[var(--color-border)] ${isCollapsed ? 'w-20' : 'w-64'}`}>
+        <div className={`hidden md:flex flex-col h-screen bg-[var(--color-surface)] fixed transition-all duration-300 border-r border-[var(--color-border)] z-[2147483646] ${isCollapsed ? 'w-20' : 'w-64'}`}>
           {sidebarContent}
         </div>
     </>

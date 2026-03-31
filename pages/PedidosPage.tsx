@@ -205,11 +205,15 @@ const PedidosPage: React.FC<PedidosPageProps> = (props) => {
         const base = [{ value: 'ALL', label: 'Todos os Canais' }];
         const importerChannels = Object.keys(generalSettings.importer).map(k => {
             const value = k.toUpperCase();
-            let label = value;
-            if (value === 'ML') label = 'Mercado Livre';
-            else if (value === 'SHOPEE') label = 'Shopee';
-            else if (value === 'SITE') label = 'Site';
-            else if (value === 'TIKTOK') label = 'TikTok';
+            const mapping = (generalSettings.importer as any)[k];
+            let label = mapping?.storeName || value;
+            // Fallback padrão só se storeName não estiver configurado
+            if (!mapping?.storeName) {
+                if (value === 'ML') label = 'Mercado Livre';
+                else if (value === 'SHOPEE') label = 'Shopee';
+                else if (value === 'SITE') label = 'Site';
+                else if (value === 'TIKTOK') label = 'TikTok';
+            }
             return { value, label };
         });
         const custom = (generalSettings.customStores || []).map(s => ({

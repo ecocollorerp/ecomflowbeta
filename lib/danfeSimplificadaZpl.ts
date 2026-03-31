@@ -56,6 +56,29 @@ function fmtBRL(v: number): string {
   });
 }
 
+function parseMoneyLike(value: any): number {
+  if (value === null || value === undefined || value === "") return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const raw = String(value).trim();
+  if (!raw) return 0;
+
+  let normalized = raw.replace(/[^\d,.-]/g, "");
+  if (!normalized) return 0;
+
+  if (normalized.includes(",") && normalized.includes(".")) {
+    if (normalized.lastIndexOf(",") > normalized.lastIndexOf(".")) {
+      normalized = normalized.replace(/\./g, "").replace(",", ".");
+    } else {
+      normalized = normalized.replace(/,/g, "");
+    }
+  } else if (normalized.includes(",")) {
+    normalized = normalized.replace(",", ".");
+  }
+
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
+
 /**
  * Formata CNPJ/CPF com pontuação
  */
@@ -147,24 +170,35 @@ export function nfeJsonToDanfeZplData(nfeDetail: any, nfeSaida?: any): DanfeZplD
     const prod = item.produto || item;
     const codigo = prod.codigo || prod.cProd || "";
     const desc = prod.descricao || prod.xProd || "";
-    const qtd = parseFloat(prod.quantidade || prod.qCom || "1");
+    const qtd = parseMoneyLike(prod.quantidade || prod.qCom || "1");
     const un = prod.unidade || prod.uCom || "UN";
-    const vUnit = parseFloat(prod.valorUnitario || prod.vUnCom || "0");
-    const vTotal = parseFloat(prod.valor || prod.vProd || "0");
+    const vUnit = parseMoneyLike(prod.valorUnitario || prod.vUnCom || "0");
+    const vTotal = parseMoneyLike(prod.valor || prod.vProd || "0");
+    const vDescItem = parseMoneyLike(
+      prod.vDesc ||
+      prod.valorDesconto ||
+      item.vDesc ||
+      item.valorDesconto ||
+      item.desconto ||
+      item.discount ||
+      0
+    );
     // Formato: "CODIGO - Desc - QTD UN X vUnit"
-    const descCompleta = `${codigo} - ${desc} - ${fmtBRL(qtd)} ${un} X ${fmtBRL(vUnit)}`;
-    return { descricaoCompleta: descCompleta, vTotal };
+    const descCompleta = `${codigo} - ${desc} - ${fmtBRL(qtd)} ${un} X ${fmtBRL(vUnit)}${vDescItem > 0 ? ` - DESC ${fmtBRL(vDescItem)}` : ""}`;
+    return { descricaoCompleta: descCompleta, vTotal, vDescItem };
   });
 
   // Totais
   const totais = d.totais || d.total?.ICMSTot || {};
-  const vFrete = parseFloat(totais.vFrete || d.valorFrete || "0");
-  const vDesc = parseFloat(totais.vDesc || d.valorDesconto || "0");
-  const vIPI = parseFloat(totais.vIPI || "0");
-  const vST = parseFloat(totais.vST || "0");
-  const vSeg = parseFloat(totais.vSeg || "0");
-  const vOutro = parseFloat(totais.vOutro || "0");
-  const vNF = parseFloat(totais.vNF || d.valorNota || nfeSaida?.valorTotal || "0");
+  const vFrete = parseMoneyLike(totais.vFrete || d.valorFrete || "0");
+  const vDescTotais = parseMoneyLike(totais.vDesc || d.valorDesconto || "0");
+  const vIPI = parseMoneyLike(totais.vIPI || "0");
+  const vST = parseMoneyLike(totais.vST || "0");
+  const vSeg = parseMoneyLike(totais.vSeg || "0");
+  const vOutro = parseMoneyLike(totais.vOutro || "0");
+  const vNF = parseMoneyLike(totais.vNF || d.valorNota || nfeSaida?.valorTotal || "0");
+  const vDescItens = itens.reduce((sum, it: any) => sum + parseMoneyLike(it.vDescItem), 0);
+  const vDesc = vDescTotais > 0 ? vDescTotais : vDescItens;
 
   // Acréscimos (IPI + ST + Frete + Seguro + Outras) - Desconto
   const acrescimos = vIPI + vST + vFrete + vSeg + vOutro;
@@ -194,7 +228,7 @@ export function nfeJsonToDanfeZplData(nfeDetail: any, nfeSaida?: any): DanfeZplD
   const destEndereco = destEndParts.join(", ");
 
   // Tributos (informação adicional)
-  const vTotTrib = parseFloat(totais.vTotTrib || "0");
+  const vTotTrib = parseMoneyLike(totais.vTotTrib || "0");
   const tributosStr = vTotTrib > 0
     ? `Total aproximado de tributos: R$ ${fmtBRL(vTotTrib)}. Fonte IBPT.`
     : "";

@@ -131,7 +131,7 @@ const App: React.FC = () => {
         setCurrentPage(page);
     };
 
-    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
     const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
     const [toasts, setToasts] = useState<ToastMessage[]>([]);
     const [adminNotices, setAdminNotices] = useState<AdminNotice[]>([]);
@@ -711,6 +711,7 @@ const App: React.FC = () => {
                 price_gross: o.price_gross,
                 platform_fees: o.platform_fees,
                 shipping_fee: o.shipping_fee,
+                shipping_paid_by_customer: Number(o.shipping_paid_by_customer) || 0,
                 price_net: o.price_net,
                 data_prevista_envio: o.data_prevista_envio,
                 vinculado_bling: o.vinculado_bling || false,
@@ -2207,7 +2208,7 @@ const App: React.FC = () => {
             case 'relatorios': return <RelatoriosPage stockItems={stockItems} stockMovements={stockMovements} orders={allOrders} weighingBatches={weighingBatches} scanHistory={scanHistory} produtosCombinados={produtosCombinados} users={users} returns={returns} generalSettings={generalSettings} grindingBatches={grindingBatches} />
             case 'setores': return <SetoresPage sectors={sectors} users={users} onAddSector={handleAddSector} onDeleteSector={handleDeleteSector} onEditSector={handleEditSector} />
             case 'calculadora': return <CalculadoraPage stockItems={stockItems} produtosCombinados={produtosCombinados} addToast={addToast} initialSku={calculadoraInitialSku} onUpdatePrices={handleUpdateProductPrices} />
-            case 'financeiro': return <FinancePage allOrders={allOrders} stockItems={stockItems} stockMovements={stockMovements} skuLinks={skuLinks} produtosCombinados={produtosCombinados} generalSettings={generalSettings} onDeleteOrders={handleDeleteOrders} onLaunchOrders={handleLaunchSuccess} onSaveSettings={handleSaveGeneralSettings} onNavigateToSettings={() => { _setCurrentPage('configuracoes-gerais'); localStorage.setItem('erp_current_page', 'configuracoes-gerais'); }} setCurrentPage={setCurrentPage} costCalculations={costCalculations} onSelectSku={(sku) => { setCalculadoraInitialSku(sku); setCurrentPage('calculadora'); }} />
+            case 'financeiro': return <FinancePage allOrders={allOrders} stockItems={stockItems} stockMovements={stockMovements} skuLinks={skuLinks} produtosCombinados={produtosCombinados} generalSettings={generalSettings} onDeleteOrders={handleDeleteOrders} onLaunchOrders={handleLaunchSuccess} onSaveSettings={handleSaveGeneralSettings} onNavigateToSettings={() => { _setCurrentPage('configuracoes-gerais'); localStorage.setItem('erp_current_page', 'configuracoes-gerais'); }} setCurrentPage={setCurrentPage} costCalculations={costCalculations} onSelectSku={(sku) => { setCalculadoraInitialSku(sku); setCurrentPage('calculadora'); }} users={users} importHistory={importHistory as any} />
             case 'etiquetas': return <EtiquetasPage settings={etiquetasSettings} onSettingsSave={handleSaveEtiquetasSettings} generalSettings={generalSettings} uiSettings={uiSettings} onSetUiSettings={setUiSettings as any} stockItems={stockItems} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} onAddNewItem={handleAddNewItem} etiquetasState={etiquetasState} setEtiquetasState={setEtiquetasState} currentUser={currentUser!} allOrders={allOrders} etiquetasHistory={etiquetasHistory} onSaveHistory={handleSaveEtiquetaHistory} onGetHistoryDetails={handleGetEtiquetaHistoryDetails} onProcessZpl={handleProcessZpl} isProcessing={isProcessingLabels} progressMessage={labelProgressMessage} progress={labelProcessingProgress} addToast={addToast} onSaveBatch={handleSaveZplBatch} />
             case 'bling': return <BlingPage generalSettings={generalSettings} onLaunchSuccess={handleLaunchSuccess} onUpdateOrdersBatch={handleUpdateOrdersBatch} addToast={addToast} setCurrentPage={setCurrentPage} onLoadZpl={handleLoadZplFromBling} onSaveSettings={handleSaveGeneralSettings} stockItems={stockItems} skuLinks={skuLinks} allOrders={allOrders} onLinkSku={handleLinkSku} />;
             case 'integracoes': return <IntegracoesPage generalSettings={generalSettings} onSaveSettings={handleSaveGeneralSettings} onLaunchSuccess={handleLaunchSuccess} addToast={addToast} setCurrentPage={setCurrentPage} />;

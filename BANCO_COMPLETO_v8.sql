@@ -1,10 +1,14 @@
-﻿export const SETUP_SQL_STRING = `
 -- ============================================================================
--- ERP FÁBRICA PRO — BANCO DE DADOS COMPLETO v7.0
--- Data: 2025-01-27
+-- ERP FÁBRICA PRO — BANCO DE DADOS COMPLETO v8.0
+-- Data: 2025-03-31
 --
 -- Script IDEMPOTENTE: pode ser executado múltiplas vezes com segurança.
 -- Corrige TODOS os mismatches entre TypeScript e banco.
+--
+-- Changelog v7 → v8:
+--   • orders.canal:  canal_type ENUM → TEXT (suporta TIKTOK, custom stores)
+--   • canal_type ENUM: +TIKTOK, +AUTO (retrocompat.)
+--   • Índice idx_orders_canal recriado sobre TEXT
 --
 -- Changelog v6 → v7:
 --   • orders:  +descontar_volatil, +tracking_code, +plataforma_origem,
@@ -345,11 +349,11 @@ ALTER TABLE orders
     ADD COLUMN IF NOT EXISTS plataforma_origem          TEXT,
     ADD COLUMN IF NOT EXISTS data_expiracao             TEXT;
 
--- v8: Dropar views dependentes de orders.canal antes de converter o tipo
+-- v8: Dropar views que dependem de orders.canal antes de converter o tipo
 DROP VIEW IF EXISTS v_orders_status CASCADE;
 DROP VIEW IF EXISTS vw_dados_analiticos CASCADE;
 
--- v8: Converter orders.canal de canal_type ENUM para TEXT
+-- v8: Converter orders.canal de canal_type ENUM para TEXT (suporta canais customizados)
 DO $$
 BEGIN
     IF EXISTS (
@@ -1805,4 +1809,3 @@ ORDER BY table_name;
 --   audit_logs: usuario_id, descricao, criado_em
 -- LIMPEZA v7: nfes colunas snake_case duplicadas são removidas
 -- ════════════════════════════════════════════════════════════════════════════
-`;

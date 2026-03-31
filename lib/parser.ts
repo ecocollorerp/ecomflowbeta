@@ -799,7 +799,7 @@ export const parseExcelFile = (
         if (!forcedStatus && madeToOrderColumnKey) {
             const rawMadeToOrder = safeUpper(row[madeToOrderColumnKey]);
             const normalizedMadeToOrder = normalizeHeaderToken(rawMadeToOrder);
-            const isMadeToOrder = !rawMadeToOrder || madeToOrderTrueValues.has(rawMadeToOrder) || madeToOrderTrueValues.has(normalizedMadeToOrder);
+            const isMadeToOrder = rawMadeToOrder !== '' && (madeToOrderTrueValues.has(rawMadeToOrder) || madeToOrderTrueValues.has(normalizedMadeToOrder));
 
             if (isMadeToOrder) {
                 statusParaImportacao = 'ERRO';
@@ -852,7 +852,7 @@ export const parseExcelFile = (
             calculatedTotal = calculatedProduct + customerShipping;
         }
 
-        const calculatedNet = cleanMoney(row[mappingToUse!.priceNet]) || (calculatedProduct - fees - sellerShipping);
+        const calculatedNet = (headerKeyMap['priceNet'] ? cleanMoney(row[headerKeyMap['priceNet']]) : 0) || (calculatedProduct - fees - sellerShipping);
         const mult = getMultiplicadorFromSku(sku);
 
         orders.push({
@@ -942,7 +942,7 @@ export const parseExcelFile = (
                 let calculatedTotal = 0, calculatedProduct = 0;
                 if (rawTotalValue > 0) { calculatedTotal = rawTotalValue; calculatedProduct = Math.max(0, calculatedTotal - customerShipping); }
                 else { calculatedProduct = rawPriceColumn; calculatedTotal = calculatedProduct + customerShipping; }
-                const calculatedNet = cleanMoney(row[mappingToUse!.priceNet]) || (calculatedProduct - fees - sellerShipping);
+                const calculatedNet = (headerKeyMap['priceNet'] ? cleanMoney(row[headerKeyMap['priceNet']]) : 0) || (calculatedProduct - fees - sellerShipping);
                 const mult = getMultiplicadorFromSku(sku);
                 orders.push({
                     id: `${canalDetectado}_${Date.now()}_${i}`,

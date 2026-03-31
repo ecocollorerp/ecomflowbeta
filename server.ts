@@ -275,11 +275,11 @@ async function startServer() {
         refresh_token
       } = req.body;
 
-      // LOG DE DEBUG - Mostra exatamente o que está sendo enviado
+      // Log mínimo para evitar exposição de dados sensíveis
       console.log("🔐 [BLING TOKEN REQUEST]");
       console.log(`   Grant Type: ${grant_type}`);
       console.log(`   Client ID: ${client_id?.substring(0, 10)}...`);
-      console.log(`   Redirect URI: ${redirect_uri}`);
+      console.log(`   Redirect URI configurado: ${Boolean(redirect_uri)}`);
 
       // Validações
       if (grant_type === "authorization_code" && !code) {
@@ -309,9 +309,6 @@ async function startServer() {
         "base64"
       );
 
-      console.log(`   Body enviado: ${body.toString()}`);
-      console.log(`   Auth Header: Basic ${credentials.substring(0, 20)}...`);
-
       const response = await fetch(
         "https://www.bling.com.br/Api/v3/oauth/token",
         {
@@ -331,7 +328,7 @@ async function startServer() {
       if (response.ok) {
         console.log("✅ [BLING TOKEN SUCCESS] Token gerado com sucesso");
       } else {
-        console.log("❌ [BLING TOKEN ERROR]", JSON.stringify(data));
+        console.log("❌ [BLING TOKEN ERROR] Falha ao gerar token (detalhes ocultados)");
       }
 
       res.status(response.status).json(data);
@@ -370,7 +367,7 @@ async function startServer() {
   function parseLoja(
     nome: string,
     numeroLoja?: string
-  ): "ML" | "SHOPEE" | "SITE" {
+  ): string {
     const n = String(nome || "").toUpperCase();
     if (
       n.includes("MERCADO") ||
@@ -380,6 +377,8 @@ async function startServer() {
       return "ML";
     if (n.includes("SHOPEE") || String(numeroLoja).startsWith("7"))
       return "SHOPEE";
+    if (n.includes("TIKTOK") || n.includes("TIK TOK") || String(numeroLoja).startsWith("8"))
+      return "TIKTOK";
     return "SITE";
   }
 

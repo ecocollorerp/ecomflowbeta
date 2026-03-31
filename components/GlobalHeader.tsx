@@ -69,9 +69,9 @@ const NoticeBanner: React.FC<{ notice: AdminNotice; onDismiss: (id: string) => v
 
 const GlobalHeader: React.FC<GlobalHeaderProps> = ({ currentPage, onMenuClick, lowStockItems, setCurrentPage, bannerNotice, isAutoBipagemActive, onToggleAutoBipagem, currentUser, onDismissNotice, isProcessingLabels, labelProgressMessage, labelProcessingProgress, generalSettings, navMode }) => {
   
-  const headerContainerClasses = `flex-shrink-0 bg-[var(--color-surface)] sticky top-0 z-[2147483647] shadow-sm relative`;
+  const headerContainerClasses = `flex-shrink-0 bg-[var(--color-surface)] sticky top-0 z-[100] shadow-sm relative`;
 
-  const headerClasses = `flex items-center justify-between p-4 border-b border-[var(--color-border)] text-[var(--color-text-primary)] relative z-[2147483647]`;
+  const headerClasses = `flex items-center justify-between p-4 border-b border-[var(--color-border)] text-[var(--color-text-primary)] relative z-[100]`;
   
   const canDismissBanner = !!currentUser && (currentUser.role === 'SUPER_ADMIN' || currentUser.role === 'ADMIN');
 
@@ -150,28 +150,26 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({ currentPage, onMenuClick, l
           <button onClick={onMenuClick} className="p-2 -ml-2 md:hidden">
               <Menu size={24} />
           </button>
-          <h1 className="text-lg md:text-xl font-bold">{getPageTitle(currentPage)}</h1>
         </div>
         
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-2">
           <button
               onClick={() => onToggleAutoBipagem(!isAutoBipagemActive)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold border transition-all ${
+              className={`relative p-2 rounded-full transition-all ${
                   isAutoBipagemActive 
-                  ? 'bg-blue-600 text-white border-blue-700 shadow-md animate-pulse' 
-                  : 'bg-gray-100 text-gray-700 border-gray-200 hover:bg-gray-200'
+                  ? 'bg-blue-600 text-white shadow-md animate-pulse' 
+                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
               }`}
               title={isAutoBipagemActive ? "Desativar Auto Bipagem" : "Ativar Auto Bipagem"}
           >
-              <QrCode size={16} />
-              <span className="hidden sm:inline">Auto Bipagem</span>
+              <QrCode size={20} />
           </button>
           <NotificationPanel lowStockItems={lowStockItems} onNavigate={setCurrentPage} />
         </div>
       </div>
 
       {/* Top Navigation Menu with hover dropdowns — só mostra no modo topnav */}
-      {navMode !== 'sidebar' && <nav className="hidden md:flex items-center gap-1 px-4 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex-wrap relative z-[2147483647]">
+      {navMode !== 'sidebar' && <nav className="hidden md:flex items-center gap-1 px-4 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex-wrap relative z-[100]">
         <button
           onClick={() => setCurrentPage('dashboard')}
           className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-1.5 ${currentPage === 'dashboard' ? 'bg-blue-100 text-blue-700' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]'}`}
@@ -182,11 +180,11 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({ currentPage, onMenuClick, l
           const visibleItems = section.items.filter(item => canShow(item.page));
           if (visibleItems.length === 0) return null;
           return (
-            <div key={section.label} className="relative group z-[2147483647]">
+            <div key={section.label} className="relative group z-[110]">
               <button className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-1 ${visibleItems.some(i => currentPage === i.page) ? 'bg-blue-100 text-blue-700' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]'}`}>
                 {section.label} <ChevronDown size={10} className="opacity-50" />
               </button>
-              <div className="absolute top-full left-0 mt-0.5 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 min-w-[180px] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-[2147483647]">
+              <div className="absolute top-full left-0 mt-0.5 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 min-w-[180px] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-[120]">
                 {visibleItems.map(item => (
                   <button
                     key={item.page}
