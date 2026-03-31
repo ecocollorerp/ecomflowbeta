@@ -1,19 +1,28 @@
-export const SETUP_SQL_STRING = `
+﻿export const SETUP_SQL_STRING = `
 -- ============================================================================
--- ERP FÁBRICA PRO — BANCO DE DADOS COMPLETO CORRIGIDO
--- Versão: 2026-03-24 v6.1
+-- ERP FÁBRICA PRO — BANCO DE DADOS COMPLETO v7.0
+-- Data: 2025-01-27
 --
 -- Script IDEMPOTENTE: pode ser executado múltiplas vezes com segurança.
--- Inclui TODAS as tabelas, colunas, índices, views, triggers e RPCs
--- que a aplicação realmente utiliza — INCLUINDO fiscal (NF-e).
+-- Corrige TODOS os mismatches entre TypeScript e banco.
 --
--- Corrige conflito camelCase/lowercase nas tabelas nfes e certificados
--- que já existiam no banco antes deste script.
---
--- Como executar:
---   1. Abra https://app.supabase.com → seu projeto
---   2. SQL Editor → New Query
---   3. Cole todo este arquivo → Run
+-- Changelog v6 → v7:
+--   • orders:  +descontar_volatil, +tracking_code, +plataforma_origem,
+--              +data_expiracao, +loja
+--   • users:   +permissions (JSONB)
+--   • stock_items: +bom_composition, +stock_initial_day, +stock_final_day,
+--                  +day_date
+--   • stock_movements: +new_total, +operator_name, +item_snapshot
+--   • grinding_batches: +batch_name
+--   • stock_pack_groups: +pack_size
+--   • cost_calculations: +platform_fee (alias), colunas calculadas
+--   • order_items: REFORMULADO — +bling_item_id, +item_id, +canal,
+--                  +descricao, +unidade, +valor_unitario, +subtotal,
+--                  +sincronizado_em, unique constraints p/ upsert
+--   • audit_logs: +usuario_id, +descricao, +criado_em (2° esquema)
+--   • nfes: limpeza de colunas duplicadas snake_case/camelCase
+--   • NOVAS TABELAS: sync_log, purchase_planning, zpl_batches
+--   • Todas RPCs atualizadas / idempotentes
 -- ============================================================================
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -61,7 +70,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
 );
 
 INSERT INTO app_settings (key, value) VALUES
-    ('general', '{}'), ('bling', '{}'), ('zpl', '{}'), ('ui', '{}')
+    ('general', '{}'), ('bling', '{}'), ('zpl', '{}'), ('ui', '{}'), ('etiquetas', '{}')
 ON CONFLICT (key) DO NOTHING;
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -77,6 +86,7 @@ CREATE TABLE IF NOT EXISTS users (
     prefix           TEXT,
     attendance       JSONB        DEFAULT '[]'::jsonb,
     ui_settings      JSONB,
+    permissions      JSONB,          -- v7: UserPermissions JSONB completo
     device_id        TEXT,
     device_name      TEXT,
     device_model     TEXT,
@@ -90,6 +100,7 @@ ALTER TABLE users
     ADD COLUMN IF NOT EXISTS prefix           TEXT,
     ADD COLUMN IF NOT EXISTS attendance       JSONB DEFAULT '[]'::jsonb,
     ADD COLUMN IF NOT EXISTS ui_settings      JSONB,
+    ADD COLUMN IF NOT EXISTS permissions      JSONB,
     ADD COLUMN IF NOT EXISTS device_id        TEXT,
     ADD COLUMN IF NOT EXISTS device_name      TEXT,
     ADD COLUMN IF NOT EXISTS device_model     TEXT,
@@ -129,6 +140,10 @@ CREATE TABLE IF NOT EXISTS stock_items (
     cost_price                REAL         DEFAULT 0,
     description               TEXT,
     status                    TEXT         DEFAULT 'ATIVO',
+    bom_composition           JSONB        DEFAULT '{"items":[]}'::jsonb,  -- v7: composição BOM
+    stock_initial_day         REAL,        -- v7: estoque início dia
+    stock_final_day           REAL,        -- v7: estoque final dia
+    day_date                  TEXT,        -- v7: data do dia (YYYY-MM-DD)
     created_at                TIMESTAMPTZ  DEFAULT NOW(),
     updated_at                TIMESTAMPTZ  DEFAULT NOW()
 );
@@ -148,6 +163,10 @@ ALTER TABLE stock_items
     ADD COLUMN IF NOT EXISTS status                  TEXT DEFAULT 'ATIVO',
     ADD COLUMN IF NOT EXISTS barcode                 TEXT,
     ADD COLUMN IF NOT EXISTS substitute_product_code TEXT,
+    ADD COLUMN IF NOT EXISTS bom_composition         JSONB DEFAULT '{"items":[]}'::jsonb,
+    ADD COLUMN IF NOT EXISTS stock_initial_day       REAL,
+    ADD COLUMN IF NOT EXISTS stock_final_day         REAL,
+    ADD COLUMN IF NOT EXISTS day_date                TEXT,
     ADD COLUMN IF NOT EXISTS updated_at              TIMESTAMPTZ DEFAULT NOW();
 
 CREATE INDEX IF NOT EXISTS idx_stock_items_code ON stock_items (code);
@@ -166,6 +185,9 @@ CREATE TABLE IF NOT EXISTS stock_movements (
     product_sku       TEXT,
     created_by_name   TEXT,
     from_weighing     BOOLEAN      DEFAULT FALSE,
+    new_total         REAL,          -- v7: total após movimentação
+    operator_name     TEXT,          -- v7: nome do operador
+    item_snapshot     JSONB,         -- v7: snapshot do item (StockItem serializado)
     created_at        TIMESTAMPTZ  DEFAULT NOW()
 );
 
@@ -180,7 +202,10 @@ END $$;
 ALTER TABLE stock_movements
     ADD COLUMN IF NOT EXISTS from_weighing   BOOLEAN DEFAULT FALSE,
     ADD COLUMN IF NOT EXISTS product_sku     TEXT,
-    ADD COLUMN IF NOT EXISTS created_by_name TEXT;
+    ADD COLUMN IF NOT EXISTS created_by_name TEXT,
+    ADD COLUMN IF NOT EXISTS new_total       REAL,
+    ADD COLUMN IF NOT EXISTS operator_name   TEXT,
+    ADD COLUMN IF NOT EXISTS item_snapshot   JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_stock_mvt_item_code  ON stock_movements (stock_item_code);
 CREATE INDEX IF NOT EXISTS idx_stock_mvt_created_at ON stock_movements (created_at DESC);
@@ -255,6 +280,7 @@ CREATE TABLE IF NOT EXISTS orders (
     order_id                    TEXT             NOT NULL,
     bling_numero                TEXT,
     tracking                    TEXT,
+    tracking_code               TEXT,              -- v7: código de rastreio auxiliar
     sku                         TEXT             NOT NULL DEFAULT '',
     qty_original                INT              NOT NULL DEFAULT 1,
     multiplicador               INT              DEFAULT 1,
@@ -285,6 +311,10 @@ CREATE TABLE IF NOT EXISTS orders (
     situacao_valor              TEXT,
     loja_id                     TEXT,
     loja_nome                   TEXT,
+    loja                        TEXT,              -- v7: nome de loja genérico (TS OrderItem.loja)
+    descontar_volatil           BOOLEAN DEFAULT FALSE,  -- v7: flag para desconto volátil na bipagem
+    plataforma_origem           TEXT,              -- v7: plataforma de origem (Bling sync)
+    data_expiracao              TEXT,              -- v7: data expiração do pedido
     created_at                  TIMESTAMPTZ      DEFAULT NOW()
 );
 
@@ -304,7 +334,12 @@ ALTER TABLE orders
     ADD COLUMN IF NOT EXISTS data_prevista_envio        TEXT,
     ADD COLUMN IF NOT EXISTS resolution_details         JSONB,
     ADD COLUMN IF NOT EXISTS shipping_paid_by_customer  REAL DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS price_total                REAL DEFAULT 0;
+    ADD COLUMN IF NOT EXISTS price_total                REAL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS tracking_code              TEXT,
+    ADD COLUMN IF NOT EXISTS loja                       TEXT,
+    ADD COLUMN IF NOT EXISTS descontar_volatil          BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS plataforma_origem          TEXT,
+    ADD COLUMN IF NOT EXISTS data_expiracao             TEXT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS orders_order_id_sku_idx ON orders (order_id, sku);
 CREATE INDEX IF NOT EXISTS idx_orders_order_id  ON orders (order_id);
@@ -419,8 +454,12 @@ CREATE TABLE IF NOT EXISTS grinding_batches (
     mode                  TEXT,
     user_id               TEXT,
     user_name             TEXT,
+    batch_name            TEXT,        -- v7: nome do lote de moagem
     created_at            TIMESTAMPTZ  DEFAULT NOW()
 );
+
+ALTER TABLE grinding_batches
+    ADD COLUMN IF NOT EXISTS batch_name TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_grinding_source_code ON grinding_batches (source_insumo_code);
 CREATE INDEX IF NOT EXISTS idx_grinding_created_at  ON grinding_batches (created_at DESC);
@@ -560,6 +599,7 @@ CREATE TABLE IF NOT EXISTS stock_pack_groups (
     pallet              TEXT,
     galpao              TEXT,
     com_desempenadeira  BOOLEAN      DEFAULT FALSE,
+    pack_size           REAL,        -- v7: tamanho do pacote
     created_at          TIMESTAMPTZ  DEFAULT NOW()
 );
 
@@ -571,7 +611,8 @@ ALTER TABLE stock_pack_groups
     ADD COLUMN IF NOT EXISTS localizacao        TEXT,
     ADD COLUMN IF NOT EXISTS pallet             TEXT,
     ADD COLUMN IF NOT EXISTS galpao             TEXT,
-    ADD COLUMN IF NOT EXISTS com_desempenadeira BOOLEAN DEFAULT FALSE;
+    ADD COLUMN IF NOT EXISTS com_desempenadeira BOOLEAN DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS pack_size          REAL;
 
 CREATE INDEX IF NOT EXISTS idx_pack_groups_name ON stock_pack_groups (name);
 
@@ -614,25 +655,51 @@ CREATE INDEX IF NOT EXISTS idx_estoque_pronto_status  ON estoque_pronto (status)
 CREATE INDEX IF NOT EXISTS idx_estoque_pronto_sku     ON estoque_pronto (stock_item_id);
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 20. order_items
+-- 20. order_items  (REFORMULADO v7 — suporta Bling + ML + Shopee + TikTok)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS order_items (
-    id                     TEXT         PRIMARY KEY,
+    id                     TEXT         PRIMARY KEY DEFAULT gen_random_uuid()::text,
     order_id               TEXT         NOT NULL,
     bling_id               TEXT,
-    sku                    TEXT         NOT NULL,
+    bling_item_id          TEXT,          -- v7: Bling item ID para upsert
+    item_id                TEXT,          -- v7: marketplace item ID para upsert
+    canal                  TEXT,          -- v7: ML, SHOPEE, TIKTOK, BLING
+    sku                    TEXT         NOT NULL DEFAULT '',
     nome                   TEXT,
+    descricao              TEXT,          -- v7: descrição do item (syncBlingItems / marketplace)
+    unidade                TEXT,          -- v7: unidade de medida (syncBlingItems)
     quantidade             NUMERIC      DEFAULT 1,
     preco_unitario         NUMERIC      DEFAULT 0,
+    valor_unitario         NUMERIC      DEFAULT 0,  -- v7: alias usado por marketplace sync
     preco_total            NUMERIC      DEFAULT 0,
+    subtotal               NUMERIC      DEFAULT 0,  -- v7: alias usado por marketplace sync
     status                 TEXT         DEFAULT 'nao_sincronizado',
     data_criacao           TIMESTAMPTZ  DEFAULT NOW(),
     ultima_sincronizacao   TIMESTAMPTZ,
+    sincronizado_em        TIMESTAMPTZ,    -- v7: timestamp de sync (marketplace)
     erro_mensagem          TEXT
 );
 
+-- Migração: adicionar colunas novas se tabela já existia
+ALTER TABLE order_items
+    ADD COLUMN IF NOT EXISTS bling_item_id    TEXT,
+    ADD COLUMN IF NOT EXISTS item_id          TEXT,
+    ADD COLUMN IF NOT EXISTS canal            TEXT,
+    ADD COLUMN IF NOT EXISTS descricao        TEXT,
+    ADD COLUMN IF NOT EXISTS unidade          TEXT,
+    ADD COLUMN IF NOT EXISTS valor_unitario   NUMERIC DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS subtotal         NUMERIC DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS sincronizado_em  TIMESTAMPTZ;
+
+-- Unique constraints para upserts
+CREATE UNIQUE INDEX IF NOT EXISTS idx_order_items_bling_upsert
+    ON order_items (bling_item_id, order_id) WHERE bling_item_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_order_items_marketplace_upsert
+    ON order_items (item_id, order_id) WHERE item_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_order_items_o_id ON order_items (order_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_sku  ON order_items (sku);
+CREATE INDEX IF NOT EXISTS idx_order_items_canal ON order_items (canal);
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 21. setores
@@ -719,6 +786,7 @@ CREATE INDEX IF NOT EXISTS idx_lotes_nfe_criado_em ON bling_lotes_nfe (criado_em
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 25. nfes (NF-e próprias) — TABELA FISCAL PRINCIPAL
+--     Usa camelCase quoted conforme nfeSupabase.ts
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS nfes (
     id                    UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -743,58 +811,121 @@ CREATE TABLE IF NOT EXISTS nfes (
 
 -- *** MIGRAÇÃO: se a tabela nfes já existia com colunas LOWERCASE, renomeia para camelCase ***
 DO $$ BEGIN
-    -- pedidoid → "pedidoId"
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='pedidoid')
        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='pedidoId')
     THEN ALTER TABLE nfes RENAME COLUMN pedidoid TO "pedidoId"; END IF;
 
-    -- chaveacesso → "chaveAcesso"
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='chaveacesso')
        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='chaveAcesso')
     THEN ALTER TABLE nfes RENAME COLUMN chaveacesso TO "chaveAcesso"; END IF;
 
-    -- xmloriginal → "xmlOriginal"
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='xmloriginal')
        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='xmlOriginal')
     THEN ALTER TABLE nfes RENAME COLUMN xmloriginal TO "xmlOriginal"; END IF;
 
-    -- xmlassinado → "xmlAssinado"
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='xmlassinado')
        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='xmlAssinado')
     THEN ALTER TABLE nfes RENAME COLUMN xmlassinado TO "xmlAssinado"; END IF;
 
-    -- sefazenvio → "sefazEnvio"
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='sefazenvio')
        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='sefazEnvio')
     THEN ALTER TABLE nfes RENAME COLUMN sefazenvio TO "sefazEnvio"; END IF;
 
-    -- certificadousado → "certificadoUsado"
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='certificadousado')
        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='certificadoUsado')
     THEN ALTER TABLE nfes RENAME COLUMN certificadousado TO "certificadoUsado"; END IF;
 
-    -- criadoem → "criadoEm"
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='criadoem')
        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='criadoEm')
     THEN ALTER TABLE nfes RENAME COLUMN criadoem TO "criadoEm"; END IF;
 
-    -- atualizadoem → "atualizadoEm"
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='atualizadoem')
        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='atualizadoEm')
     THEN ALTER TABLE nfes RENAME COLUMN atualizadoem TO "atualizadoEm"; END IF;
 
-    -- tentativasenvio → "tentativasEnvio"
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='tentativasenvio')
        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='tentativasEnvio')
     THEN ALTER TABLE nfes RENAME COLUMN tentativasenvio TO "tentativasEnvio"; END IF;
 
-    -- errodetalhes → "erroDetalhes"
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='errodetalhes')
        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='nfes' AND column_name='erroDetalhes')
     THEN ALTER TABLE nfes RENAME COLUMN errodetalhes TO "erroDetalhes"; END IF;
 END $$;
 
--- Garantir que TODAS as colunas existem (caso tabela pre-existisse sem algumas)
+-- *** LIMPEZA v7: dropar colunas snake_case duplicadas se camelCase já existe ***
+DO $$ BEGIN
+    -- Se ambos pedido_id e "pedidoId" existem, dropar pedido_id
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='pedido_id')
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='pedidoId')
+    THEN
+        -- Migrar dados de pedido_id para "pedidoId" se "pedidoId" estiver vazio
+        UPDATE nfes SET "pedidoId" = pedido_id WHERE "pedidoId" IS NULL AND pedido_id IS NOT NULL;
+        ALTER TABLE nfes DROP COLUMN pedido_id;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='chave_acesso')
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='chaveAcesso')
+    THEN
+        UPDATE nfes SET "chaveAcesso" = chave_acesso WHERE "chaveAcesso" IS NULL AND chave_acesso IS NOT NULL;
+        ALTER TABLE nfes DROP COLUMN chave_acesso;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='xml_original')
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='xmlOriginal')
+    THEN
+        UPDATE nfes SET "xmlOriginal" = xml_original WHERE "xmlOriginal" IS NULL AND xml_original IS NOT NULL;
+        ALTER TABLE nfes DROP COLUMN xml_original;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='xml_assinado')
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='xmlAssinado')
+    THEN
+        UPDATE nfes SET "xmlAssinado" = xml_assinado WHERE "xmlAssinado" IS NULL AND xml_assinado IS NOT NULL;
+        ALTER TABLE nfes DROP COLUMN xml_assinado;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='sefaz_envio')
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='sefazEnvio')
+    THEN
+        UPDATE nfes SET "sefazEnvio" = sefaz_envio::jsonb WHERE "sefazEnvio" IS NULL AND sefaz_envio IS NOT NULL;
+        ALTER TABLE nfes DROP COLUMN sefaz_envio;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='certificado_usado')
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='certificadoUsado')
+    THEN
+        UPDATE nfes SET "certificadoUsado" = certificado_usado::jsonb WHERE "certificadoUsado" IS NULL AND certificado_usado IS NOT NULL;
+        ALTER TABLE nfes DROP COLUMN certificado_usado;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='tentativas_envio')
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='tentativasEnvio')
+    THEN
+        UPDATE nfes SET "tentativasEnvio" = tentativas_envio::int WHERE "tentativasEnvio" IS NULL AND tentativas_envio IS NOT NULL;
+        ALTER TABLE nfes DROP COLUMN tentativas_envio;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='erro_detalhes')
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='erroDetalhes')
+    THEN
+        UPDATE nfes SET "erroDetalhes" = erro_detalhes::jsonb WHERE "erroDetalhes" IS NULL AND erro_detalhes IS NOT NULL;
+        ALTER TABLE nfes DROP COLUMN erro_detalhes;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='created_at')
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='criadoEm')
+    THEN
+        ALTER TABLE nfes DROP COLUMN IF EXISTS created_at;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='updated_at')
+       AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='nfes' AND column_name='atualizadoEm')
+    THEN
+        ALTER TABLE nfes DROP COLUMN IF EXISTS updated_at;
+    END IF;
+END $$;
+
+-- Garantir que TODAS as colunas camelCase existem
 ALTER TABLE nfes ADD COLUMN IF NOT EXISTS "pedidoId"         TEXT;
 ALTER TABLE nfes ADD COLUMN IF NOT EXISTS "chaveAcesso"      TEXT;
 ALTER TABLE nfes ADD COLUMN IF NOT EXISTS "xmlOriginal"      TEXT;
@@ -833,7 +964,7 @@ CREATE TABLE IF NOT EXISTS certificados (
     "atualizadoEm"          BIGINT   NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::BIGINT * 1000)
 );
 
--- *** MIGRAÇÃO: certificados lowercase → camelCase ***
+-- *** MIGRAÇÃO certificados lowercase → camelCase ***
 DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='certificados' AND column_name='datainicio')
        AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='certificados' AND column_name='dataInicio')
@@ -907,21 +1038,47 @@ CREATE INDEX IF NOT EXISTS idx_objetos_postagem_numero_pedido  ON objetos_postag
 CREATE INDEX IF NOT EXISTS idx_objetos_postagem_created        ON objetos_postagem (created_at DESC);
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 28. audit_logs
+-- 28. audit_logs  (v7: suporta 2 esquemas de inserção)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS audit_logs (
     id           UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     timestamp    TIMESTAMPTZ  DEFAULT NOW(),
     usuario      TEXT,
+    usuario_id   TEXT,          -- v7: usado por danfeSimplificadoComEtiquetaService
     acao         TEXT         NOT NULL,
-    modulo       TEXT         NOT NULL,
-    tipo         TEXT         NOT NULL,
-    resultado    TEXT         NOT NULL DEFAULT 'sucesso',
+    descricao    TEXT,          -- v7: usado por danfeSimplificadoComEtiquetaService
+    modulo       TEXT,
+    tipo         TEXT,
+    resultado    TEXT         DEFAULT 'sucesso',
     dados        JSONB        DEFAULT '{}'::jsonb,
     erro         JSONB,
     duracao_ms   INT,
+    criado_em    TIMESTAMPTZ,  -- v7: usado por danfeSimplificadoComEtiquetaService
     created_at   TIMESTAMPTZ  DEFAULT NOW()
 );
+
+ALTER TABLE audit_logs
+    ADD COLUMN IF NOT EXISTS usuario_id TEXT,
+    ADD COLUMN IF NOT EXISTS descricao  TEXT,
+    ADD COLUMN IF NOT EXISTS criado_em  TIMESTAMPTZ;
+
+-- Tornar colunas opcionais que não são usadas por todos os schemas
+DO $$ BEGIN
+    -- modulo e tipo eram NOT NULL no v6, mas danfeService não os envia
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='audit_logs' AND column_name='modulo' AND is_nullable='NO'
+    ) THEN
+        ALTER TABLE audit_logs ALTER COLUMN modulo DROP NOT NULL;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='audit_logs' AND column_name='tipo' AND is_nullable='NO'
+    ) THEN
+        ALTER TABLE audit_logs ALTER COLUMN tipo DROP NOT NULL;
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_audit_logs_modulo     ON audit_logs (modulo);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_tipo       ON audit_logs (tipo);
@@ -937,7 +1094,22 @@ CREATE TABLE IF NOT EXISTS sync_config (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 30. skus_vinculados
+-- 30. sync_log (NOVA v7 — logs de sincronização Bling)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS sync_log (
+    id         UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    tipo       TEXT,
+    bling_id   TEXT,
+    sucesso    BOOLEAN      DEFAULT TRUE,
+    mensagem   TEXT,
+    created_at TIMESTAMPTZ  DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sync_log_created_at ON sync_log (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sync_log_tipo       ON sync_log (tipo);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 31. skus_vinculados (DANFE → SKU Etiqueta)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS skus_vinculados (
     id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -952,6 +1124,89 @@ CREATE TABLE IF NOT EXISTS skus_vinculados (
 
 CREATE INDEX IF NOT EXISTS idx_skus_vinculados_codigo   ON skus_vinculados ("codigoDanfe");
 CREATE INDEX IF NOT EXISTS idx_skus_vinculados_sku      ON skus_vinculados ("skuPrincipal");
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 32. cost_calculations
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS cost_calculations (
+    id                   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    product_sku          TEXT,
+    product_name         TEXT,
+    items                JSONB        DEFAULT '[]'::jsonb,
+    selling_price        REAL         DEFAULT 0,
+    platform_fee         REAL         DEFAULT 0,      -- v7: campo que TS escreve
+    platform_fee_percent REAL         DEFAULT 0,      -- alias legado
+    shipping_cost        REAL         DEFAULT 0,
+    tax_percent          REAL         DEFAULT 0,
+    other_costs          REAL         DEFAULT 0,
+    calculation_type     TEXT,
+    calculation_category TEXT,
+    report_name          TEXT,
+    selected_products    JSONB        DEFAULT '[]'::jsonb,
+    total_material_cost  REAL         DEFAULT 0,
+    profit               REAL         DEFAULT 0,
+    margin               REAL         DEFAULT 0,
+    created_by           TEXT,
+    target_revenue       REAL,
+    target_quantity      REAL,
+    comparative_prices   JSONB,
+    related_skus         JSONB,
+    created_at           TIMESTAMPTZ  DEFAULT NOW(),
+    updated_at           TIMESTAMPTZ  DEFAULT NOW()
+);
+
+ALTER TABLE cost_calculations
+    ADD COLUMN IF NOT EXISTS platform_fee       REAL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS calculation_type   TEXT,
+    ADD COLUMN IF NOT EXISTS calculation_category TEXT,
+    ADD COLUMN IF NOT EXISTS report_name        TEXT,
+    ADD COLUMN IF NOT EXISTS selected_products  JSONB DEFAULT '[]'::jsonb,
+    ADD COLUMN IF NOT EXISTS total_material_cost REAL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS profit             REAL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS margin             REAL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS created_by         TEXT,
+    ADD COLUMN IF NOT EXISTS target_revenue     REAL,
+    ADD COLUMN IF NOT EXISTS target_quantity    REAL,
+    ADD COLUMN IF NOT EXISTS comparative_prices JSONB,
+    ADD COLUMN IF NOT EXISTS related_skus       JSONB,
+    ADD COLUMN IF NOT EXISTS updated_at         TIMESTAMPTZ DEFAULT NOW();
+
+CREATE INDEX IF NOT EXISTS idx_cost_calc_sku ON cost_calculations (product_sku);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 33. purchase_planning (NOVA v7 — Planejamento de compras da calculadora)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS purchase_planning (
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    project_name    TEXT,
+    category        TEXT,
+    product_sku     TEXT,
+    related_skus    JSONB,
+    items           JSONB        DEFAULT '[]'::jsonb,
+    total_cost      REAL         DEFAULT 0,
+    created_by      TEXT,
+    created_at      TIMESTAMPTZ  DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ  DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_purchase_planning_sku ON purchase_planning (product_sku);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 34. zpl_batches (NOVA v7 — Lotes de etiquetas ZPL)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS zpl_batches (
+    id               UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    batch_id         TEXT,
+    description      TEXT,
+    source           TEXT,          -- 'bling-notas', 'marketplace', 'individual', 'manual'
+    label_count      INT          DEFAULT 0,
+    zpl_content      TEXT,
+    created_by_name  TEXT,
+    created_at       TIMESTAMPTZ  DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_zpl_batches_created_at ON zpl_batches (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_zpl_batches_source     ON zpl_batches (source);
 
 -- ═════════════════════════════════════════════════════════════════════════════
 --  VIEWS
@@ -1360,16 +1615,18 @@ BEGIN
     DELETE FROM public.import_history;
     DELETE FROM public.admin_notices;
     DELETE FROM public.etiquetas_historico;
+    DELETE FROM public.zpl_batches;
+    DELETE FROM public.sync_log;
     UPDATE public.stock_items SET current_qty = 0, mixed_qty = 0;
     UPDATE public.product_boms SET current_qty = 0, reserved_qty = 0, ready_qty = 0;
     RETURN 'Banco de dados limpo com sucesso.';
 END; $$;
 
 -- ═════════════════════════════════════════════════════════════════════════════
---  RPCs FISCAIS (NF-e) — NOVAS
+--  RPCs FISCAIS (NF-e)
 -- ═════════════════════════════════════════════════════════════════════════════
 
--- ── 14. inserir_nfe — usada por nfeSupabase.ts criarNFe() ───────────────────
+-- ── 14. inserir_nfe ──────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION inserir_nfe(
     v_numero          TEXT,
     v_serie           TEXT,
@@ -1405,7 +1662,7 @@ BEGIN
     RETURNING *;
 END; $$;
 
--- ── 15. listar_nfes — usada por nfeSupabase.ts listarNFes() ─────────────────
+-- ── 15. listar_nfes ──────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION listar_nfes(
     v_status    TEXT DEFAULT NULL,
     v_pedidoid  TEXT DEFAULT NULL
@@ -1418,7 +1675,7 @@ BEGIN
     ORDER BY "criadoEm" DESC;
 END; $$;
 
--- ── 16. obter_proximo_numero_nfe — usada por nfeSupabase.ts ──────────────────
+-- ── 16. obter_proximo_numero_nfe ─────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION obter_proximo_numero_nfe()
 RETURNS INT LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE v_max INT;
@@ -1440,7 +1697,14 @@ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
 DECLARE tables_status jsonb; types_status jsonb; functions_status jsonb; columns_status jsonb;
 BEGIN
     EXECUTE 'SELECT jsonb_agg(jsonb_build_object(''name'', t, ''exists'', EXISTS (SELECT FROM pg_tables WHERE schemaname = ''public'' AND tablename = t))) FROM unnest($1::text[]) t'
-        USING ARRAY['stock_items','orders','stock_movements','users','scan_logs','product_boms','sku_links','weighing_batches','production_plans','shopping_list_items','stock_pack_groups','estoque_pronto','order_items','setores','etiquetas_prioritarias','bling_nfe','bling_lotes_nfe','nfes','certificados','objetos_postagem','audit_logs','sync_config','skus_vinculados']
+        USING ARRAY[
+            'stock_items','orders','stock_movements','users','scan_logs','product_boms',
+            'sku_links','weighing_batches','production_plans','shopping_list_items',
+            'stock_pack_groups','estoque_pronto','order_items','setores',
+            'etiquetas_prioritarias','bling_nfe','bling_lotes_nfe','nfes','certificados',
+            'objetos_postagem','audit_logs','sync_config','skus_vinculados',
+            'sync_log','purchase_planning','zpl_batches','cost_calculations'
+        ]
         INTO tables_status;
 
     EXECUTE 'SELECT jsonb_agg(jsonb_build_object(''name'', t, ''exists'', EXISTS (SELECT FROM pg_type WHERE typname = t))) FROM unnest($1::text[]) t'
@@ -1448,20 +1712,34 @@ BEGIN
         INTO types_status;
 
     EXECUTE 'SELECT jsonb_agg(jsonb_build_object(''name'', t, ''exists'', EXISTS (SELECT FROM pg_proc WHERE proname = t))) FROM unnest($1::text[]) t'
-        USING ARRAY['sync_database','adjust_stock_quantity','record_production_run','login','record_weighing_and_deduct_stock','record_grinding_run','cancel_scan_id_and_revert_stock','register_ready_stock','reset_volatile_status','deduct_bom_recursive','delete_orders','clear_scan_history','bulk_set_initial_stock','reset_database','check_setup_status','inserir_nfe','listar_nfes','obter_proximo_numero_nfe']
+        USING ARRAY[
+            'sync_database','adjust_stock_quantity','record_production_run','login',
+            'record_weighing_and_deduct_stock','record_grinding_run',
+            'cancel_scan_id_and_revert_stock','register_ready_stock','reset_volatile_status',
+            'deduct_bom_recursive','delete_orders','clear_scan_history',
+            'bulk_set_initial_stock','reset_database','check_setup_status',
+            'inserir_nfe','listar_nfes','obter_proximo_numero_nfe'
+        ]
         INTO functions_status;
 
     SELECT jsonb_agg(jsonb_build_object('table', t, 'column', c, 'exists',
         EXISTS (SELECT FROM information_schema.columns WHERE table_name=t AND column_name=c)))
     INTO columns_status
     FROM (VALUES
-        ('stock_items','barcode'),('stock_items','mixed_qty'),('stock_items','base_type'),('stock_items','localizacao'),('stock_items','is_volatile_infinite'),
+        ('stock_items','barcode'),('stock_items','mixed_qty'),('stock_items','base_type'),
+        ('stock_items','localizacao'),('stock_items','is_volatile_infinite'),('stock_items','bom_composition'),
         ('product_boms','product_type'),('product_boms','base_type'),('product_boms','color'),('product_boms','items'),
         ('orders','vinculado_bling'),('orders','venda_origem'),('orders','id_bling'),
+        ('orders','descontar_volatil'),('orders','tracking_code'),('orders','plataforma_origem'),
         ('estoque_pronto','barcode'),('estoque_pronto','pallet'),
         ('weighing_batches','produtos'),('weighing_batches','tipo_operacao'),
         ('nfes','pedidoId'),('nfes','chaveAcesso'),('nfes','tentativasEnvio'),('nfes','erroDetalhes'),
-        ('certificados','dataValidade'),('certificados','certificadoPem')
+        ('certificados','dataValidade'),('certificados','certificadoPem'),
+        ('order_items','bling_item_id'),('order_items','item_id'),('order_items','canal'),
+        ('users','permissions'),('grinding_batches','batch_name'),
+        ('stock_movements','new_total'),('stock_movements','item_snapshot'),
+        ('audit_logs','usuario_id'),('audit_logs','criado_em'),
+        ('cost_calculations','platform_fee'),('stock_pack_groups','pack_size')
     ) AS v(t,c);
 
     RETURN jsonb_build_object(
@@ -1469,14 +1747,14 @@ BEGIN
         'types_status',     types_status,
         'functions_status', functions_status,
         'columns_status',   columns_status,
-        'db_version',       '6.1'
+        'db_version',       '7.0'
     );
 END; $$;
 
 -- ── 18. sync_database (placeholder) ──────────────────────────────────────────
 CREATE OR REPLACE FUNCTION sync_database()
 RETURNS TEXT LANGUAGE plpgsql SECURITY DEFINER AS $$
-BEGIN RETURN 'Banco de dados sincronizado com sucesso! (v6.1)'; END; $$;
+BEGIN RETURN 'Banco de dados sincronizado com sucesso! (v7.0)'; END; $$;
 
 -- ═════════════════════════════════════════════════════════════════════════════
 --  VERIFICAÇÃO FINAL
@@ -1489,10 +1767,20 @@ WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
 ORDER BY table_name;
 
 -- ════════════════════════════════════════════════════════════════════════════
--- FIM — ERP Fábrica Pro v6.1
--- 30 tabelas | 3 enums | 18 RPCs | 5+ views | 50+ índices | triggers
--- Inclui: fiscal (inserir_nfe, listar_nfes, obter_proximo_numero_nfe)
--- Inclui: migração camelCase para nfes e certificados pré-existentes
+-- FIM — ERP Fábrica Pro v7.0
+-- 34 tabelas | 3 enums | 18 RPCs | 3 views | 60+ índices | triggers + RLS
+--
+-- NOVAS TABELAS v7: sync_log, purchase_planning, zpl_batches
+-- COLUNAS NOVAS v7:
+--   orders: descontar_volatil, tracking_code, plataforma_origem, data_expiracao, loja
+--   users: permissions (JSONB)
+--   stock_items: bom_composition, stock_initial_day, stock_final_day, day_date
+--   stock_movements: new_total, operator_name, item_snapshot
+--   grinding_batches: batch_name
+--   stock_pack_groups: pack_size
+--   cost_calculations: platform_fee
+--   order_items: bling_item_id, item_id, canal, descricao, unidade, valor_unitario, subtotal, sincronizado_em
+--   audit_logs: usuario_id, descricao, criado_em
+-- LIMPEZA v7: nfes colunas snake_case duplicadas são removidas
 -- ════════════════════════════════════════════════════════════════════════════
-
 `;
