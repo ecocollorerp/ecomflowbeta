@@ -245,7 +245,7 @@ const AddWeighingModal: React.FC<AddWeighingModalProps> = ({ isOpen, onClose, in
                             <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 space-y-6">
                                 <h3 className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] mb-4">1. Modo e Equipamentos</h3>
                                 
-                                <div className="grid grid-cols-3 gap-2 p-1 bg-white rounded-2xl border border-slate-200">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 p-1 bg-white rounded-2xl border border-slate-200">
                                     {['SO_BATEU', 'SO_ENSACADEIRA', 'BATEU_ENSACOU'].map((mode) => (
                                         <button 
                                             key={mode}

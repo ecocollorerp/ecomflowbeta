@@ -512,7 +512,7 @@ const BlingConfigModal: React.FC<{
     // But we can use alert or just let the user see the popup.
   };
 
-  // Listen for popup message
+  // Listen for popup message + localStorage fallback
   useEffect(() => {
     const exchangeCodeForToken = async (code: string) => {
       const normalizedCode = String(code || "").trim();
@@ -581,9 +581,36 @@ const BlingConfigModal: React.FC<{
       }
     };
 
+    // Fallback: poll localStorage for code from redirect (when popup/postMessage fails)
+    const checkLocalStorageFallback = () => {
+      try {
+        const raw = localStorage.getItem('bling_oauth_callback_code');
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        // Only consume codes from the last 5 minutes
+        if (parsed.code && parsed.timestamp && (Date.now() - parsed.timestamp) < 300000) {
+          localStorage.removeItem('bling_oauth_callback_code');
+          console.log("Received auth code from localStorage fallback:", parsed.code);
+          setAuthCode(parsed.code);
+          exchangeCodeForToken(parsed.code);
+        } else {
+          localStorage.removeItem('bling_oauth_callback_code');
+        }
+      } catch { /* ignore */ }
+    };
+
+    // Check immediately and then poll every second
+    checkLocalStorageFallback();
+    const pollInterval = setInterval(checkLocalStorageFallback, 1000);
+
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [clientId, clientSecret, currentOrigin, autoSync, scope, onSave, onClose]); // Added missing dependencies
+    window.addEventListener("storage", checkLocalStorageFallback);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      window.removeEventListener("storage", checkLocalStorageFallback);
+      clearInterval(pollInterval);
+    };
+  }, [clientId, clientSecret, currentOrigin, autoSync, scope, onSave, onClose]);
 
   if (!isOpen) return null;
 
@@ -637,7 +664,7 @@ const BlingConfigModal: React.FC<{
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60] p-4">
-      <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-2xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto custom-scrollbar">
+      <div className="bg-white rounded-2xl shadow-2xl p-3 sm:p-6 w-full max-w-2xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto custom-scrollbar">
         <div className="flex justify-between items-center mb-6 border-b pb-4">
           <h2 className="text-xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
             <Settings className="text-blue-600" /> Configuração Bling v3
@@ -2166,99 +2193,86 @@ const BlingPage: React.FC<BlingPageProps> = ({
 
   // --- OAUTH CALLBACK HANDLER ---
   useEffect(() => {
-    const checkCallback = async () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get("code");
-      const state = urlParams.get("state");
+    const processOAuthCode = async (code: string, source: string) => {
+      const normalizedCode = code.trim();
+      const alreadyConsumedCode = sessionStorage.getItem("bling_oauth_consumed_code");
+      if (alreadyConsumedCode && alreadyConsumedCode === normalizedCode) return;
 
-      if (code && state) {
-        const normalizedCode = code.trim();
-        const alreadyConsumedCode = sessionStorage.getItem(
-          "bling_oauth_consumed_code"
+      const storedConfig = localStorage.getItem("bling_oauth_config");
+      if (!storedConfig) return;
+
+      const { clientId, clientSecret } = JSON.parse(storedConfig);
+      setIsHandlingCallback(true);
+      addToast(`Processando autenticação do Bling (${source})...`, "info");
+      sessionStorage.setItem("bling_oauth_consumed_code", normalizedCode);
+
+      try {
+        const currentOrigin = window.location.origin.replace(/\/$/, "");
+        const redirectUri = currentOrigin;
+
+        const data = await executeBlingTokenExchange(
+          normalizedCode, clientId, clientSecret, redirectUri
         );
-        if (alreadyConsumedCode && alreadyConsumedCode === normalizedCode) {
-          window.history.replaceState(
-            {},
-            document.title,
-            window.location.pathname
-          );
-          return;
-        }
 
-        const storedConfig = localStorage.getItem("bling_oauth_config");
-        if (!storedConfig) {
-          window.history.replaceState(
-            {},
-            document.title,
-            window.location.pathname
-          );
-          return;
-        }
-
-        const { clientId, clientSecret } = JSON.parse(storedConfig);
-        setIsHandlingCallback(true);
-        addToast("Processando autenticação do Bling...", "info");
-        sessionStorage.setItem("bling_oauth_consumed_code", normalizedCode);
-
-        try {
-          // Importante: Passar a redirect_uri correta
-          const currentOrigin = window.location.origin.replace(/\/$/, "");
-          const redirectUri = currentOrigin;
-
-          const data = await executeBlingTokenExchange(
-            normalizedCode,
+        if (data.access_token) {
+          const newSettings: BlingSettings = {
+            apiKey: data.access_token,
+            refreshToken: data.refresh_token,
+            expiresIn: data.expires_in,
+            createdAt: Date.now(),
             clientId,
             clientSecret,
-            redirectUri
-          );
+            autoSync: false,
+            scope: {
+              importarProdutos: true,
+              importarPedidos: true,
+              importarNotasFiscais: true,
+              gerarEtiquetas: true
+            }
+          };
 
-          if (data.access_token) {
-            const newSettings: BlingSettings = {
-              apiKey: data.access_token,
-              refreshToken: data.refresh_token,
-              expiresIn: data.expires_in,
-              createdAt: Date.now(),
-              clientId: clientId,
-              clientSecret: clientSecret,
-              autoSync: false,
-              scope: {
-                importarProdutos: true,
-                importarPedidos: true,
-                importarNotasFiscais: true,
-                gerarEtiquetas: true
-              }
-            };
+          onSaveSettings((prev) => ({
+            ...prev,
+            integrations: { ...prev.integrations, bling: newSettings }
+          }));
 
-            onSaveSettings((prev) => ({
-              ...prev,
-              integrations: {
-                ...prev.integrations,
-                bling: newSettings
-              }
-            }));
-
-            addToast("Integração Bling conectada com sucesso!", "success");
-            localStorage.removeItem("bling_oauth_config");
-          } else {
-            addToast(
-              `Falha na troca de token: ${data.error || "Erro desconhecido"}`,
-              "error"
-            );
-          }
-        } catch (e: any) {
-          addToast(`Erro de conexão: ${e.message}`, "error");
-        } finally {
-          window.history.replaceState(
-            {},
-            document.title,
-            window.location.pathname
-          );
-          setIsHandlingCallback(false);
+          addToast("Integração Bling conectada com sucesso!", "success");
+          localStorage.removeItem("bling_oauth_config");
+        } else {
+          addToast(`Falha na troca de token: ${data.error || "Erro desconhecido"}`, "error");
         }
+      } catch (e: any) {
+        addToast(`Erro de conexão: ${e.message}`, "error");
+      } finally {
+        window.history.replaceState({}, document.title, window.location.pathname);
+        setIsHandlingCallback(false);
       }
     };
 
-    checkCallback();
+    // Check URL params (direct redirect)
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get("code");
+    const state = urlParams.get("state");
+    if (code && state) {
+      processOAuthCode(code, "redirect direto");
+      return;
+    }
+
+    // Check localStorage fallback (from popup that couldn't use postMessage)
+    const checkLocalStorageFallback = () => {
+      try {
+        const raw = localStorage.getItem('bling_oauth_callback_code');
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (parsed.code && parsed.timestamp && (Date.now() - parsed.timestamp) < 300000) {
+          localStorage.removeItem('bling_oauth_callback_code');
+          processOAuthCode(parsed.code, "fallback localStorage");
+        } else {
+          localStorage.removeItem('bling_oauth_callback_code');
+        }
+      } catch { /* ignore */ }
+    };
+    checkLocalStorageFallback();
   }, []);
 
   // --- AUTO SYNC LOGIC (POLLING) ---
@@ -5411,7 +5425,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
       {activeTab === "importacao" && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
           {/* ── Nova Interface: Importação por Situação + NF-e ─────────── */}
-          <div className="bg-white p-6 rounded-3xl border border-indigo-100 shadow-xl">
+          <div className="bg-white p-3 sm:p-6 rounded-3xl border border-indigo-100 shadow-xl">
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h2 className="text-base font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
@@ -7523,7 +7537,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
 
       {/* Content: Catálogo */}
       {activeTab === "catalogo" && (
-        <div className="bg-white p-8 rounded-3xl border border-gray-200 shadow-xl animate-in fade-in slide-in-from-bottom-4">
+        <div className="bg-white p-4 sm:p-8 rounded-3xl border border-gray-200 shadow-xl animate-in fade-in slide-in-from-bottom-4">
           <h2 className="text-xl font-black text-slate-800 mb-6 uppercase tracking-tighter flex items-center gap-2">
             <Package className="text-purple-500" /> Catálogo de Produtos
           </h2>
@@ -7646,7 +7660,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
       {activeTab === "etiquetas" && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
           {/* Header */}
-          <div className="bg-white p-6 rounded-3xl border border-gray-200 shadow-xl">
+          <div className="bg-white p-3 sm:p-6 rounded-3xl border border-gray-200 shadow-xl">
             <div className="flex justify-between items-start mb-4 flex-wrap gap-3">
               <div>
                 <h2 className="text-xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
@@ -7930,7 +7944,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
       {/* ── Modal: Confirmar salvar NF-e buscadas ───────────────────────── */}
       {showNfeSaveConfirm && pendingNfeSaida && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl w-full max-w-sm p-8 animate-in fade-in zoom-in-95">
+          <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl w-full max-w-sm p-4 sm:p-8 animate-in fade-in zoom-in-95">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
                 <Cloud className="text-emerald-600" size={20} /> Salvar NF-e?
@@ -7977,7 +7991,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
       {/* ── Modal: Vincular produto Bling ao ERP ────────────────────────── */}
       {catalogLinkModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl w-full max-w-md p-8 animate-in fade-in zoom-in-95">
+          <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl w-full max-w-md p-4 sm:p-8 animate-in fade-in zoom-in-95">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
                 <LinkIcon className="text-indigo-600" size={20} /> Vincular ao
@@ -8054,7 +8068,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
           onClick={() => setShowDanfeZplConfigModal(false)}
         >
           <div
-            className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6"
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-3 sm:p-6"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-between items-center mb-4">
@@ -8133,7 +8147,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
           onClick={() => setZplModeModal(null)}
         >
           <div
-            className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-6"
+            className="bg-white rounded-3xl shadow-2xl w-full max-w-sm p-3 sm:p-6"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex justify-between items-center mb-2">
@@ -8234,7 +8248,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
       {/* ── Modal de Geração de NF-e ────────────────────────────────────── */}
       {showGerarNFeModal && nfeModalOrder && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl w-full max-w-md p-8 animate-in fade-in zoom-in-95">
+          <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl w-full max-w-md p-4 sm:p-8 animate-in fade-in zoom-in-95">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
                 <FileText className="text-blue-600" size={20} /> Gerar NF-e
@@ -8355,7 +8369,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
       {/* ── Modal NF-e em Lote ────────────────────────────────────────── */}
       {showBatchGerarNFeModal && selectedVendasIds.size > 0 && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl w-full max-w-md p-8 animate-in fade-in zoom-in-95">
+          <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl w-full max-w-md p-4 sm:p-8 animate-in fade-in zoom-in-95">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
                 <FileText className="text-blue-600" size={20} /> Gerar NF-e em
@@ -8419,7 +8433,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
       {/* ── Modal Editar Pedido de Venda ────────────────────────────────── */}
       {editPedidoModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl w-full max-w-lg p-8 animate-in fade-in zoom-in-95">
+          <div className="bg-white rounded-3xl border border-gray-200 shadow-2xl w-full max-w-lg p-4 sm:p-8 animate-in fade-in zoom-in-95">
             <div className="flex justify-between items-center mb-6">
               <h3 className="text-lg font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
                 <Settings className="text-amber-600" size={20} /> Editar Pedido
@@ -8558,7 +8572,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
       {/* ── Modal: Editar NF-e (apenas pendentes) ────────────────────────── */}
       {editNfeModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full p-8 animate-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full p-4 sm:p-8 animate-in zoom-in-95 duration-200">
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-xl font-black text-slate-800 flex items-center gap-3">
@@ -8605,7 +8619,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-1.5">
                       <FileText size={10} /> Informações Básicas
                     </p>
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                       <div>
                         <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">
                           Número

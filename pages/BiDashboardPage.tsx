@@ -31,7 +31,7 @@ const KpiCard: React.FC<{ title: string; value: string; icon: React.ReactNode; }
             <p className="text-md font-medium text-gray-500 dark:text-gray-400">{title}</p>
             <div className="p-2 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 rounded-lg">{icon}</div>
         </div>
-        <p className="text-4xl font-bold text-gray-900 dark:text-gray-50 mt-2">{value}</p>
+        <p className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 dark:text-gray-50 mt-2">{value}</p>
     </div>
 );
 
@@ -184,7 +184,7 @@ const BiDashboardPage: React.FC<BiDashboardPageProps> = ({ biData, users }) => {
     const {kpis, charts, highlights} = kpisAndCharts;
     return (
         <div className="space-y-6">
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-50 flex items-center gap-3"><BarChart4 size={32}/> BI Dashboard</h1>
+            <h1 className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 dark:text-gray-50 flex items-center gap-3"><BarChart4 size={24}/> BI Dashboard</h1>
             
             <div className="flex flex-wrap gap-4 items-center p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
                 <Filter size={18} className="text-gray-500 dark:text-gray-400"/>

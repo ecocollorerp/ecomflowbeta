@@ -233,16 +233,6 @@ const PackGroupModal: React.FC<PackGroupModalProps> = ({ isOpen, onClose, groupT
                             </div>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-black text-blue-600 uppercase tracking-widest mb-1 font-bold">Qtd de Itens por Pacote (Ex: 20)</label>
-                            <input
-                                type="number"
-                                min={1}
-                                value={packSize}
-                                onChange={e => setPackSize(Number(e.target.value))}
-                                className="w-full p-3 border-2 border-blue-200 rounded-xl font-bold focus:border-blue-500 outline-none bg-blue-50/30"
-                            />
-                        </div>
-                        <div>
                             <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Meta Mínima de Estoque (Geral UN)</label>
                             <input
                                 type="number"

@@ -1212,7 +1212,7 @@ export const AbaImportacaoPedidosBling: React.FC<
                     <p className="text-[10px] font-black text-amber-700 uppercase tracking-wider mb-3 flex items-center gap-1.5">
                       <Edit size={11} /> Dados personalizados para NF-e
                     </p>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                       {/* NCM */}
                       <div className="flex flex-col gap-1">
                         <label className="text-[9px] font-black text-slate-500 uppercase tracking-wider">

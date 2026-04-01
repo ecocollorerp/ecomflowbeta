@@ -94,30 +94,67 @@ const App: React.FC = () => {
     useEffect(() => {
         initPostHog();
 
-        // OAuth Popup Handler
+        // OAuth Popup/Redirect Handler
         const urlParams = new URLSearchParams(window.location.search);
         const code = urlParams.get('code');
+        const state = urlParams.get('state');
 
-        if (code && window.opener) {
-            console.log("OAuth callback detected in popup. Sending message to opener...");
-            window.opener.postMessage({ type: 'BLING_AUTH_CODE', code }, '*');
-            window.close();
-            return; // Stop execution in popup
+        if (code) {
+            // Try popup postMessage first
+            if (window.opener) {
+                try {
+                    console.log("OAuth callback detected in popup. Sending message to opener...");
+                    window.opener.postMessage({ type: 'BLING_AUTH_CODE', code }, '*');
+                    window.close();
+                    return;
+                } catch (e) {
+                    console.warn("postMessage falhou, usando fallback localStorage:", e);
+                }
+            }
+            // Fallback: store code in localStorage for any window to pick up
+            // This handles: blocked popup, direct redirect, cross-origin popup issues
+            localStorage.setItem('bling_oauth_callback_code', JSON.stringify({ code, state, timestamp: Date.now() }));
+            // Clean URL without reload
+            window.history.replaceState({}, document.title, window.location.pathname);
         }
     }, []);
     const [appStatus, setAppStatus] = useState<AppStatus>('initializing');
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [setupDetails, setSetupDetails] = useState<any | null>(null);
 
-    const [currentPage, _setCurrentPage] = useState('dashboard');
+    // SPA Hash-based routing: read initial page from hash or localStorage
+    const getInitialPage = (): string => {
+        const hash = window.location.hash.replace('#/', '').replace('#', '');
+        if (hash && hash.length > 0) return hash;
+        const saved = localStorage.getItem('erp_current_page');
+        return saved || 'dashboard';
+    };
+    const [currentPage, _setCurrentPage] = useState(getInitialPage);
     const [estoqueInitialTab, setEstoqueInitialTab] = useState<any>(undefined);
     const [calculadoraInitialSku, setCalculadoraInitialSku] = useState<string | undefined>(undefined);
     const [pedidosInitialFilter, setPedidosInitialFilter] = useState<any>(undefined);
 
+    // Sync hash → state on popstate (browser back/forward)
+    useEffect(() => {
+        const onHashChange = () => {
+            const hash = window.location.hash.replace('#/', '').replace('#', '');
+            if (hash && hash !== currentPage) {
+                _setCurrentPage(hash);
+                localStorage.setItem('erp_current_page', hash);
+            }
+        };
+        window.addEventListener('hashchange', onHashChange);
+        window.addEventListener('popstate', onHashChange);
+        return () => {
+            window.removeEventListener('hashchange', onHashChange);
+            window.removeEventListener('popstate', onHashChange);
+        };
+    }, [currentPage]);
+
     const handlePageClick = (page: string) => {
         if (page === 'pacotes') {
-            setEstoqueInitialTab('pacotes');
-            setCurrentPage('estoque');
+            // Use the dedicated pacotes-prontos route instead of redirecting to estoque
+            setCurrentPage('pacotes-prontos');
             return;
         }
         if (page === 'estoque') {
@@ -214,12 +251,13 @@ const App: React.FC = () => {
         if (code) {
             console.log("Detectado retorno de autenticação Bling. Redirecionando para página de configuração...");
             _setCurrentPage('bling');
-            // Do not process other logic if we have a code, let BlingPage handle it
+            window.history.replaceState(null, '', `#/bling`);
         } else {
-            // 2. Restaurar a última página acessada
-            const savedPage = localStorage.getItem('erp_current_page');
-            if (savedPage) {
-                _setCurrentPage(savedPage);
+            // 2. Restaurar from hash (already done in useState init) or set hash for saved page
+            const hash = window.location.hash.replace('#/', '').replace('#', '');
+            if (!hash) {
+                const savedPage = localStorage.getItem('erp_current_page') || 'dashboard';
+                window.history.replaceState(null, '', `#/${savedPage}`);
             }
         }
 
@@ -271,12 +309,14 @@ const App: React.FC = () => {
         if (currentUser && !canAccessPage(currentUser, page, generalSettings)) {
             const fallbackPage = getFirstAccessiblePage(currentUser, 'dashboard', generalSettings);
             localStorage.setItem('erp_current_page', fallbackPage);
+            window.history.pushState(null, '', `#/${fallbackPage}`);
             _setCurrentPage(fallbackPage);
             addToast('Você não tem permissão para acessar essa funcionalidade no seu setor.', 'error');
             return;
         }
 
         localStorage.setItem('erp_current_page', page);
+        window.history.pushState(null, '', `#/${page}`);
         if (page !== 'pedidos') {
             setPedidosInitialFilter(undefined);
         }
@@ -289,6 +329,7 @@ const App: React.FC = () => {
 
         const fallbackPage = getFirstAccessiblePage(currentUser, 'dashboard', generalSettings);
         localStorage.setItem('erp_current_page', fallbackPage);
+        window.history.replaceState(null, '', `#/${fallbackPage}`);
         _setCurrentPage(fallbackPage);
     }, [currentUser, currentPage, generalSettings]);
 
@@ -1496,6 +1537,34 @@ const App: React.FC = () => {
         return false;
     }, [currentUser, addToast, loadData]);
 
+    const handleDeleteMovement = useCallback(async (movementId: string): Promise<boolean> => {
+        if (!currentUser) return false;
+        // Find the movement first to reverse its qty_delta
+        const movement = stockMovements.find(m => m.id === movementId);
+        if (!movement) { addToast('Movimentação não encontrada.', 'error'); return false; }
+
+        // Delete movement record
+        const { error } = await dbClient.from('stock_movements').delete().eq('id', movementId);
+        if (error) { addToast(`Erro ao excluir: ${error.message}`, 'error'); return false; }
+
+        // Reverse the stock adjustment (undo the delta)
+        if (movement.qty_delta !== 0) {
+            const itemCode = movement.stock_item_code || (movement as any).product_sku;
+            if (itemCode) {
+                // Determine table based on item kind
+                const item = stockItems.find(i => i.code === itemCode);
+                if (item) {
+                    const table = (item.kind === 'INSUMO' || item.kind === 'PROCESSADO') ? 'stock_items' : 'product_boms';
+                    await dbClient.from(table).update({ current_qty: Math.max(0, (item.current_qty || 0) - movement.qty_delta) }).eq('code', itemCode);
+                }
+            }
+        }
+
+        loadData();
+        addToast('Movimentação excluída e saldo revertido.', 'success');
+        return true;
+    }, [currentUser, addToast, loadData, stockMovements, stockItems]);
+
     const handleProductionRun = useCallback(async (itemCode: string, quantity: number, ref: string) => {
         if (!currentUser) return;
         const { error } = await dbClient.rpc('record_production_run', { item_code: itemCode, quantity_to_produce: quantity, ref_text: ref, user_name: currentUser.name });
@@ -1687,7 +1756,34 @@ const App: React.FC = () => {
         }));
         if (newItemsToInsert.length > 0) await dbClient.from('product_boms').insert(newItemsToInsert as any);
         for (const item of payload.itemsToUpdate) await dbClient.rpc('adjust_stock_quantity', { item_code: item.stockItemCode, quantity_delta: item.quantityDelta, origin_text: 'IMPORT_XML', ref_text: 'NFe Import', user_name: currentUser.name });
-        addToast('XML Importado!', 'success'); loadData();
+
+        // Criar lançamento financeiro automático a partir da NF-e importada
+        if (payload.totalNfe && payload.totalNfe > 0) {
+            const competencia = new Date().toISOString().slice(0, 7); // YYYY-MM
+            const newLancamento = {
+                id: `nfe-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+                tipo: 'mensal' as const,
+                categoriaId: 'nfe-import',
+                categoriaNome: payload.categoriaNome || 'Compra de Mercadoria (NF-e)',
+                fornecedorId: payload.fornecedorCnpj || '',
+                fornecedorNome: payload.fornecedorNome || 'Importação NF-e',
+                fornecedorCnpj: payload.fornecedorCnpj || '',
+                produtoSku: '',
+                produtoNome: `NF-e ${payload.nfeNumero || ''}`.trim(),
+                valor: payload.totalNfe,
+                competencia,
+                competencias: [competencia],
+                dataLancamento: now,
+                observacao: `Entrada via importação de NF-e${payload.nfeNumero ? ` nº ${payload.nfeNumero}` : ''}. ${(payload.itemsToUpdate?.length || 0) + (payload.itemsToCreate?.length || 0)} item(ns) processados.`,
+                created_at: now,
+            };
+            setGeneralSettings(prev => ({
+                ...prev,
+                despesaLancamentos: [...(prev.despesaLancamentos || []), newLancamento],
+            }));
+        }
+
+        addToast('XML Importado! Estoque atualizado e lançamento financeiro criado.', 'success'); loadData();
     }, [currentUser, addToast, loadData]);
 
     // 🔗 Bulk Link SKUs - Vincular múltiplos SKUs a um produto existente
@@ -2202,8 +2298,8 @@ const App: React.FC = () => {
             case 'compras': return <ComprasPage shoppingList={shoppingList} onClearList={handleClearShoppingList} onUpdateItem={handleUpdateShoppingItem} stockItems={stockItems} />
             case 'pesagem': return <MaquinasPage stockItems={stockItems} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} currentUser={currentUser!} onDeleteBatch={handleDeleteWeighingBatch} users={users} skuLinks={skuLinks} generalSettings={generalSettings} />
             case 'moagem': return <MoagemPage stockItems={stockItems} grindingBatches={grindingBatches} onAddNewGrinding={handleAddNewGrinding} currentUser={currentUser!} onDeleteBatch={handleDeleteGrindingBatch} users={users} generalSettings={generalSettings} />
-            case 'estoque': return <EstoquePage stockItems={stockItems} stockMovements={stockMovements} onStockAdjustment={handleStockAdjustment} produtosCombinados={produtosCombinados} onSaveProdutoCombinado={handleSaveProdutoCombinado} onAddNewItem={handleAddNewItem} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} onProductionRun={handleProductionRun} onRegisterReadyStock={handleRegisterReadyStock} currentUser={currentUser!} onEditItem={handleEditItem} onDeleteItem={handleDeleteItem} onBulkDeleteItems={handleBulkDeleteItems} onDeleteMovement={async () => false} onDeleteWeighingBatch={handleDeleteWeighingBatch} generalSettings={generalSettings} setGeneralSettings={setGeneralSettings as any} onConfirmImportFromXml={handleConfirmImportFromXml} onSaveExpeditionItems={handleSaveExpeditionItems} users={users} onUpdateInsumoCategory={async () => { }} onBulkInventoryUpdate={handleBulkSetInitialStock} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} initialTab={estoqueInitialTab} setCurrentPage={setCurrentPage} />
-            case 'pacotes-prontos': return <EstoquePage stockItems={stockItems} stockMovements={stockMovements} onStockAdjustment={handleStockAdjustment} produtosCombinados={produtosCombinados} onSaveProdutoCombinado={handleSaveProdutoCombinado} onAddNewItem={handleAddNewItem} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} onProductionRun={handleProductionRun} onRegisterReadyStock={handleRegisterReadyStock} currentUser={currentUser!} onEditItem={handleEditItem} onDeleteItem={handleDeleteItem} onBulkDeleteItems={handleBulkDeleteItems} onDeleteMovement={async () => false} onDeleteWeighingBatch={handleDeleteWeighingBatch} generalSettings={generalSettings} setGeneralSettings={setGeneralSettings as any} onConfirmImportFromXml={handleConfirmImportFromXml} onSaveExpeditionItems={handleSaveExpeditionItems} users={users} onUpdateInsumoCategory={async () => { }} onBulkInventoryUpdate={handleBulkSetInitialStock} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} initialTab="pacotes" hideTabs={true} />
+            case 'estoque': return <EstoquePage stockItems={stockItems} stockMovements={stockMovements} onStockAdjustment={handleStockAdjustment} produtosCombinados={produtosCombinados} onSaveProdutoCombinado={handleSaveProdutoCombinado} onAddNewItem={handleAddNewItem} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} onProductionRun={handleProductionRun} onRegisterReadyStock={handleRegisterReadyStock} currentUser={currentUser!} onEditItem={handleEditItem} onDeleteItem={handleDeleteItem} onBulkDeleteItems={handleBulkDeleteItems} onDeleteMovement={handleDeleteMovement} onDeleteWeighingBatch={handleDeleteWeighingBatch} generalSettings={generalSettings} setGeneralSettings={setGeneralSettings as any} onConfirmImportFromXml={handleConfirmImportFromXml} onSaveExpeditionItems={handleSaveExpeditionItems} users={users} onUpdateInsumoCategory={async () => { }} onBulkInventoryUpdate={handleBulkSetInitialStock} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} initialTab={estoqueInitialTab} setCurrentPage={setCurrentPage} />
+            case 'pacotes-prontos': return <EstoquePage stockItems={stockItems} stockMovements={stockMovements} onStockAdjustment={handleStockAdjustment} produtosCombinados={produtosCombinados} onSaveProdutoCombinado={handleSaveProdutoCombinado} onAddNewItem={handleAddNewItem} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} onProductionRun={handleProductionRun} onRegisterReadyStock={handleRegisterReadyStock} currentUser={currentUser!} onEditItem={handleEditItem} onDeleteItem={handleDeleteItem} onBulkDeleteItems={handleBulkDeleteItems} onDeleteMovement={handleDeleteMovement} onDeleteWeighingBatch={handleDeleteWeighingBatch} generalSettings={generalSettings} setGeneralSettings={setGeneralSettings as any} onConfirmImportFromXml={handleConfirmImportFromXml} onSaveExpeditionItems={handleSaveExpeditionItems} users={users} onUpdateInsumoCategory={async () => { }} onBulkInventoryUpdate={handleBulkSetInitialStock} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} initialTab="pacotes" hideTabs={true} />
             case 'funcionarios': return <FuncionariosPage users={users} onSetAttendance={handleSetAttendance} onAddNewUser={handleAddNewUser} onUpdateAttendanceDetails={handleUpdateAttendanceDetails} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} currentUser={currentUser!} onDeleteUser={handleDeleteUser} sectors={sectors} />
             case 'relatorios': return <RelatoriosPage stockItems={stockItems} stockMovements={stockMovements} orders={allOrders} weighingBatches={weighingBatches} scanHistory={scanHistory} produtosCombinados={produtosCombinados} users={users} returns={returns} generalSettings={generalSettings} grindingBatches={grindingBatches} />
             case 'setores': return <SetoresPage sectors={sectors} users={users} onAddSector={handleAddSector} onDeleteSector={handleDeleteSector} onEditSector={handleEditSector} />
@@ -2263,8 +2359,10 @@ const App: React.FC = () => {
                         generalSettings={generalSettings}
                         navMode={generalSettings.navMode}
                     />
-                    <div className="flex-1 p-4 md:p-6 overflow-y-auto bg-[var(--color-bg)]">
-                        {renderPage()}
+                    <div className="flex-1 p-2 sm:p-4 md:p-6 overflow-y-auto bg-[var(--color-bg)]">
+                        <div className={generalSettings.navMode === 'topnav' ? 'max-w-[1600px] mx-auto' : ''}>
+                            {renderPage()}
+                        </div>
                     </div>
                 </main>
             </div>

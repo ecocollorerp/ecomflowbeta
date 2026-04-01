@@ -1198,7 +1198,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                             </div>
                             {/* stats cards */}
                             {showHistory && (
-                                <div className="grid grid-cols-3 gap-2">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
                                     <div className="bg-white dark:bg-gray-800 rounded-lg p-2 border border-gray-200 dark:border-gray-700 text-center">
                                         <p className="text-lg font-black text-blue-600 dark:text-blue-400">{histStats.totalRegistros}</p>
                                         <p className="text-[10px] text-gray-500 dark:text-gray-400 font-medium leading-tight">Registros</p>

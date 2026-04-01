@@ -263,6 +263,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
     const [isImportModalOpen, setIsImportModalOpen] = useState(false);
     const [isMappingModalOpen, setIsMappingModalOpen] = useState(false);
     const [mappingCanal, setMappingCanal] = useState<string>('shopee');
+    const [showMobileFilters, setShowMobileFilters] = useState(false);
     const [dateSourceMode, setDateSourceMode] = useState<'sale_date' | 'import_date' | 'shipping_date'>(generalSettings.dateSource === 'import_date' ? 'import_date' : 'sale_date');
     
     // Forçar sale_date se não houver configuração explícita para evitar erros de importação recente
@@ -750,40 +751,40 @@ const FinancePage: React.FC<FinancePageProps> = ({
 
     return (
         <div className="space-y-6 pb-20">
-            <div className="flex justify-between items-center flex-wrap gap-4 border-b border-slate-200 pb-6">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-200 pb-6">
                 <div>
-                    <h1 className="text-3xl font-black text-slate-800 flex items-center gap-3 uppercase tracking-tighter">
-                        <DollarSign size={40} className="text-emerald-600 bg-emerald-100 p-2 rounded-2xl shadow-sm" />
+                    <h1 className="text-xl sm:text-2xl md:text-3xl font-black text-slate-800 flex items-center gap-3 uppercase tracking-tighter">
+                        <DollarSign size={28} className="text-emerald-600 bg-emerald-100 p-1.5 sm:p-2 rounded-2xl shadow-sm sm:w-10 sm:h-10" />
                         Financeiro Estratégico
                     </h1>
                 </div>
-                <div className="flex items-center gap-3 flex-wrap">
-                    <button onClick={() => setIsLancarPagamentoOpen(true)} className="bg-purple-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-purple-100 hover:bg-purple-700 transition-all flex items-center gap-2">
-                        <Receipt size={16} /> Lançar Pagamento
+                <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+                    <button onClick={() => setIsLancarPagamentoOpen(true)} className="bg-purple-600 text-white px-3 py-2 sm:px-5 sm:py-3 rounded-xl sm:rounded-2xl font-black uppercase text-[9px] sm:text-xs tracking-widest shadow-xl shadow-purple-100 hover:bg-purple-700 transition-all flex items-center gap-1.5 sm:gap-2">
+                        <Receipt size={14} /> <span className="hidden sm:inline">Lançar</span> Pagamento
                     </button>
-                    <button onClick={() => setCurrentPage('calculadora')} className="bg-emerald-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-emerald-100 hover:bg-emerald-700 transition-all flex items-center gap-2">
-                        <Calculator size={16} /> Calculadora de Margem
+                    <button onClick={() => setCurrentPage('calculadora')} className="bg-emerald-600 text-white px-3 py-2 sm:px-5 sm:py-3 rounded-xl sm:rounded-2xl font-black uppercase text-[9px] sm:text-xs tracking-widest shadow-xl shadow-emerald-100 hover:bg-emerald-700 transition-all flex items-center gap-1.5 sm:gap-2">
+                        <Calculator size={14} /> Calculadora
                     </button>
-                    <button onClick={() => setIsImportModalOpen(true)} className="bg-indigo-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center gap-2">
-                        <FileCode size={16} /> Importar XML (NFe)
+                    <button onClick={() => setIsImportModalOpen(true)} className="bg-indigo-600 text-white px-3 py-2 sm:px-5 sm:py-3 rounded-xl sm:rounded-2xl font-black uppercase text-[9px] sm:text-xs tracking-widest shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center gap-1.5 sm:gap-2">
+                        <FileCode size={14} /> XML
                     </button>
-                    <button onClick={() => setIsImportModalOpen(true)} className="bg-blue-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center gap-2">
-                        <FileUp size={16} /> Importar Planilha
+                    <button onClick={() => setIsImportModalOpen(true)} className="bg-blue-600 text-white px-3 py-2 sm:px-5 sm:py-3 rounded-xl sm:rounded-2xl font-black uppercase text-[9px] sm:text-xs tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all flex items-center gap-1.5 sm:gap-2">
+                        <FileUp size={14} /> Planilha
                     </button>
                     <button 
                         onClick={() => {
                             setMappingCanal('shopee');
                             setIsMappingModalOpen(true);
                         }} 
-                        className="bg-slate-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-slate-100 hover:bg-slate-700 transition-all flex items-center gap-2"
+                        className="bg-slate-600 text-white px-3 py-2 sm:px-5 sm:py-3 rounded-xl sm:rounded-2xl font-black uppercase text-[9px] sm:text-xs tracking-widest shadow-xl shadow-slate-100 hover:bg-slate-700 transition-all flex items-center gap-1.5 sm:gap-2"
                     >
-                        <Settings size={16} /> Mapeamento Fiscal
+                        <Settings size={14} /> <span className="hidden sm:inline">Mapeamento</span> Fiscal
                     </button>
-                    <button onClick={handleExport} disabled={isExporting} className="bg-red-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-red-100 hover:bg-red-700 transition-all flex items-center gap-2 disabled:opacity-50">
-                        {isExporting ? <Loader2 className="animate-spin" size={16} /> : <FileDown size={16} />} Exportar PDF
+                    <button onClick={handleExport} disabled={isExporting} className="bg-red-600 text-white px-3 py-2 sm:px-5 sm:py-3 rounded-xl sm:rounded-2xl font-black uppercase text-[9px] sm:text-xs tracking-widest shadow-xl shadow-red-100 hover:bg-red-700 transition-all flex items-center gap-1.5 sm:gap-2 disabled:opacity-50">
+                        {isExporting ? <Loader2 className="animate-spin" size={14} /> : <FileDown size={14} />} PDF
                     </button>
-                    <button onClick={handleExportPptx} disabled={isExportingPptx} className="bg-orange-600 text-white px-5 py-3 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-orange-100 hover:bg-orange-700 transition-all flex items-center gap-2 disabled:opacity-50">
-                        {isExportingPptx ? <Loader2 className="animate-spin" size={16} /> : <FileDown size={16} />} Exportar PPTX
+                    <button onClick={handleExportPptx} disabled={isExportingPptx} className="bg-orange-600 text-white px-3 py-2 sm:px-5 sm:py-3 rounded-xl sm:rounded-2xl font-black uppercase text-[9px] sm:text-xs tracking-widest shadow-xl shadow-orange-100 hover:bg-orange-700 transition-all flex items-center gap-1.5 sm:gap-2 disabled:opacity-50">
+                        {isExportingPptx ? <Loader2 className="animate-spin" size={14} /> : <FileDown size={14} />} PPTX
                     </button>
                 </div>
             </div>
@@ -809,10 +810,21 @@ const FinancePage: React.FC<FinancePageProps> = ({
                 </div>
             )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6">
                 {/* Painel de Filtros e Impostos */}
-                <div className="lg:col-span-1 space-y-6">
-                    <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4">
+                <div className="lg:col-span-1 space-y-4 sm:space-y-6">
+                    {/* Toggle mobile para filtros */}
+                    <button
+                        onClick={() => setShowMobileFilters(!showMobileFilters)}
+                        className="lg:hidden w-full flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-100 shadow-sm"
+                    >
+                        <span className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2">
+                            <Settings size={14} className="text-blue-500" /> Filtros e Despesas
+                        </span>
+                        <ChevronDown size={16} className={`text-slate-400 transition-transform ${showMobileFilters ? 'rotate-180' : ''}`} />
+                    </button>
+                    <div className={`space-y-4 sm:space-y-6 ${showMobileFilters ? 'block' : 'hidden'} lg:block`}>
+                    <div className="bg-white p-3 sm:p-5 rounded-3xl border border-slate-100 shadow-sm space-y-4">
                         <h3 className="font-black text-slate-800 uppercase text-xs tracking-widest flex items-center gap-2">
                             <Settings size={14} className="text-blue-500" /> Despesas e Deduções
                         </h3>
@@ -1265,6 +1277,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
                         )}
                     </div>
                 </div>
+                </div>
 
                 {/* Dashboard Financeiro Principal */}
                 <div className="lg:col-span-3 space-y-6">
@@ -1371,7 +1384,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
 
                             const m = metricMap[card.metric] || { value: '-' };
                             return (
-                                <div key={card.id} className="relative group flex-1 min-w-[240px] flex">
+                                <div key={card.id} className="relative group flex-1 min-w-[160px] sm:min-w-[240px] flex">
                                     <div className="w-full">
                                         <FinanceStatCard label={card.label} value={m.value} color={card.color} sub={m.sub} highlight={m.highlight} breakdown={m.breakdown} trend={m.trend} />
                                     </div>
@@ -1434,7 +1447,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
                     </div>
 
                     {/* Stats secundárias */}
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                         <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center gap-3">
                             <div className="p-2 bg-blue-50 rounded-xl"><TrendingUp size={18} className="text-blue-600" /></div>
                             <div><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Total Pedidos</p><p className="text-xl font-black text-slate-800">{totalPedidos}</p></div>
@@ -1491,7 +1504,7 @@ const FinancePage: React.FC<FinancePageProps> = ({
 
                                             <div className="space-y-2">
                                                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Período</label>
-                                                <div className="grid grid-cols-2 gap-2">
+                                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                                                     {[
                                                         { id: 'today', label: 'Hoje' },
                                                         { id: 'last7days', label: '7 Dias' },
@@ -1640,9 +1653,9 @@ const FinancePage: React.FC<FinancePageProps> = ({
                     )}
 
                     <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden">
-                        <div className="p-6 border-b flex justify-between items-center bg-slate-50/50">
-                            <h3 className="font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2">
-                                <TrendingUp size={20} className="text-blue-600" /> Top 15 Produtos
+                        <div className="p-3 sm:p-6 border-b flex justify-between items-center bg-slate-50/50 flex-wrap gap-2">
+                            <h3 className="font-black text-slate-800 uppercase tracking-tighter flex items-center gap-2 text-sm sm:text-base">
+                                <TrendingUp size={18} className="text-blue-600" /> Top 15 Produtos
                             </h3>
                             <div className="flex bg-slate-200 p-1 rounded-xl">
                                 <button onClick={() => setRankingMetric('revenue')} className={`px-4 py-1.5 text-[9px] font-black uppercase rounded-lg transition-all ${rankingMetric === 'revenue' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>Por Receita</button>

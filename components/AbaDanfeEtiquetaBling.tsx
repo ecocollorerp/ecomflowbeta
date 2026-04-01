@@ -73,7 +73,7 @@ export const AbaDanfeEtiquetaBling: React.FC<AbaDanfeEtiquetaBlingProps> = ({
       {abaAtiva === 'danfe-etiqueta' && (
         <>
           {/* Header */}
-          <div className="bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-purple-200 rounded-lg p-6">
+          <div className="bg-gradient-to-r from-purple-50 to-blue-50 border-2 border-purple-200 rounded-lg p-3 sm:p-6">
             <div className="flex items-start gap-4">
               <FileText size={32} className="text-purple-600 flex-shrink-0" />
               <div>
@@ -125,7 +125,7 @@ export const AbaDanfeEtiquetaBling: React.FC<AbaDanfeEtiquetaBlingProps> = ({
               {/* Shopee */}
               <button
                 onClick={() => handleAbrirModal('SHOPEE')}
-                className="bg-gradient-to-br from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-lg p-6 shadow-lg transition transform hover:scale-105"
+                className="bg-gradient-to-br from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-lg p-3 sm:p-6 shadow-lg transition transform hover:scale-105"
               >
                 <div className="flex items-center gap-3 mb-3">
                   <Printer size={28} />
@@ -139,7 +139,7 @@ export const AbaDanfeEtiquetaBling: React.FC<AbaDanfeEtiquetaBlingProps> = ({
               {/* Mercado Livre */}
               <button
                 onClick={() => handleAbrirModal('MERCADO_LIVRE')}
-                className="bg-gradient-to-br from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-white rounded-lg p-6 shadow-lg transition transform hover:scale-105"
+                className="bg-gradient-to-br from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-white rounded-lg p-3 sm:p-6 shadow-lg transition transform hover:scale-105"
               >
                 <div className="flex items-center gap-3 mb-3">
                   <Printer size={28} />

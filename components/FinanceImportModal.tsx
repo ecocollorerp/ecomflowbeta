@@ -1,8 +1,8 @@
 
 import React, { useState } from 'react';
-import { X, FileUp, Loader2, CheckCircle2, Settings, AlertTriangle, Layers, Database, Globe, Calendar, Save, Plus, Power } from 'lucide-react';
+import { X, FileUp, Loader2, CheckCircle2, Settings, AlertTriangle, Layers, Database, Globe, Calendar, Save, Plus, Power, Bug, ChevronDown, ChevronUp } from 'lucide-react';
 import { GeneralSettings, OrderItem, ProcessedData, Canal, CustomStore } from '../types';
-import { parseExcelFile, extractHeadersAndData } from '../lib/parser';
+import { parseExcelFile, extractHeadersAndData, getParserInternals } from '../lib/parser';
 import { parseSalesNFeXML, extractXmlsFromZip } from '../lib/xmlParser';
 
 interface FinanceImportModalProps {
@@ -51,6 +51,35 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
     const [importToFiscal, setImportToFiscal] = useState(false);
     const [includeErrorOrders, setIncludeErrorOrders] = useState(true);
 
+    // Diagnostic state
+    const [diagnosticData, setDiagnosticData] = useState<{
+        canalDetectado: string;
+        headerRowIndex: number;
+        totalRows: number;
+        sheetKeys: string[];
+        headerKeyMap: Record<string, string | undefined>;
+        sampleRow: any;
+        unmappedFields: string[];
+        mappingToUse: any;
+    } | null>(null);
+    const [showDiagnostic, setShowDiagnostic] = useState(false);
+    const [importDiagnostic, setImportDiagnostic] = useState<{
+        totalRowsSheet: number;
+        totalParsed: number;
+        filteredByDate: number;
+        filteredByStatus: number;
+        skippedNoIdSku: number;
+        skippedQty: number;
+        duplicates: number;
+        created: number;
+        updated: number;
+        zeroValues: number;
+        canalDetectado: string;
+        headerRow: number;
+        columnsMatched: string[];
+        columnsMissing: string[];
+    } | null>(null);
+
     const resetState = () => {
         setFiles([]);
         setIsProcessing(false);
@@ -69,6 +98,9 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
         setShowAddChannel(false);
         setImportToFiscal(false);
         setIncludeErrorOrders(true);
+        setDiagnosticData(null);
+        setShowDiagnostic(false);
+        setImportDiagnostic(null);
         setColumnMapping({ priceGross: '', platformFees: [], shippingFee: '', shippingPaidByCustomer: '', priceNet: '', statusColumn: '', acceptedStatusValues: '', importStartRow: undefined, sumMultipleLines: false });
     };
 
@@ -163,6 +195,31 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                     const { headers, sheetData: data } = extractHeadersAndData(buffer, columnMapping.importStartRow);
                     setAvailableHeaders(headers);
                     setSheetData(data);
+
+                    // Run diagnostics
+                    try {
+                        const forcedCanal = (selectedChannel !== 'AUTO' && ['ML', 'SHOPEE', 'SITE'].includes(selectedChannel))
+                            ? selectedChannel as Canal : undefined;
+                        const diag = getParserInternals(buffer, generalSettings, forcedCanal || 'AUTO', {
+                            columnOverrides: {}
+                        });
+                        const unmapped = Object.entries(diag.headerKeyMap || {})
+                            .filter(([, v]) => !v)
+                            .map(([k]) => k);
+                        setDiagnosticData({
+                            canalDetectado: diag.canalDetectado || 'N/A',
+                            headerRowIndex: diag.headerRowIndex ?? -1,
+                            totalRows: diag.jsonDataLength || 0,
+                            sheetKeys: diag.sheetKeys || [],
+                            headerKeyMap: diag.headerKeyMap || {},
+                            sampleRow: diag.sampleRow || null,
+                            unmappedFields: unmapped,
+                            mappingToUse: diag.mappingToUse || null
+                        });
+                    } catch (diagErr) {
+                        console.warn('Diagnostic failed:', diagErr);
+                        setDiagnosticData(null);
+                    }
                 } catch (err) {
                     console.error("Erro extraindo headers:", err);
                 }
@@ -249,6 +306,8 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                 const start = filterStartDate ? new Date(filterStartDate + "T00:00:00") : null;
                 const end = filterEndDate ? new Date(filterEndDate + "T23:59:59") : null;
 
+                const beforeDateFilter = ordersToProcess.length;
+                const noDateCount = ordersToProcess.filter(o => !o.data).length;
                 ordersToProcess = ordersToProcess.filter(order => {
                     if (!order.data) return false;
                     const orderDate = new Date(order.data + "T12:00:00");
@@ -256,10 +315,27 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                     if (end && orderDate > end) return false;
                     return true;
                 });
+                const filteredByDate = beforeDateFilter - ordersToProcess.length;
+                if (filteredByDate > 0) {
+                    console.warn(`IMPORT-DIAG: ${filteredByDate} pedidos filtrados por data (${noDateCount} sem data, ${filteredByDate - noDateCount} fora do intervalo ${filterStartDate || '*'} ~ ${filterEndDate || '*'})`);
+                }
             }
 
             if (ordersToProcess.length === 0) {
-                throw new Error("Nenhum pedido encontrado no período selecionado.");
+                // Build detailed diagnostic message
+                const diagParts: string[] = ['Nenhum pedido encontrado.'];
+                if (diagnosticData) {
+                    diagParts.push(`Canal detectado: ${diagnosticData.canalDetectado}`);
+                    diagParts.push(`Linha cabeçalho: ${diagnosticData.headerRowIndex}`);
+                    diagParts.push(`Total linhas na planilha: ${diagnosticData.totalRows}`);
+                    if (diagnosticData.unmappedFields.length > 0) {
+                        diagParts.push(`Colunas NÃO mapeadas: ${diagnosticData.unmappedFields.join(', ')}`);
+                    }
+                }
+                if (filterStartDate || filterEndDate) {
+                    diagParts.push(`Filtro data: ${filterStartDate || '*'} até ${filterEndDate || '*'}`);
+                }
+                throw new Error(diagParts.join('\n'));
             }
 
             // Tratar pedidos com erro de SOB_ENCOMENDA
@@ -345,13 +421,35 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
 
             if (finalOrdersPayload.length > 0) {
                 await onLaunchOrders(finalOrdersPayload);
-                // Se não há erros relevantes, fecha automaticamente para mostrar dados na tela
-                const hasRelevantErrors = importErrors.filter(e => !e.reason.includes('possível devolução')).length > 0;
-                if (!hasRelevantErrors) {
-                    handleClose();
-                } else {
-                    setResultSummary({ updated: updatedCount, created: createdCount, errors: importErrors });
-                }
+
+                // Build import diagnostic
+                const columnsMatched = diagnosticData
+                    ? Object.entries(diagnosticData.headerKeyMap).filter(([, v]) => !!v).map(([k, v]) => `${k}→${v}`)
+                    : [];
+                const columnsMissing = diagnosticData
+                    ? diagnosticData.unmappedFields
+                    : [];
+                const zeroValueCount = importErrors.filter(e => e.reason.includes('zerado')).length;
+
+                setImportDiagnostic({
+                    totalRowsSheet: diagnosticData?.totalRows || 0,
+                    totalParsed: ordersToProcess.length + (ordersToProcess.length === 0 ? 0 : 0),
+                    filteredByDate: 0, // already filtered above
+                    filteredByStatus: 0,
+                    skippedNoIdSku: 0,
+                    skippedQty: 0,
+                    duplicates: updatedCount,
+                    created: createdCount,
+                    updated: updatedCount,
+                    zeroValues: zeroValueCount,
+                    canalDetectado: diagnosticData?.canalDetectado || selectedChannel,
+                    headerRow: diagnosticData?.headerRowIndex ?? -1,
+                    columnsMatched,
+                    columnsMissing
+                });
+
+                // Always show result summary — never auto-close
+                setResultSummary({ updated: updatedCount, created: createdCount, errors: importErrors });
             } else {
                 setError("Nenhum dado válido encontrado para processar.");
             }
@@ -657,7 +755,83 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                             </div>
                         )}
 
-                        {error && <div className="p-3 bg-red-50 text-red-700 rounded-lg text-xs font-bold border border-red-100 flex items-center gap-2"><AlertTriangle size={14} /> {error}</div>}
+                        {/* Diagnostic Panel */}
+                        {isExcel && diagnosticData && (
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowDiagnostic(!showDiagnostic)}
+                                    className="w-full flex items-center justify-between p-3 text-xs font-black text-slate-600 uppercase tracking-wide hover:bg-slate-100 transition-all"
+                                >
+                                    <span className="flex items-center gap-1.5"><Bug size={14} className="text-purple-500" /> Diagnóstico do Parser</span>
+                                    {showDiagnostic ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                </button>
+                                {showDiagnostic && (
+                                    <div className="px-3 pb-3 space-y-2 text-[11px] text-slate-600 border-t border-slate-200 pt-2">
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div className="p-2 bg-white rounded-lg border border-slate-100">
+                                                <span className="font-black text-slate-400 text-[9px] uppercase block">Canal</span>
+                                                <span className={`font-black ${diagnosticData.canalDetectado === 'N/A' ? 'text-red-500' : 'text-emerald-600'}`}>{diagnosticData.canalDetectado}</span>
+                                            </div>
+                                            <div className="p-2 bg-white rounded-lg border border-slate-100">
+                                                <span className="font-black text-slate-400 text-[9px] uppercase block">Linha Cabeçalho</span>
+                                                <span className={`font-black ${diagnosticData.headerRowIndex < 0 ? 'text-red-500' : 'text-blue-600'}`}>{diagnosticData.headerRowIndex < 0 ? 'NÃO ENCONTRADO' : diagnosticData.headerRowIndex}</span>
+                                            </div>
+                                            <div className="p-2 bg-white rounded-lg border border-slate-100">
+                                                <span className="font-black text-slate-400 text-[9px] uppercase block">Total Linhas</span>
+                                                <span className="font-black text-slate-700">{diagnosticData.totalRows}</span>
+                                            </div>
+                                            <div className="p-2 bg-white rounded-lg border border-slate-100">
+                                                <span className="font-black text-slate-400 text-[9px] uppercase block">Colunas Planilha</span>
+                                                <span className="font-black text-slate-700">{diagnosticData.sheetKeys.length}</span>
+                                            </div>
+                                        </div>
+
+                                        <div className="p-2 bg-white rounded-lg border border-slate-100">
+                                            <span className="font-black text-slate-400 text-[9px] uppercase block mb-1">Mapeamento de Colunas</span>
+                                            <div className="space-y-0.5">
+                                                {Object.entries(diagnosticData.headerKeyMap).map(([field, col]) => (
+                                                    <div key={field} className="flex items-center gap-1">
+                                                        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${col ? 'bg-emerald-400' : 'bg-red-400'}`} />
+                                                        <span className="font-bold text-slate-500">{field}:</span>
+                                                        <span className={`font-bold ${col ? 'text-emerald-700' : 'text-red-500'}`}>{col || 'NÃO ENCONTRADO'}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {diagnosticData.unmappedFields.length > 0 && (
+                                            <div className="p-2 bg-red-50 rounded-lg border border-red-200">
+                                                <span className="font-black text-red-500 text-[9px] uppercase block mb-1">Campos sem correspondência</span>
+                                                <span className="font-bold text-red-600">{diagnosticData.unmappedFields.join(', ')}</span>
+                                            </div>
+                                        )}
+
+                                        {diagnosticData.sampleRow && (
+                                            <div className="p-2 bg-white rounded-lg border border-slate-100">
+                                                <span className="font-black text-slate-400 text-[9px] uppercase block mb-1">Amostra (1ª linha)</span>
+                                                <div className="max-h-24 overflow-y-auto text-[10px] font-mono text-slate-500 break-all">
+                                                    {Object.entries(diagnosticData.sampleRow).slice(0, 12).map(([k, v]) => (
+                                                        <div key={k}><span className="text-slate-400">{k}:</span> <span className="text-slate-700">{String(v ?? '')}</span></div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <div className="p-2 bg-white rounded-lg border border-slate-100">
+                                            <span className="font-black text-slate-400 text-[9px] uppercase block mb-1">Cabeçalhos da Planilha</span>
+                                            <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
+                                                {diagnosticData.sheetKeys.map((k, i) => (
+                                                    <span key={i} className="px-1.5 py-0.5 bg-slate-100 rounded text-[9px] font-bold text-slate-500">{k}</span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {error && <div className="p-3 bg-red-50 text-red-700 rounded-lg text-xs font-bold border border-red-100 flex items-start gap-2"><AlertTriangle size={14} className="mt-0.5 flex-shrink-0" /> <span className="whitespace-pre-line">{error}</span></div>}
 
                         <button onClick={processFile} disabled={files.length === 0 || isProcessing} className="w-full py-4 bg-blue-600 text-white rounded-xl font-black uppercase text-sm tracking-widest hover:bg-blue-700 disabled:opacity-50 flex justify-center items-center gap-2 shadow-xl">
                             {isProcessing ? <Loader2 className="animate-spin" /> : <CheckCircle2 size={18} />}
@@ -672,6 +846,60 @@ const FinanceImportModal: React.FC<FinanceImportModalProps> = ({ isOpen, onClose
                             <div className="p-4 bg-blue-50 rounded-xl"><p className="text-3xl font-black text-blue-600">{resultSummary.updated}</p><p className="text-[10px] font-bold uppercase text-blue-400">Atualizados</p></div>
                             <div className="p-4 bg-green-50 rounded-xl"><p className="text-3xl font-black text-green-600">{resultSummary.created}</p><p className="text-[10px] font-bold uppercase text-green-400">Novos</p></div>
                         </div>
+
+                        {/* Import Diagnostic Summary */}
+                        {importDiagnostic && (
+                            <div className="mb-4 text-left">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowDiagnostic(!showDiagnostic)}
+                                    className="w-full flex items-center justify-between p-2 text-[10px] font-black text-purple-600 uppercase tracking-wide bg-purple-50 border border-purple-200 rounded-xl hover:bg-purple-100 transition-all mb-2"
+                                >
+                                    <span className="flex items-center gap-1"><Bug size={12} /> Detalhes do Parser</span>
+                                    {showDiagnostic ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                </button>
+                                {showDiagnostic && (
+                                    <div className="p-3 bg-purple-50 rounded-xl border border-purple-200 space-y-2 text-[10px]">
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <div className="p-1.5 bg-white rounded-lg text-center">
+                                                <span className="font-black text-slate-400 text-[8px] uppercase block">Canal</span>
+                                                <span className="font-black text-purple-600">{importDiagnostic.canalDetectado}</span>
+                                            </div>
+                                            <div className="p-1.5 bg-white rounded-lg text-center">
+                                                <span className="font-black text-slate-400 text-[8px] uppercase block">Cabeçalho</span>
+                                                <span className="font-black text-slate-700">Linha {importDiagnostic.headerRow}</span>
+                                            </div>
+                                            <div className="p-1.5 bg-white rounded-lg text-center">
+                                                <span className="font-black text-slate-400 text-[8px] uppercase block">Linhas</span>
+                                                <span className="font-black text-slate-700">{importDiagnostic.totalRowsSheet}</span>
+                                            </div>
+                                        </div>
+                                        {importDiagnostic.columnsMatched.length > 0 && (
+                                            <div className="p-2 bg-white rounded-lg">
+                                                <span className="font-black text-emerald-500 text-[8px] uppercase block mb-1">Colunas Mapeadas</span>
+                                                <div className="flex flex-wrap gap-1">
+                                                    {importDiagnostic.columnsMatched.map((c, i) => (
+                                                        <span key={i} className="px-1.5 py-0.5 bg-emerald-50 rounded text-[9px] font-bold text-emerald-700 border border-emerald-200">{c}</span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                        {importDiagnostic.columnsMissing.length > 0 && (
+                                            <div className="p-2 bg-red-50 rounded-lg border border-red-200">
+                                                <span className="font-black text-red-500 text-[8px] uppercase block mb-1">Colunas NÃO encontradas</span>
+                                                <span className="font-bold text-red-600">{importDiagnostic.columnsMissing.join(', ')}</span>
+                                            </div>
+                                        )}
+                                        {importDiagnostic.zeroValues > 0 && (
+                                            <div className="p-2 bg-amber-50 rounded-lg border border-amber-200">
+                                                <span className="font-black text-amber-600 text-[8px] uppercase block">{importDiagnostic.zeroValues} pedido(s) com valores financeiros zerados</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
                         {resultSummary.errors && resultSummary.errors.length > 0 && (
                             <div className="mb-4 text-left">
                                 <div className="flex items-center gap-2 mb-2">

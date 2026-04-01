@@ -118,7 +118,7 @@ const ComprasPage: React.FC<ComprasPageProps> = ({ shoppingList, onClearList, on
             </div>
 
             {/* ── KPI Cards ──────────────────────────────────────── */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                 {[
                     { label: 'Total Itens', value: stats.total, icon: Package, color: 'bg-slate-100 text-slate-700', iconColor: 'text-slate-500' },
                     { label: 'Pendentes',   value: stats.pending, icon: Clock, color: 'bg-amber-50 text-amber-700', iconColor: 'text-amber-500' },
@@ -284,7 +284,7 @@ const ComprasPage: React.FC<ComprasPageProps> = ({ shoppingList, onClearList, on
 
                     {/* Items Table */}
                     {manualList.length > 0 ? (
-                        <div className="max-h-[40vh] overflow-y-auto custom-scrollbar">
+                        <div className="max-h-[40vh] overflow-y-auto overflow-x-auto custom-scrollbar">
                             <table className="min-w-full text-sm">
                                 <thead className="bg-slate-900 text-white sticky top-0 z-10">
                                     <tr>

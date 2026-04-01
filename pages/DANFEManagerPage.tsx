@@ -440,7 +440,7 @@ export const DANFEManagerPage: React.FC<DANFEManagerPageProps> = ({ addToast }) 
                 <FileText className="text-blue-600" size={32} />
               </div>
               <div>
-                <h1 className="text-4xl font-black text-gray-900 uppercase">DANFE Manager</h1>
+                <h1 className="text-2xl sm:text-3xl md:text-4xl font-black text-gray-900 uppercase">DANFE Manager</h1>
                 <p className="text-gray-600 font-bold">Documentos Auxiliares de Nota Fiscal Eletrônica</p>
               </div>
             </div>

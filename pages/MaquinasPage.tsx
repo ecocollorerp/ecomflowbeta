@@ -85,7 +85,7 @@ export const MaquinasPage: React.FC<MaquinasPageProps> = ({ stockItems, weighing
             </div>
 
             {/* ── KPI Cards ──────────────────────────────────────── */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                 {[
                     { label: `Total ${sectorDisplayName}`, value: `${summary.total.toFixed(1)} kg`, icon: Weight, color: 'text-violet-700', iconColor: 'text-violet-500', bg: 'bg-violet-50' },
                     { label: 'Lotes', value: summary.lotes, icon: TrendingUp, color: 'text-blue-700', iconColor: 'text-blue-500', bg: 'bg-blue-50' },

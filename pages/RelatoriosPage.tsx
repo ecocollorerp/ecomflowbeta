@@ -62,6 +62,7 @@ const getPeriodDates = (period: ReportPeriod) => {
 // --- Report Table Components ---
 
 const ReportTable: React.FC<{ headers: string[], children: React.ReactNode }> = ({ headers, children }) => (
+    <div className="overflow-x-auto -mx-1 px-1">
     <table className="min-w-full bg-white dark:bg-gray-800 text-sm">
         <thead className="bg-gray-50 dark:bg-gray-700">
             <tr>
@@ -74,6 +75,7 @@ const ReportTable: React.FC<{ headers: string[], children: React.ReactNode }> = 
             {children}
         </tbody>
     </table>
+    </div>
 );
 
 const NoData: React.FC<{ isCard?: boolean }> = ({ isCard = false }) => {
@@ -415,13 +417,13 @@ const FaturamentoReport: React.FC<{ data: any }> = ({ data }) => {
     if (!data) return <NoData isCard />;
     return (
         <div className="space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="p-4 bg-blue-50 rounded-xl border border-blue-100"><p className="text-[10px] font-black uppercase text-blue-500">Faturamento Bruto</p><p className="text-xl font-black text-blue-700">{fmt(data.gross)}</p></div>
                 <div className="p-4 bg-red-50 rounded-xl border border-red-100"><p className="text-[10px] font-black uppercase text-red-500">Taxas Marketplace</p><p className="text-xl font-black text-red-700">-{fmt(data.fees)}</p></div>
                 <div className="p-4 bg-orange-50 rounded-xl border border-orange-100"><p className="text-[10px] font-black uppercase text-orange-500">Frete</p><p className="text-xl font-black text-orange-700">-{fmt(data.shipping)}</p></div>
                 <div className="p-4 bg-emerald-50 rounded-xl border border-emerald-100"><p className="text-[10px] font-black uppercase text-emerald-500">Líquido</p><p className="text-xl font-black text-emerald-700">{fmt(data.net)}</p></div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="p-3 bg-gray-50 rounded-lg border"><p className="text-[10px] font-bold text-gray-400 uppercase">Total Pedidos</p><p className="text-lg font-black">{data.totalPedidos}</p></div>
                 <div className="p-3 bg-gray-50 rounded-lg border"><p className="text-[10px] font-bold text-gray-400 uppercase">Total Itens</p><p className="text-lg font-black">{data.totalItens}</p></div>
                 <div className="p-3 bg-gray-50 rounded-lg border"><p className="text-[10px] font-bold text-gray-400 uppercase">Ticket Médio</p><p className="text-lg font-black">{fmt(data.ticketMedio)}</p></div>

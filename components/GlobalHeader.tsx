@@ -42,20 +42,23 @@ const getPageTitle = (page: string): string => {
     return titles[page] || 'ERP Fábrica Pro';
 };
 
-const NoticeBanner: React.FC<{ notice: AdminNotice; onDismiss: (id: string) => void; canDismiss: boolean }> = ({ notice, onDismiss, canDismiss }) => {
+const NoticeBanner: React.FC<{ notice: AdminNotice; onDismiss: (id: string) => void; canDismiss: boolean; onClick?: () => void }> = ({ notice, onDismiss, canDismiss, onClick }) => {
     const levelClasses = {
         green: 'bg-green-600 text-white',
         yellow: 'bg-yellow-500 text-black',
         red: 'bg-red-600 text-white',
     };
     return (
-        <div className={`relative w-full p-1 text-sm font-semibold overflow-hidden whitespace-nowrap ${levelClasses[notice.level]}`}>
+        <div 
+            className={`relative w-full p-1 text-sm font-semibold overflow-hidden whitespace-nowrap ${levelClasses[notice.level]} ${onClick ? 'cursor-pointer hover:opacity-90' : ''}`}
+            onClick={onClick}
+        >
             <div className={`inline-block animate-marquee ${canDismiss ? 'pr-10' : ''}`}>
-                {notice.text} - (Aviso de {notice.createdBy})
+                {notice.text}{notice.createdBy ? ` - (Aviso de ${notice.createdBy})` : ''}
             </div>
             {canDismiss && (
                 <button
-                    onClick={() => onDismiss(notice.id)}
+                    onClick={(e) => { e.stopPropagation(); onDismiss(notice.id); }}
                     className="absolute top-1/2 right-2 transform -translate-y-1/2 p-1 rounded-full hover:bg-black/20"
                     aria-label="Dispensar aviso"
                 >
@@ -144,15 +147,61 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({ currentPage, onMenuClick, l
             )}
         </div>
       )}
-      {bannerNotice && <NoticeBanner notice={bannerNotice} onDismiss={onDismissNotice} canDismiss={canDismissBanner} />}
-      <div className={headerClasses}>
-        <div className="flex items-center gap-4">
-          <button onClick={onMenuClick} className="p-2 -ml-2 md:hidden">
+      {bannerNotice && <NoticeBanner notice={bannerNotice} onDismiss={onDismissNotice} canDismiss={canDismissBanner} onClick={() => {
+        // If it's the sectors warning, navigate to setores
+        if (bannerNotice.id === 'warn_sectors') {
+          setCurrentPage('setores');
+        }
+      }} />}
+      <div className={`flex items-center justify-between px-4 py-2 border-b border-[var(--color-border)] text-[var(--color-text-primary)] relative z-[100] bg-[var(--color-surface)]`}>
+        {/* Left: mobile menu + breadcrumb/nav */}
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <button onClick={onMenuClick} className="p-2 -ml-2 md:hidden flex-shrink-0">
               <Menu size={24} />
           </button>
+          {/* Top Navigation Menu inline — só mostra no modo topnav */}
+          {navMode !== 'sidebar' && (
+            <nav className="hidden md:flex items-center gap-1 flex-wrap">
+              <button
+                onClick={() => setCurrentPage('dashboard')}
+                className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-1.5 ${currentPage === 'dashboard' ? 'bg-blue-100 text-blue-700' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]'}`}
+              >
+                <LayoutDashboard size={14} /> Dashboard
+              </button>
+              {menuSections.map(section => {
+                const visibleItems = section.items.filter(item => canShow(item.page));
+                if (visibleItems.length === 0) return null;
+                return (
+                  <div key={section.label} className="relative group z-[110]">
+                    <button className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-1 ${visibleItems.some(i => currentPage === i.page) ? 'bg-blue-100 text-blue-700' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]'}`}>
+                      {section.label} <ChevronDown size={10} className="opacity-50" />
+                    </button>
+                    <div className="absolute top-full left-0 mt-0.5 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 min-w-[180px] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-[120]">
+                      {visibleItems.map(item => (
+                        <button
+                          key={item.page}
+                          onClick={() => setCurrentPage(item.page)}
+                          className={`w-full text-left px-4 py-2 text-xs font-bold flex items-center gap-2 transition-all ${currentPage === item.page ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'}`}
+                        >
+                          {item.icon} {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </nav>
+          )}
+          {/* Sidebar mode: show page title as breadcrumb with route */}
+          {navMode === 'sidebar' && (
+            <span className="hidden md:block text-xs font-bold text-[var(--color-text-secondary)] truncate">
+              {getPageTitle(currentPage)}
+            </span>
+          )}
         </div>
         
-        <div className="flex items-center gap-2">
+        {/* Right: QR toggle + Notifications (always in this bar) */}
+        <div className="flex items-center gap-2 flex-shrink-0">
           <button
               onClick={() => onToggleAutoBipagem(!isAutoBipagemActive)}
               className={`relative p-2 rounded-full transition-all ${
@@ -167,38 +216,6 @@ const GlobalHeader: React.FC<GlobalHeaderProps> = ({ currentPage, onMenuClick, l
           <NotificationPanel lowStockItems={lowStockItems} onNavigate={setCurrentPage} />
         </div>
       </div>
-
-      {/* Top Navigation Menu with hover dropdowns — só mostra no modo topnav */}
-      {navMode !== 'sidebar' && <nav className="hidden md:flex items-center gap-1 px-4 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface)] flex-wrap relative z-[100]">
-        <button
-          onClick={() => setCurrentPage('dashboard')}
-          className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-1.5 ${currentPage === 'dashboard' ? 'bg-blue-100 text-blue-700' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]'}`}
-        >
-          <LayoutDashboard size={14} /> Dashboard
-        </button>
-        {menuSections.map(section => {
-          const visibleItems = section.items.filter(item => canShow(item.page));
-          if (visibleItems.length === 0) return null;
-          return (
-            <div key={section.label} className="relative group z-[110]">
-              <button className={`px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all flex items-center gap-1 ${visibleItems.some(i => currentPage === i.page) ? 'bg-blue-100 text-blue-700' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-secondary)]'}`}>
-                {section.label} <ChevronDown size={10} className="opacity-50" />
-              </button>
-              <div className="absolute top-full left-0 mt-0.5 bg-white border border-slate-200 rounded-xl shadow-xl py-1.5 min-w-[180px] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-[120]">
-                {visibleItems.map(item => (
-                  <button
-                    key={item.page}
-                    onClick={() => setCurrentPage(item.page)}
-                    className={`w-full text-left px-4 py-2 text-xs font-bold flex items-center gap-2 transition-all ${currentPage === item.page ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-800'}`}
-                  >
-                    {item.icon} {item.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </nav>}
     </header>
   );
 };

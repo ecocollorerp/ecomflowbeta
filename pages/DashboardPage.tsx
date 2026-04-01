@@ -352,11 +352,11 @@ const DashboardPage: React.FC<DashboardPageProps> = (props) => {
                     <StatCardV2 title="Bipados" icon={<CheckCheck size={20} />} views={[{ id: 'total', label: 'Bipados', value: String(scanHistory.filter(s => s.status === 'OK' || s.synced).length), subValue: 'Sucessos hoje', color: 'blue' }]} activeIndex={0} onIndicatorClick={() => { }} />
                     <div className="bg-white p-5 rounded-2xl border shadow-sm flex flex-col justify-between">
                         <p className="text-gray-500 font-bold text-xs uppercase">Estoque Baixo</p>
-                        <div className="flex justify-between items-end mt-2"><p className="text-3xl font-black text-red-600">{lowStockCount}</p><div className="p-2 bg-red-100 text-red-600 rounded-lg"><Archive size={20} /></div></div>
+                        <div className="flex justify-between items-end mt-2"><p className="text-xl sm:text-3xl font-black text-red-600">{lowStockCount}</p><div className="p-2 bg-red-100 text-red-600 rounded-lg"><Archive size={20} /></div></div>
                     </div>
                     <div className="bg-white p-5 rounded-2xl border shadow-sm flex flex-col justify-between">
                         <p className="text-gray-500 font-bold text-xs uppercase">Equipe</p>
-                        <div className="flex justify-between items-end mt-2"><p className="text-3xl font-black text-slate-800">{users.length}</p><div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><Users size={20} /></div></div>
+                        <div className="flex justify-between items-end mt-2"><p className="text-xl sm:text-3xl font-black text-slate-800">{users.length}</p><div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><Users size={20} /></div></div>
                     </div>
                 </div>
 

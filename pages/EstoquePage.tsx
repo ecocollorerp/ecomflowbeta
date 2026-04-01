@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { StockItem, StockMovement, ProdutoCombinado, WeighingBatch, WeighingType, StockMovementOrigin, StockItemKind, User, GeneralSettings, ParsedNfeItem, SkuLink, StockPackGroup, CategoryConfig } from '../types';
 import { skuMatchesTerm, buildParentMap, skuCodeMatches } from '../utils/skuHelpers';
-import { Package, Factory, History, Search, PlusCircle, Weight, Cog, SlidersHorizontal, Edit3, Trash2, ChevronDown, ChevronRight, FileUp, ArrowLeft, Settings, Box, Plus, Save, X, Link, ArrowRight, Loader2, ChevronUp, AlertTriangle, ArrowDownCircle, ArrowUpCircle, Layers, TrendingUp, TrendingDown, BarChart2, Filter, Calendar, RefreshCw, FileText, Calculator } from 'lucide-react';
+import { Package, Factory, History, Search, PlusCircle, Weight, Cog, SlidersHorizontal, Edit3, Trash2, ChevronDown, ChevronRight, ChevronLeft, FileUp, ArrowLeft, Settings, Box, Plus, Save, X, Link, ArrowRight, Loader2, ChevronUp, AlertTriangle, ArrowDownCircle, ArrowUpCircle, Layers, TrendingUp, TrendingDown, BarChart2, Filter, Calendar, RefreshCw, FileText, Calculator } from 'lucide-react';
 import { MaquinasPage } from './MaquinasPage';
 import { dbClient } from '../lib/supabaseClient';
 import jsPDF from 'jspdf';
@@ -346,6 +346,12 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
     const [viewModePacks, setViewModePacks] = useState<'list' | 'grid'>('grid');
     const [viewModeHistoryPacks, setViewModeHistoryPacks] = useState<'card' | 'list'>('card');
     const [selectedPacks, setSelectedPacks] = useState<string[]>([]);
+    const [packSearchTerm, setPackSearchTerm] = useState('');
+    const [packFilterType, setPackFilterType] = useState<'all' | 'volatil' | 'tradicional'>('all');
+    const [packPage, setPackPage] = useState(1);
+    const [historyPage, setHistoryPage] = useState(1);
+    const PACKS_PER_PAGE = 12;
+    const HISTORY_PER_PAGE = 15;
 
     const [packGroupColumnsExist, setPackGroupColumnsExist] = useState(false);
 
@@ -409,6 +415,13 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
         }));
 
         await dbClient.from('stock_movements').insert(movementsToInsert);
+
+        // 3. Atualizar saldo individual de cada item no estoque
+        for (const entry of entries) {
+            if (entry.delta !== 0) {
+                await onStockAdjustment(entry.skuCode, entry.delta, ref || (entry.delta > 0 ? 'Entrada pacote pronto' : 'Saída pacote pronto'));
+            }
+        }
 
         await loadPackGroups();
     };
@@ -997,7 +1010,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                 return (
                     <div className="space-y-6">
                         {/* Relatório de Produtos Prontos */}
-                        <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col md:flex-row gap-6">
+                        <div className="bg-white p-3 sm:p-6 rounded-2xl border border-gray-100 shadow-sm flex flex-col md:flex-row gap-4 sm:gap-6">
                             <div className="flex-1">
                                 <h3 className="text-lg font-black text-slate-800 uppercase tracking-tighter mb-4 flex items-center gap-2">
                                     <Box className="text-blue-500" size={20} /> Relatório de Máquinas / Pronta Entrega
@@ -1080,47 +1093,80 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                         </div>
 
                         {/* Controles de Visualização e Filtro */}
-                        <div className="flex justify-between items-center bg-white p-4 rounded-xl border mb-4">
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={() => setViewModePacks('grid')}
-                                    className={`p-2 rounded-lg transition-all ${viewModePacks === 'grid' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}
+                        <div className="flex flex-col sm:flex-row gap-3 bg-white p-4 rounded-xl border mb-4">
+                            <div className="flex items-center gap-2 flex-1">
+                                <div className="relative flex-1 max-w-xs">
+                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <input
+                                        type="text"
+                                        value={packSearchTerm}
+                                        onChange={e => { setPackSearchTerm(e.target.value); setPackPage(1); }}
+                                        placeholder="Buscar pacote..."
+                                        className="w-full pl-9 pr-3 py-2 text-xs border rounded-lg focus:ring-2 focus:ring-blue-200 focus:border-blue-400 outline-none"
+                                    />
+                                </div>
+                                <select
+                                    value={packFilterType}
+                                    onChange={e => { setPackFilterType(e.target.value as any); setPackPage(1); }}
+                                    className="text-xs border rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-200 outline-none"
                                 >
-                                    <Layers size={18} />
-                                </button>
-                                <button
-                                    onClick={() => setViewModePacks('list')}
-                                    className={`p-2 rounded-lg transition-all ${viewModePacks === 'list' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}
-                                >
-                                    <FileText size={18} />
-                                </button>
-                            </div>
-
-                            {selectedPacks.length > 0 && (
-                                <div className="flex items-center gap-3">
-                                    <span className="text-xs font-bold text-gray-500 uppercase">{selectedPacks.length} Selecionados</span>
+                                    <option value="all">Todos</option>
+                                    <option value="volatil">⚡ Volátil</option>
+                                    <option value="tradicional">📊 Tradicional</option>
+                                </select>
+                                <div className="flex gap-1">
                                     <button
-                                        onClick={() => setSelectedPacks([])}
-                                        className="text-xs font-bold text-red-500 uppercase hover:underline"
+                                        onClick={() => setViewModePacks('grid')}
+                                        className={`p-2 rounded-lg transition-all ${viewModePacks === 'grid' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}
                                     >
-                                        Limpar
+                                        <Layers size={18} />
+                                    </button>
+                                    <button
+                                        onClick={() => setViewModePacks('list')}
+                                        className={`p-2 rounded-lg transition-all ${viewModePacks === 'list' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}
+                                    >
+                                        <FileText size={18} />
                                     </button>
                                 </div>
-                            )}
+                            </div>
 
-                            <div className="flex gap-2">
-                                <button onClick={generateProdutosProntosPDF} className="flex items-center text-xs font-black bg-blue-600 text-white px-4 py-2.5 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 uppercase tracking-widest">
-                                    <FileText size={16} className="mr-2" /> Gerar PDF
+                            <div className="flex items-center gap-2 flex-wrap">
+                                {selectedPacks.length > 0 && (
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs font-bold text-gray-500 uppercase">{selectedPacks.length} Selecionados</span>
+                                        <button
+                                            onClick={() => setSelectedPacks([])}
+                                            className="text-xs font-bold text-red-500 uppercase hover:underline"
+                                        >
+                                            Limpar
+                                        </button>
+                                    </div>
+                                )}
+                                <button onClick={generateProdutosProntosPDF} className="flex items-center text-xs font-black bg-blue-600 text-white px-3 py-2 rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-100 uppercase tracking-widest">
+                                    <FileText size={16} className="mr-1.5" /> PDF
                                 </button>
-                                <button onClick={() => setModalState(prev => ({ ...prev, updatePacksFromSheet: true }))} className="flex items-center text-xs font-black bg-emerald-600 text-white px-4 py-2.5 rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 uppercase tracking-widest">
-                                    <FileUp size={16} className="mr-2" /> Importar via Excel
+                                <button onClick={() => setModalState(prev => ({ ...prev, updatePacksFromSheet: true }))} className="flex items-center text-xs font-black bg-emerald-600 text-white px-3 py-2 rounded-xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 uppercase tracking-widest">
+                                    <FileUp size={16} className="mr-1.5" /> Excel
                                 </button>
                             </div>
                         </div>
 
+                        {/* Indicador de resultados filtrados */}
+                        {(() => {
+                            const filtered = packGroups
+                                .filter(g => !packSearchTerm || g.name.toLowerCase().includes(packSearchTerm.toLowerCase()) || g.barcode?.toLowerCase().includes(packSearchTerm.toLowerCase()) || g.item_codes.some(c => c.toLowerCase().includes(packSearchTerm.toLowerCase())))
+                                .filter(g => packFilterType === 'all' || g.tipo === packFilterType);
+                            const totalPages = Math.max(1, Math.ceil(filtered.length / PACKS_PER_PAGE));
+                            const safePackPage = Math.min(packPage, totalPages);
+                            const paginated = filtered.slice((safePackPage - 1) * PACKS_PER_PAGE, safePackPage * PACKS_PER_PAGE);
+
+                            return (<>
+                                {(packSearchTerm || packFilterType !== 'all') && (
+                                    <p className="text-xs text-slate-400 mb-2">{filtered.length} de {packGroups.length} pacotes</p>
+                                )}
                         {viewModePacks === 'grid' ? (
-                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                                {packGroups.map(group => {
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 sm:gap-6">
+                                {paginated.map(group => {
                                     const isVolatil = group.tipo === 'volatil';
                                     const currentTotal = isVolatil
                                         ? (group.quantidade_volatil || 0)
@@ -1129,11 +1175,11 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                             .reduce((sum, i) => sum + i.current_qty, 0);
                                     const isBelowMin = currentTotal < group.min_pack_qty;
                                     return (
-                                        <div key={group.id} className={`bg-white p-6 rounded-2xl border-2 shadow-xl transition-all ${isBelowMin ? 'border-red-500 bg-red-50' : 'border-gray-100 hover:border-blue-300'}`}>
+                                        <div key={group.id} className={`bg-white p-3 sm:p-6 rounded-2xl border-2 shadow-xl transition-all ${isBelowMin ? 'border-red-500 bg-red-50' : 'border-gray-100 hover:border-blue-300'}`}>
                                             <div className="flex justify-between items-start mb-4">
                                                 <div className="flex-1">
                                                     <div className="flex items-center gap-2 mb-1">
-                                                        <h3 className="font-black text-slate-800 uppercase tracking-tighter text-lg">{group.name}</h3>
+                                                        <h3 className="font-black text-slate-800 uppercase tracking-tighter text-sm sm:text-lg">{group.name}</h3>
                                                         <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest ${isVolatil ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
                                                             }`}>
                                                             {isVolatil ? '⚡ Volátil' : '📊 Tradicional'}
@@ -1155,7 +1201,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                                 <div>
                                                     <p className="text-[10px] font-black text-gray-400 uppercase mb-1">{isVolatil ? 'Qtd. Manual' : 'Estoque Calculado'}</p>
                                                     <div className="flex items-baseline gap-1">
-                                                        <p className={`text-4xl font-black ${isBelowMin ? 'text-red-600' : 'text-emerald-600'}`}>{currentTotal.toFixed(0)}</p>
+                                                        <p className={`text-2xl sm:text-4xl font-black ${isBelowMin ? 'text-red-600' : 'text-emerald-600'}`}>{currentTotal.toFixed(0)}</p>
                                                         {(() => {
                                                             let size = 1;
                                                             const nameMatch = group.name.match(/(\d+)\s*un/i);
@@ -1171,7 +1217,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                                 </div>
                                                 <div className="text-right">
                                                     <p className="text-[10px] font-black text-gray-400 uppercase mb-1">Meta Mínima</p>
-                                                    <p className="text-xl font-black text-slate-600">{group.min_pack_qty} <span className="text-xs">UN</span></p>
+                                                    <p className="text-lg sm:text-xl font-black text-slate-600">{group.min_pack_qty} <span className="text-xs">UN</span></p>
                                                 </div>
                                             </div>
 
@@ -1286,8 +1332,8 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                 })}
                             </div>
                         ) : (
-                            <div className="bg-white border rounded-2xl overflow-hidden shadow-sm">
-                                <table className="w-full text-left">
+                            <div className="bg-white border rounded-2xl overflow-hidden shadow-sm overflow-x-auto">
+                                <table className="min-w-[700px] w-full text-left">
                                     <thead className="bg-slate-50 border-b">
                                         <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
                                             <th className="px-6 py-4 w-10">
@@ -1305,7 +1351,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100">
-                                        {packGroups.map(group => {
+                                        {paginated.map(group => {
                                             const isSelected = selectedPacks.includes(group.id);
                                             const isVolatil = group.tipo === 'volatil';
                                             const currentTotal = isVolatil
@@ -1409,6 +1455,48 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                 </table>
                             </div>
                         )}
+
+                        {/* Paginação dos Pacotes */}
+                        {totalPages > 1 && (
+                            <div className="flex items-center justify-center gap-2 mt-4">
+                                <button
+                                    onClick={() => setPackPage(p => Math.max(1, p - 1))}
+                                    disabled={safePackPage <= 1}
+                                    className="p-2 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                                >
+                                    <ChevronLeft size={16} />
+                                </button>
+                                {Array.from({ length: totalPages }, (_, i) => i + 1)
+                                    .filter(p => p === 1 || p === totalPages || Math.abs(p - safePackPage) <= 1)
+                                    .map((p, idx, arr) => (
+                                        <React.Fragment key={p}>
+                                            {idx > 0 && arr[idx - 1] !== p - 1 && (
+                                                <span className="text-slate-400 text-xs">...</span>
+                                            )}
+                                            <button
+                                                onClick={() => setPackPage(p)}
+                                                className={`w-8 h-8 text-xs font-bold rounded-lg transition-all ${safePackPage === p ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                            >
+                                                {p}
+                                            </button>
+                                        </React.Fragment>
+                                    ))
+                                }
+                                <button
+                                    onClick={() => setPackPage(p => Math.min(totalPages, p + 1))}
+                                    disabled={safePackPage >= totalPages}
+                                    className="p-2 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                                >
+                                    <ChevronRight size={16} />
+                                </button>
+                                <span className="text-xs text-slate-400 ml-2">
+                                    Página {safePackPage} de {totalPages}
+                                </span>
+                            </div>
+                        )}
+                            </>);
+                        })()}
+
                         {/* Histórico de Movimentações (Modo Lista solicitado) */}
                         <div className="pt-6 border-t border-slate-100">
                             <div className="flex justify-between items-center mb-4">
@@ -1432,8 +1520,8 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                             </div>
 
                             {viewModeHistoryPacks === 'card' ? (
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                    {relatorioProdutosProntos.packMovements.slice(0, 12).map((m: any) => (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                                    {relatorioProdutosProntos.packMovements.slice((historyPage - 1) * HISTORY_PER_PAGE, historyPage * HISTORY_PER_PAGE).map((m: any) => (
                                         <div key={m.id} className="bg-slate-50 p-4 rounded-xl border border-slate-100 relative overflow-hidden">
                                             <div className={`absolute top-0 right-0 w-1 h-full ${m.qty_delta > 0 ? 'bg-emerald-400' : 'bg-red-400'}`} />
                                             <div className="flex justify-between items-start mb-2">
@@ -1457,8 +1545,8 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                     )}
                                 </div>
                             ) : (
-                                <div className="bg-white border text-center border-slate-100 rounded-2xl overflow-hidden">
-                                    <table className="w-full text-left text-xs">
+                                <div className="bg-white border text-center border-slate-100 rounded-2xl overflow-x-auto">
+                                    <table className="min-w-[600px] w-full text-left text-xs">
                                         <thead className="bg-slate-50 border-b">
                                             <tr className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
                                                 <th className="px-4 py-3">Data</th>
@@ -1470,7 +1558,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-100">
-                                            {relatorioProdutosProntos.packMovements.slice(0, 30).map((m: any) => (
+                                            {relatorioProdutosProntos.packMovements.slice((historyPage - 1) * HISTORY_PER_PAGE, historyPage * HISTORY_PER_PAGE).map((m: any) => (
                                                 <tr key={m.id} className="hover:bg-slate-50 transition-colors">
                                                     <td className="px-4 py-3 font-bold text-gray-500">{new Date(m.created_at || m.createdAt).toLocaleString()}</td>
                                                     <td className="px-4 py-3 font-black text-slate-700 uppercase">{m.stock_item_name || m.stock_item_code || m.stockItemName}</td>
@@ -1498,6 +1586,50 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                                     </table>
                                 </div>
                             )}
+
+                            {/* Paginação do Histórico */}
+                            {(() => {
+                                const totalHistoryPages = Math.max(1, Math.ceil(relatorioProdutosProntos.packMovements.length / HISTORY_PER_PAGE));
+                                const safeHistoryPage = Math.min(historyPage, totalHistoryPages);
+                                if (totalHistoryPages <= 1) return null;
+                                return (
+                                    <div className="flex items-center justify-center gap-2 mt-4">
+                                        <button
+                                            onClick={() => setHistoryPage(p => Math.max(1, p - 1))}
+                                            disabled={safeHistoryPage <= 1}
+                                            className="p-2 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                                        >
+                                            <ChevronLeft size={16} />
+                                        </button>
+                                        {Array.from({ length: totalHistoryPages }, (_, i) => i + 1)
+                                            .filter(p => p === 1 || p === totalHistoryPages || Math.abs(p - safeHistoryPage) <= 1)
+                                            .map((p, idx, arr) => (
+                                                <React.Fragment key={p}>
+                                                    {idx > 0 && arr[idx - 1] !== p - 1 && (
+                                                        <span className="text-slate-400 text-xs">...</span>
+                                                    )}
+                                                    <button
+                                                        onClick={() => setHistoryPage(p)}
+                                                        className={`w-8 h-8 text-xs font-bold rounded-lg transition-all ${safeHistoryPage === p ? 'bg-blue-600 text-white shadow-lg' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                                    >
+                                                        {p}
+                                                    </button>
+                                                </React.Fragment>
+                                            ))
+                                        }
+                                        <button
+                                            onClick={() => setHistoryPage(p => Math.min(totalHistoryPages, p + 1))}
+                                            disabled={safeHistoryPage >= totalHistoryPages}
+                                            className="p-2 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                                        >
+                                            <ChevronRight size={16} />
+                                        </button>
+                                        <span className="text-xs text-slate-400 ml-2">
+                                            {safeHistoryPage} de {totalHistoryPages} ({relatorioProdutosProntos.packMovements.length} movimentações)
+                                        </span>
+                                    </div>
+                                );
+                            })()}
                         </div>
                     </div>
                 );
@@ -1549,7 +1681,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                     </div>
 
                     {/* Stats */}
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                         <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex items-center gap-3">
                             <div className="p-2 bg-emerald-100 rounded-xl"><TrendingUp size={18} className="text-emerald-600" /></div>
                             <div><p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest">Entradas</p><p className="text-2xl font-black text-emerald-700">{histStats.entradas.toFixed(1)}</p></div>

@@ -962,7 +962,22 @@ export const parseExcelFile = (
         }
 
         if (orders.length === 0) {
-            throw new Error('Nenhum pedido importado. Verifique se as datas selecionadas contêm pedidos ou se o mapeamento está correto.');
+            const diagParts = [
+                'Nenhum pedido importado.',
+                `Canal: ${canalDetectado || 'N/A'}`,
+                `Linha cabeçalho: ${headerRowIndex}`,
+                `Total linhas dados: ${jsonData.length}`,
+            ];
+            if (_skipNoId > 0) diagParts.push(`Sem orderId/SKU: ${_skipNoId}`);
+            if (_skipQty > 0) diagParts.push(`Quantidade inválida: ${_skipQty}`);
+            if (_skipStatus > 0) diagParts.push(`Rejeitados por status: ${_skipStatus}`);
+            if (_skipDate > 0) diagParts.push(`Rejeitados por data envio: ${_skipDate}`);
+            if (_skipTiktok > 0) diagParts.push(`Linhas descrição TikTok: ${_skipTiktok}`);
+
+            const missingCols = Object.entries(headerKeyMap).filter(([, v]) => !v).map(([k]) => k);
+            if (missingCols.length > 0) diagParts.push(`Colunas NÃO mapeadas: ${missingCols.join(', ')}`);
+
+            throw new Error(diagParts.join('\n'));
         }
     }
 

@@ -157,7 +157,7 @@ export const AbaFluxoCompleteEtiquetas: React.FC<AbaFluxoCompleteEtiquetasProps>
               </div>
 
               {/* Statísticas */}
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <div className="bg-slate-100 p-3 rounded text-center">
                   <p className="text-xs text-slate-600">Total</p>
                   <p className="text-2xl font-bold text-slate-900">

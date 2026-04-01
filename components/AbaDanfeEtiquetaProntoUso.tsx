@@ -33,13 +33,13 @@ export const AbaDanfeEtiquetaProntoUso: React.FC<
   };
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-4 sm:space-y-6 p-3 sm:p-6">
       {/* Header */}
-      <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg p-8">
+      <div className="bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg p-4 sm:p-8">
         <div className="flex items-start gap-4">
           <ShoppingCart size={40} className="flex-shrink-0" />
           <div>
-            <h2 className="text-3xl font-bold">📦 DANFE + Etiqueta REAL</h2>
+            <h2 className="text-xl sm:text-3xl font-bold">📦 DANFE + Etiqueta REAL</h2>
             <p className="text-lg text-purple-100 mt-2">
               Impressão consolidada direto da Shopee/Bling com etiqueta REAL e SKU vinculado
             </p>
@@ -96,7 +96,7 @@ export const AbaDanfeEtiquetaProntoUso: React.FC<
           {/* Shopee */}
           <button
             onClick={() => handleAbrirModal('SHOPEE')}
-            className="bg-gradient-to-br from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white rounded-lg p-8 shadow-xl transition transform hover:scale-105"
+            className="bg-gradient-to-br from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 text-white rounded-lg p-4 sm:p-8 shadow-xl transition transform hover:scale-105"
           >
             <div className="flex items-center gap-4 mb-4">
               <Printer size={40} />
@@ -113,7 +113,7 @@ export const AbaDanfeEtiquetaProntoUso: React.FC<
           {/* Mercado Livre */}
           <button
             onClick={() => handleAbrirModal('MERCADO_LIVRE')}
-            className="bg-gradient-to-br from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-white rounded-lg p-8 shadow-xl transition transform hover:scale-105"
+            className="bg-gradient-to-br from-yellow-500 to-yellow-600 hover:from-yellow-600 hover:to-yellow-700 text-white rounded-lg p-4 sm:p-8 shadow-xl transition transform hover:scale-105"
           >
             <div className="flex items-center gap-4 mb-4">
               <Printer size={40} />

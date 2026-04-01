@@ -302,7 +302,7 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
                         </div>
                     </div>
                     <Section title="Mercado Livre" icon={<FileSpreadsheet className="text-yellow-500" />}>
-                        <div className="grid grid-cols-2 gap-5 mb-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-4">
                             <MapRow label="N.º da Venda" field="orderId" canal="ml" />
                             <MapRow label="SKU do Produto" field="sku" canal="ml" />
                             <MapRow label="Quantidade" field="qty" canal="ml" />
@@ -319,7 +319,7 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
                         <FeeSelector canal="ml" />
                     </Section>
                     <Section title="Shopee" icon={<FileSpreadsheet className="text-orange-500" />}>
-                        <div className="grid grid-cols-2 gap-5 mb-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-4">
                             <MapRow label="N.º do Pedido" field="orderId" canal="shopee" />
                             <MapRow label="Referência SKU" field="sku" canal="shopee" />
                             <MapRow label="Quantidade" field="qty" canal="shopee" />
@@ -585,7 +585,7 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
                     </Section>
 
                     <Section title="Manutenção do Banco" icon={<Terminal size={24} className="text-red-600"/>}>
-                         <div className="grid grid-cols-3 gap-4">
+                         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                             <button onClick={async () => { await syncDatabase(); alert('Banco sincronizado!'); }} className="flex flex-col items-center justify-center p-6 bg-blue-50 border-2 border-blue-100 rounded-3xl hover:bg-blue-100 transition-all gap-3 group">
                                 <RefreshCw className="text-blue-600 group-hover:rotate-180 transition-transform duration-700" size={32}/>
                                 <span className="font-black text-[9px] uppercase tracking-widest text-blue-900">Sincronizar</span>

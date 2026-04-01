@@ -583,7 +583,7 @@ const PlanejamentoPage: React.FC<PlanejamentoPageProps> = ({ stockItems, allOrde
                     {scenarioAnalysis && (
                         <div className="mb-6 p-4 bg-slate-50 border border-slate-200 rounded-xl animate-in fade-in slide-in-from-top-4">
                             <h4 className="text-sm font-black text-slate-600 uppercase tracking-widest mb-3 flex items-center gap-2"><PieChart size={16}/> Resultado da Simulação</h4>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                                 <SimulationMetric label="Faturamento Projetado" current={scenarioAnalysis.planTotalRevenue} history={scenarioAnalysis.historyTotalRevenue} isCurrency />
                                 <SimulationMetric label="Volume Projetado (Un)" current={scenarioAnalysis.planTotalUnits} history={scenarioAnalysis.historyTotalUnits} />
                             </div>

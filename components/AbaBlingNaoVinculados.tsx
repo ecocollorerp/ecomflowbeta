@@ -334,7 +334,7 @@ export const AbaBlingNaoVinculados: React.FC<AbaBlingNaoVinculadosProps> = ({
             ))}
 
             {pedidosFiltrados.length === 0 && pedidos.length > 0 && (
-              <div className="p-8 text-center text-slate-500">
+              <div className="p-4 sm:p-8 text-center text-slate-500">
                 <AlertTriangle size={40} className="mx-auto mb-2 opacity-50" />
                 <p>Nenhum pedido encontrado com os filtros aplicados</p>
               </div>
