@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Users, Plus, Pencil, Trash2, Shield, User as UserIcon, LayoutGrid, Info } from 'lucide-react';
+import { Users, Plus, Pencil, Trash2, Shield, User as UserIcon, LayoutGrid, Info, ToggleLeft, ToggleRight, ChevronDown, ChevronUp } from 'lucide-react';
 import { User, Setor } from '../types';
+import { ALL_APP_PAGES } from '../lib/accessControl';
 import ConfirmActionModal from '../components/ConfirmActionModal';
 
 interface SetoresPageProps {
@@ -9,9 +10,10 @@ interface SetoresPageProps {
     onAddSector: (name: string) => Promise<boolean>;
     onDeleteSector: (id: string) => Promise<boolean>;
     onEditSector: (id: string, name: string) => Promise<boolean>;
+    onUpdateSectorPages: (id: string, allowedPages: string[]) => Promise<boolean>;
 }
 
-export const SetoresPage: React.FC<SetoresPageProps> = ({ sectors, users, onAddSector, onDeleteSector, onEditSector }) => {
+export const SetoresPage: React.FC<SetoresPageProps> = ({ sectors, users, onAddSector, onDeleteSector, onEditSector, onUpdateSectorPages }) => {
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -19,6 +21,8 @@ export const SetoresPage: React.FC<SetoresPageProps> = ({ sectors, users, onAddS
     const [sectorToEdit, setSectorToEdit] = useState<Setor | null>(null);
     const [sectorToDelete, setSectorToDelete] = useState<Setor | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [expandedSectorId, setExpandedSectorId] = useState<string | null>(null);
+    const [savingPagesFor, setSavingPagesFor] = useState<string | null>(null);
 
     const handleAdd = async () => {
         if (!newSectorName.trim()) return;
@@ -54,6 +58,29 @@ export const SetoresPage: React.FC<SetoresPageProps> = ({ sectors, users, onAddS
         }
     };
 
+    const handleTogglePage = async (sectorId: string, pageId: string) => {
+        const sector = sectors.find(s => s.id === sectorId);
+        if (!sector) return;
+        const currentPages = sector.allowed_pages || [];
+        const newPages = currentPages.includes(pageId)
+            ? currentPages.filter(p => p !== pageId)
+            : [...currentPages, pageId];
+        setSavingPagesFor(sectorId);
+        await onUpdateSectorPages(sectorId, newPages);
+        setSavingPagesFor(null);
+    };
+
+    const handleToggleAll = async (sectorId: string) => {
+        const sector = sectors.find(s => s.id === sectorId);
+        if (!sector) return;
+        const currentPages = sector.allowed_pages || [];
+        const allPageIds = ALL_APP_PAGES.map(p => p.id);
+        const newPages = currentPages.length === allPageIds.length ? [] : allPageIds;
+        setSavingPagesFor(sectorId);
+        await onUpdateSectorPages(sectorId, newPages);
+        setSavingPagesFor(null);
+    };
+
     return (
         <div className="space-y-8 pb-20">
             <div className="flex justify-between items-center bg-white p-8 rounded-[40px] shadow-sm border border-slate-100">
@@ -62,7 +89,7 @@ export const SetoresPage: React.FC<SetoresPageProps> = ({ sectors, users, onAddS
                         <LayoutGrid size={40} className="text-indigo-600 bg-indigo-50 p-2 rounded-2xl shadow-sm" />
                         Gestão de Setores
                     </h1>
-                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Organização de equipes e fluxos de trabalho</p>
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Organização de equipes, fluxos de trabalho e permissões de abas</p>
                 </div>
                 <button 
                     onClick={() => setIsAddModalOpen(true)}
@@ -76,6 +103,8 @@ export const SetoresPage: React.FC<SetoresPageProps> = ({ sectors, users, onAddS
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {sectors.map(sector => {
                     const sectorUsers = users.filter(u => Array.isArray(u.setor) && u.setor.includes(sector.name));
+                    const isExpanded = expandedSectorId === sector.id;
+                    const allowedPages = sector.allowed_pages || [];
                     
                     return (
                         <div key={sector.id} className="bg-white rounded-[40px] border border-slate-100 shadow-sm overflow-hidden flex flex-col group hover:shadow-xl transition-all hover:-translate-y-1">
@@ -110,6 +139,76 @@ export const SetoresPage: React.FC<SetoresPageProps> = ({ sectors, users, onAddS
                                 </div>
                             </div>
                             
+                            {/* Abas Permitidas */}
+                            <div className="px-8 pt-6 pb-2">
+                                <button
+                                    onClick={() => setExpandedSectorId(isExpanded ? null : sector.id)}
+                                    className="w-full flex items-center justify-between text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-2 hover:text-indigo-600 transition-colors"
+                                >
+                                    <span className="flex items-center gap-2">
+                                        <LayoutGrid size={12} />
+                                        Abas Permitidas ({allowedPages.length}/{ALL_APP_PAGES.length})
+                                    </span>
+                                    {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                </button>
+                                
+                                {!isExpanded && allowedPages.length > 0 && (
+                                    <div className="flex flex-wrap gap-1.5 mt-3">
+                                        {allowedPages.slice(0, 6).map(pageId => {
+                                            const page = ALL_APP_PAGES.find(p => p.id === pageId);
+                                            return page ? (
+                                                <span key={pageId} className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+                                                    {page.label}
+                                                </span>
+                                            ) : null;
+                                        })}
+                                        {allowedPages.length > 6 && (
+                                            <span className="text-[9px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-100">
+                                                +{allowedPages.length - 6}
+                                            </span>
+                                        )}
+                                    </div>
+                                )}
+                                {!isExpanded && allowedPages.length === 0 && (
+                                    <p className="text-[10px] text-amber-500 font-bold mt-2">Nenhuma aba configurada — sem acesso restrito</p>
+                                )}
+
+                                {isExpanded && (
+                                    <div className="mt-3 space-y-2">
+                                        <button
+                                            onClick={() => handleToggleAll(sector.id)}
+                                            disabled={savingPagesFor === sector.id}
+                                            className="text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:text-indigo-800 transition-colors disabled:opacity-50"
+                                        >
+                                            {allowedPages.length === ALL_APP_PAGES.length ? 'Desmarcar Tudo' : 'Marcar Tudo'}
+                                        </button>
+                                        <div className="grid grid-cols-1 gap-1.5 max-h-[300px] overflow-y-auto pr-1">
+                                            {ALL_APP_PAGES.map(page => {
+                                                const isEnabled = allowedPages.includes(page.id);
+                                                return (
+                                                    <button
+                                                        key={page.id}
+                                                        onClick={() => handleTogglePage(sector.id, page.id)}
+                                                        disabled={savingPagesFor === sector.id}
+                                                        className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-bold transition-all border ${
+                                                            isEnabled
+                                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                                                : 'bg-slate-50 text-slate-400 border-slate-100 hover:bg-slate-100 hover:text-slate-600'
+                                                        } disabled:opacity-50`}
+                                                    >
+                                                        <span>{page.label}</span>
+                                                        {isEnabled 
+                                                            ? <ToggleRight size={18} className="text-emerald-500" /> 
+                                                            : <ToggleLeft size={18} className="text-slate-300" />
+                                                        }
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
                             <div className="p-8 flex-1 space-y-4">
                                 <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest border-b pb-2">Membros do Setor</h4>
                                 {sectorUsers.length > 0 ? (

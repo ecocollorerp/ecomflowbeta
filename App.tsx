@@ -341,6 +341,21 @@ const App: React.FC = () => {
         }
     }, [stockItems]);
 
+    // 🔗 Sincronizar customSectors no generalSettings a partir dos setores do banco
+    useEffect(() => {
+        if (sectors.length > 0) {
+            const customSectors = sectors.map(s => ({
+                id: s.id,
+                name: s.name,
+                allowedPages: s.allowed_pages || [],
+            }));
+            setGeneralSettings(prev => ({
+                ...prev,
+                customSectors,
+            }));
+        }
+    }, [sectors]);
+
 
     const lowStockItems = useMemo(() => stockItems.filter(i => {
         const current = Number(i.current_qty);
@@ -663,6 +678,17 @@ const App: React.FC = () => {
         }
         setSectors(prev => prev.map(s => s.id === id ? { ...s, name: newName } : s));
         addToast('Setor atualizado!', 'success');
+        return true;
+    };
+
+    const handleUpdateSectorPages = async (id: string, allowedPages: string[]) => {
+        const { error } = await dbClient.from('setores').update({ allowed_pages: allowedPages }).eq('id', id);
+        if (error) {
+            addToast(`Erro ao atualizar abas do setor: ${error.message}`, 'error');
+            return false;
+        }
+        setSectors(prev => prev.map(s => s.id === id ? { ...s, allowed_pages: allowedPages } : s));
+        addToast('Abas do setor atualizadas!', 'success');
         return true;
     };
 
@@ -2302,7 +2328,7 @@ const App: React.FC = () => {
             case 'pacotes-prontos': return <EstoquePage stockItems={stockItems} stockMovements={stockMovements} onStockAdjustment={handleStockAdjustment} produtosCombinados={produtosCombinados} onSaveProdutoCombinado={handleSaveProdutoCombinado} onAddNewItem={handleAddNewItem} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} onProductionRun={handleProductionRun} onRegisterReadyStock={handleRegisterReadyStock} currentUser={currentUser!} onEditItem={handleEditItem} onDeleteItem={handleDeleteItem} onBulkDeleteItems={handleBulkDeleteItems} onDeleteMovement={handleDeleteMovement} onDeleteWeighingBatch={handleDeleteWeighingBatch} generalSettings={generalSettings} setGeneralSettings={setGeneralSettings as any} onConfirmImportFromXml={handleConfirmImportFromXml} onSaveExpeditionItems={handleSaveExpeditionItems} users={users} onUpdateInsumoCategory={async () => { }} onBulkInventoryUpdate={handleBulkSetInitialStock} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} initialTab="pacotes" hideTabs={true} />
             case 'funcionarios': return <FuncionariosPage users={users} onSetAttendance={handleSetAttendance} onAddNewUser={handleAddNewUser} onUpdateAttendanceDetails={handleUpdateAttendanceDetails} onUpdateUser={handleUpdateUser} generalSettings={generalSettings} currentUser={currentUser!} onDeleteUser={handleDeleteUser} sectors={sectors} />
             case 'relatorios': return <RelatoriosPage stockItems={stockItems} stockMovements={stockMovements} orders={allOrders} weighingBatches={weighingBatches} scanHistory={scanHistory} produtosCombinados={produtosCombinados} users={users} returns={returns} generalSettings={generalSettings} grindingBatches={grindingBatches} />
-            case 'setores': return <SetoresPage sectors={sectors} users={users} onAddSector={handleAddSector} onDeleteSector={handleDeleteSector} onEditSector={handleEditSector} />
+            case 'setores': return <SetoresPage sectors={sectors} users={users} onAddSector={handleAddSector} onDeleteSector={handleDeleteSector} onEditSector={handleEditSector} onUpdateSectorPages={handleUpdateSectorPages} />
             case 'calculadora': return <CalculadoraPage stockItems={stockItems} produtosCombinados={produtosCombinados} addToast={addToast} initialSku={calculadoraInitialSku} onUpdatePrices={handleUpdateProductPrices} />
             case 'financeiro': return <FinancePage allOrders={allOrders} stockItems={stockItems} stockMovements={stockMovements} skuLinks={skuLinks} produtosCombinados={produtosCombinados} generalSettings={generalSettings} onDeleteOrders={handleDeleteOrders} onLaunchOrders={handleLaunchSuccess} onSaveSettings={handleSaveGeneralSettings} onNavigateToSettings={() => { _setCurrentPage('configuracoes-gerais'); localStorage.setItem('erp_current_page', 'configuracoes-gerais'); }} setCurrentPage={setCurrentPage} costCalculations={costCalculations} onSelectSku={(sku) => { setCalculadoraInitialSku(sku); setCurrentPage('calculadora'); }} users={users} importHistory={importHistory as any} />
             case 'etiquetas': return <EtiquetasPage settings={etiquetasSettings} onSettingsSave={handleSaveEtiquetasSettings} generalSettings={generalSettings} uiSettings={uiSettings} onSetUiSettings={setUiSettings as any} stockItems={stockItems} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} onAddNewItem={handleAddNewItem} etiquetasState={etiquetasState} setEtiquetasState={setEtiquetasState} currentUser={currentUser!} allOrders={allOrders} etiquetasHistory={etiquetasHistory} onSaveHistory={handleSaveEtiquetaHistory} onGetHistoryDetails={handleGetEtiquetaHistoryDetails} onProcessZpl={handleProcessZpl} isProcessing={isProcessingLabels} progressMessage={labelProgressMessage} progress={labelProcessingProgress} addToast={addToast} onSaveBatch={handleSaveZplBatch} />

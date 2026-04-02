@@ -57,6 +57,7 @@ export interface AttendanceRecord {
 export interface Setor {
   id: string;
   name: string;
+  allowed_pages?: string[];
   created_at?: string;
 }
 

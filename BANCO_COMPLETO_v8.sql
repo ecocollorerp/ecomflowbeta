@@ -731,10 +731,14 @@ CREATE INDEX IF NOT EXISTS idx_order_items_canal ON order_items (canal);
 -- 21. setores
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS setores (
-    id         UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name       TEXT         UNIQUE NOT NULL,
-    created_at TIMESTAMPTZ  DEFAULT NOW()
+    id             UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name           TEXT         UNIQUE NOT NULL,
+    allowed_pages  TEXT[]       DEFAULT '{}',
+    created_at     TIMESTAMPTZ  DEFAULT NOW()
 );
+
+ALTER TABLE setores
+    ADD COLUMN IF NOT EXISTS allowed_pages TEXT[] DEFAULT '{}';
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 22. etiquetas_prioritarias
