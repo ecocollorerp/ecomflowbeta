@@ -127,27 +127,32 @@ export async function syncMLOrders(
  */
 export function transformMLOrder(o: any): OrderItem {
     const sku = o.sku || o.itens?.[0]?.sku || '';
+    const unitPrice = Number(o.unit_price || 0);
+    const qty = Number(o.quantity || 1);
+    const subtotal = Number(o.total || 0) || (unitPrice * qty);
+    const fees = Number(o.platform_fees || 0);
+    const frete = Number(o.frete || 0);
     return {
         id: o.id || `ml-${o.orderId}-${Date.now()}`,
         orderId: String(o.orderId || ''),
         blingId: '',
         tracking: '',
         sku,
-        qty_original: Number(o.quantity || 1),
+        qty_original: qty,
         multiplicador: getMultiplicadorFromSku(sku),
-        qty_final: Math.round(Number(o.quantity || 1) * getMultiplicadorFromSku(sku)),
+        qty_final: Math.round(qty * getMultiplicadorFromSku(sku)),
         color: '',
         canal: 'ML',
         data: o.data || new Date().toISOString().split('T')[0],
         status: 'NORMAL',
         customer_name: o.customer_name || 'Comprador ML',
         customer_cpf_cnpj: '',
-        price_gross: Number(o.unit_price || 0),
-        price_total: Number(o.total || 0),
-        platform_fees: 0,
-        shipping_fee: Number(o.frete || 0),
-        shipping_paid_by_customer: Number(o.frete || 0),
-        price_net: Number(o.unit_price || 0),
+        price_gross: subtotal,
+        price_total: subtotal + frete,
+        platform_fees: fees,
+        shipping_fee: frete,
+        shipping_paid_by_customer: frete,
+        price_net: subtotal - fees,
     };
 }
 

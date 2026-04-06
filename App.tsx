@@ -939,6 +939,7 @@ const App: React.FC = () => {
                             ml: { ...prev.importer.ml, ...(general.importer?.ml || {}) },
                             shopee: { ...prev.importer.shopee, ...(general.importer?.shopee || {}) },
                             site: { ...prev.importer.site, ...(general.importer?.site || {}) },
+                            tiktok: { ...prev.importer.tiktok, ...(general.importer?.tiktok || {}) },
                         },
                         pedidos: { ...prev.pedidos, ...(general.pedidos || {}) },
                         productCategoryList: Array.isArray(general.productCategoryList) ? general.productCategoryList : prev.productCategoryList,

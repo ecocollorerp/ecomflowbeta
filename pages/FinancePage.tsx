@@ -563,8 +563,12 @@ const FinancePage: React.FC<FinancePageProps> = ({
             const dailyMap = new Map<string, number>();
             groups.forEach((group) => {
                 const first = group[0];
-                const isRep = generalSettings.isRepeatedValue;
-                const gGross = isRep ? Number(first.price_total || 0) : group.reduce((s, i) => s + (i.price_total || 0), 0);
+                const dailyCanalKey = (first.canal || 'SITE').toLowerCase();
+                const dailyMapping = (generalSettings.importer as any)[dailyCanalKey] || {};
+                const dailyIsRep = dailyMapping.sumMultipleLines !== undefined 
+                    ? !dailyMapping.sumMultipleLines 
+                    : generalSettings.isRepeatedValue;
+                const gGross = dailyIsRep ? Number(first.price_total || 0) : group.reduce((s, i) => s + (i.price_total || 0), 0);
                 const d = parseOrderDate(first);
                 if (!d) return;
                 const key = d.toISOString().split('T')[0];

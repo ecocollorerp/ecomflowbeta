@@ -655,7 +655,10 @@ export const parseExcelFile = (
         fillMissingHeaderKey('qty', ['Quantidade', 'Unidades', 'Quantity']);
         fillMissingHeaderKey('tracking', ['Código de rastreamento', 'Número de rastreamento', 'Tracking']);
         fillMissingHeaderKey('date', ['Data da venda', 'Data de criação do pedido', 'Created Time']);
-        fillMissingHeaderKey('shippingPaidByCustomer', ['Custo de envio (pago pelo comprador)', 'Frete pago pelo cliente']);
+        fillMissingHeaderKey('priceGross', ['Receita por produtos (BRL)', 'Receita por produtos', 'Receita de produtos (BRL)', 'Receita de produtos', 'Preço unitário (BRL)', 'Preço do anúncio (BRL)', 'Valor do produto (BRL)']);
+        fillMissingHeaderKey('totalValue', ['Receita total (BRL)', 'Valor total (BRL)', 'Total da venda (BRL)', 'Receita total']);
+        fillMissingHeaderKey('shippingFee', ['Tarifa de envio (BRL)', 'Custo de frete (BRL)']);
+        fillMissingHeaderKey('shippingPaidByCustomer', ['Custo de envio (pago pelo comprador)', 'Frete pago pelo cliente', 'Frete pago pelo comprador', 'Custo de envio para o comprador']);
         fillMissingHeaderKey('statusColumn', ['Estado', 'Status do pedido', 'Order Status']);
     } else if (canalDetectado === 'SHOPEE') {
         fillMissingHeaderKey('orderId', ['ID do pedido', 'N.º do pedido', 'Order ID']);
@@ -830,7 +833,9 @@ export const parseExcelFile = (
         let rawTotalValue = mappingToUse!.totalValue ? cleanMoney(row[headerKeyMap['totalValue']]) : 0;
         let rawPriceColumn = mappingToUse!.priceGross ? cleanMoney(row[headerKeyMap['priceGross']]) : 0;
 
-        if (rawTotalValue === 0 && rawPriceColumn > 0) rawTotalValue = rawPriceColumn;
+        // Só copiar priceGross → totalValue quando totalValue foi configurado mas deu 0 nesta linha
+        const hasTotalValueConfig = !!mappingToUse!.totalValue;
+        if (rawTotalValue === 0 && rawPriceColumn > 0 && hasTotalValueConfig) rawTotalValue = rawPriceColumn;
         else if (rawTotalValue > 0 && rawPriceColumn === 0) rawPriceColumn = rawTotalValue;
 
         const customerShipping = mappingToUse!.shippingPaidByCustomer ? Math.abs(cleanMoney(row[headerKeyMap['shippingPaidByCustomer']])) : 0;
@@ -934,7 +939,8 @@ export const parseExcelFile = (
                 if (isNaN(qty_raw) || qty_raw <= 0) continue;
                 let rawTotalValue = mappingToUse!.totalValue ? cleanMoney(row[headerKeyMap['totalValue']]) : 0;
                 let rawPriceColumn = mappingToUse!.priceGross ? cleanMoney(row[headerKeyMap['priceGross']]) : 0;
-                if (rawTotalValue === 0 && rawPriceColumn > 0) rawTotalValue = rawPriceColumn;
+                const hasTotalValueCfg = !!mappingToUse!.totalValue;
+                if (rawTotalValue === 0 && rawPriceColumn > 0 && hasTotalValueCfg) rawTotalValue = rawPriceColumn;
                 else if (rawTotalValue > 0 && rawPriceColumn === 0) rawPriceColumn = rawTotalValue;
                 const customerShipping = mappingToUse!.shippingPaidByCustomer ? Math.abs(cleanMoney(row[headerKeyMap['shippingPaidByCustomer']])) : 0;
                 const sellerShipping = mappingToUse!.shippingFee ? Math.abs(cleanMoney(row[headerKeyMap['shippingFee']])) : 0;
@@ -979,6 +985,45 @@ export const parseExcelFile = (
 
             throw new Error(diagParts.join('\n'));
         }
+    }
+
+    // ── ML: normalizar colunas financeiras por-pedido (fees, frete) ──
+    // Na planilha do ML, "Tarifa de venda e impostos" e "Custo de envio" são valores
+    // do PEDIDO INTEIRO, repetidos em cada linha de item. Sem normalização, ao somar
+    // no Financeiro, esses valores seriam multiplicados pelo nº de itens.
+    if (canalDetectado === 'ML') {
+        const orderGroups = new Map<string, OrderItem[]>();
+        orders.forEach(o => {
+            if (!orderGroups.has(o.orderId)) orderGroups.set(o.orderId, []);
+            orderGroups.get(o.orderId)!.push(o);
+        });
+        orderGroups.forEach(group => {
+            if (group.length <= 1) return; // Pedido com 1 item: nada a fazer
+            // Detecta se fees/shipping são repetidos (todos iguais = valor por-pedido repetido)
+            const firstFees = group[0].platform_fees;
+            const firstShipCustomer = group[0].shipping_paid_by_customer || 0;
+            const firstShipSeller = group[0].shipping_fee;
+            const feesRepeated = group.every(o => o.platform_fees === firstFees);
+            const shipCustomerRepeated = group.every(o => (o.shipping_paid_by_customer || 0) === firstShipCustomer);
+            const shipSellerRepeated = group.every(o => o.shipping_fee === firstShipSeller);
+            // Distribui proporcionalmente pelo price_gross de cada item
+            const totalGross = group.reduce((s, o) => s + o.price_gross, 0);
+            group.forEach(o => {
+                const proportion = totalGross > 0 ? o.price_gross / totalGross : 1 / group.length;
+                if (feesRepeated && firstFees > 0) {
+                    o.platform_fees = Math.round(firstFees * proportion * 100) / 100;
+                }
+                if (shipCustomerRepeated && firstShipCustomer > 0) {
+                    o.shipping_paid_by_customer = Math.round(firstShipCustomer * proportion * 100) / 100;
+                }
+                if (shipSellerRepeated && firstShipSeller > 0) {
+                    o.shipping_fee = Math.round(firstShipSeller * proportion * 100) / 100;
+                }
+                // Recalcular price_total e price_net com valores corrigidos
+                o.price_total = o.price_gross + (o.shipping_paid_by_customer || 0);
+                o.price_net = o.price_gross - o.platform_fees - o.shipping_fee;
+            });
+        });
     }
 
     const jaSalvos = orders.filter(o => existingKeys.has(`${safeUpper(o.orderId)}|${safeUpper(o.sku)}`)).length;

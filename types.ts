@@ -1263,7 +1263,8 @@ export const defaultGeneralSettings: GeneralSettings = {
       customerName: "Comprador",
       customerCpf: "Documento do comprador",
       statusColumn: "",
-      acceptedStatusValues: []
+      acceptedStatusValues: [],
+      sumMultipleLines: true
     },
     shopee: {
       orderId: "N.º do pedido",

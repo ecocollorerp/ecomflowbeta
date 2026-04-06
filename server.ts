@@ -4744,52 +4744,67 @@ async function startServer() {
         );
       }
 
-      // Normalizar para o formato interno
-      const orders = allOrders.map((order: any) => ({
-        id: `ml-${order.id}`,
-        orderId: String(order.id),
-        blingId: "",
-        customer_name:
-          order.buyer?.nickname || order.buyer?.first_name || "Comprador ML",
-        customer_cpf_cnpj: "",
-        data: (order.date_created || "").split("T")[0],
-        status: order.status || "",
-        canal: "ML" as const,
-        total: Number(order.total_amount || 0),
-        frete: Number(order.shipping?.cost || 0),
-        itens: (order.order_items || []).map((item: any) => ({
-          id: String(item.item?.id || ""),
-          sku: item.item?.seller_sku || item.item?.id || "",
-          descricao: item.item?.title || "",
-          quantidade: Number(item.quantity || 1),
-          valorUnitario: Number(item.unit_price || 0),
-          subtotal: Number(item.quantity || 1) * Number(item.unit_price || 0)
-        })),
-        itensCount: (order.order_items || []).length,
-        sku: (order.order_items || [])[0]?.item?.seller_sku || "",
-        quantity: (order.order_items || []).reduce(
-          (s: number, i: any) => s + Number(i.quantity || 0),
-          0
-        ),
-        unit_price: (order.order_items || [])[0]?.unit_price || 0
-      }));
+      // Normalizar para o formato interno — explode multi-item em linhas individuais
+      const orders: any[] = [];
+      allOrders.forEach((order: any) => {
+        const items = order.order_items || [];
+        const orderData = (order.date_created || "").split("T")[0];
+        const customerName = order.buyer?.nickname || order.buyer?.first_name || "Comprador ML";
+        const totalAmount = Number(order.total_amount || 0);
+        const shippingCost = Number(order.shipping?.cost || 0);
+        // ML order_items fees (marketplace_fee vem dentro de payments)
+        const payments = order.payments || [];
+        const totalMarketplaceFee = payments.reduce((s: number, p: any) => s + Math.abs(Number(p.marketplace_fee || 0)), 0);
 
-      // Log detalhado de itens importados
-      const totalItens = orders.reduce(
-        (sum, o) => sum + (o.itensCount || 0),
-        0
-      );
-      orders.forEach((order) => {
-        if (!order.itens || order.itens.length === 0) {
-          console.warn(
-            `⚠️  [ML] Pedido ${order.orderId} SEM ITENS na resposta`
-          );
+        if (items.length === 0) {
+          // Pedido sem itens — cria linha única para não perder dados
+          orders.push({
+            id: `ml-${order.id}`,
+            orderId: String(order.id),
+            customer_name: customerName,
+            data: orderData,
+            canal: "ML",
+            sku: "",
+            quantity: 1,
+            unit_price: totalAmount,
+            total: totalAmount,
+            frete: shippingCost,
+            platform_fees: totalMarketplaceFee,
+          });
         } else {
-          console.log(
-            `📦 [ML] Pedido ${order.orderId}: ${order.itens.length} itens`
-          );
+          // Proporção de fees/frete por item baseado no subtotal
+          const orderSubtotal = items.reduce((s: number, i: any) => s + Number(i.quantity || 1) * Number(i.unit_price || 0), 0);
+
+          items.forEach((item: any) => {
+            const sku = item.item?.seller_sku || item.item?.id || "";
+            const qty = Number(item.quantity || 1);
+            const unitPrice = Number(item.unit_price || 0);
+            const subtotal = qty * unitPrice;
+            const proportion = orderSubtotal > 0 ? subtotal / orderSubtotal : 1 / items.length;
+
+            orders.push({
+              id: `ml-${order.id}-${sku || item.item?.id}`,
+              orderId: String(order.id),
+              customer_name: customerName,
+              data: orderData,
+              canal: "ML",
+              sku,
+              quantity: qty,
+              unit_price: unitPrice,
+              total: subtotal,
+              frete: Math.round(shippingCost * proportion * 100) / 100,
+              platform_fees: Math.round(totalMarketplaceFee * proportion * 100) / 100,
+            });
+          });
         }
       });
+
+      // Log detalhado de itens importados
+      const totalItens = orders.length;
+      const uniqueOrders = new Set(orders.map((o: any) => o.orderId)).size;
+      console.log(
+        `📦 [ML] ${uniqueOrders} pedidos ML explodidos em ${totalItens} linhas de item`
+      );
 
       console.log(
         `✅ [ML SYNC ORDERS] ${orders.length} pedidos, ${totalItens} itens importados em ${page} página(s)`
