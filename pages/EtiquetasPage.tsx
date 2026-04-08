@@ -450,6 +450,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
     const [selectedSkuNames, setSelectedSkuNames] = useState<Set<string>>(new Set());
     const [ferramentasSortMode, setFerramentasSortMode] = useState<'alpha' | 'qty'>('alpha');
     const [minUnitsFilter, setMinUnitsFilter] = useState<number>(0);
+    const [unitsFilterMode, setUnitsFilterMode] = useState<'exact' | 'gte'>('exact');
     const [ferramentasSortDir, setFerramentasSortDir] = useState<'asc' | 'desc'>('asc');
     const [generatedDocSkus, setGeneratedDocSkus] = useState<Map<string, GeneratedDocInfo>>(new Map());
     const [showOnlyGenerated, setShowOnlyGenerated] = useState(false);
@@ -732,9 +733,13 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
             list = list.filter(item => generatedDocSkus.has(item.masterSku));
         }
 
-        // Filtro por mínimo de unidades
+        // Filtro por unidade
         if (minUnitsFilter > 0) {
-            list = list.filter(item => item.pageIndices.length >= minUnitsFilter);
+            if (unitsFilterMode === 'exact') {
+                list = list.filter(item => item.pageIndices.length === minUnitsFilter);
+            } else {
+                list = list.filter(item => item.pageIndices.length >= minUnitsFilter);
+            }
         }
 
         // Ordenação
@@ -743,14 +748,14 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
             if (ferramentasSortMode === 'alpha') {
                 cmp = a.skuName.localeCompare(b.skuName, 'pt-BR');
             } else {
-                // Quantidade de etiquetas (maior primeiro)
+                // Quantidade de etiquetas
                 cmp = b.pageIndices.length - a.pageIndices.length;
             }
             return ferramentasSortDir === 'desc' ? -cmp : cmp;
         });
 
         return list;
-    }, [skuSummaryData, ferramentasSearch, showOnlyGenerated, generatedDocSkus, ferramentasSortMode, ferramentasSortDir, minUnitsFilter]);
+    }, [skuSummaryData, ferramentasSearch, showOnlyGenerated, generatedDocSkus, ferramentasSortMode, ferramentasSortDir, minUnitsFilter, unitsFilterMode]);
 
     // ── Resumo por cor (somente etiquetas, sem DANFE) ───────────────────
     const colorSummary = useMemo(() => {
@@ -1402,18 +1407,48 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                                         {ferramentasSortDir === 'asc' ? <SortAsc size={10} /> : <SortDesc size={10} />}
                                                     </button>
                                                 </div>
-                                                {/* Filtro mínimo de unidades */}
-                                                <div className="relative">
-                                                    <Hash size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-indigo-400" />
-                                                    <input
-                                                        type="number"
-                                                        min={0}
-                                                        value={minUnitsFilter || ''}
-                                                        onChange={e => setMinUnitsFilter(Math.max(0, parseInt(e.target.value) || 0))}
-                                                        placeholder="Mín. un."
-                                                        className="bg-white dark:bg-gray-800 border border-indigo-200 dark:border-indigo-700 rounded-lg pl-7 pr-2 py-1 text-[10px] focus:outline-none focus:border-indigo-400 w-20"
-                                                        title="Mostrar apenas SKUs com no mínimo X unidades"
-                                                    />
+                                                {/* Filtro por unidade */}
+                                                <div className="flex items-center gap-1">
+                                                    <div className="relative">
+                                                        <Hash size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-indigo-400" />
+                                                        <input
+                                                            type="number"
+                                                            min={0}
+                                                            value={minUnitsFilter || ''}
+                                                            onChange={e => setMinUnitsFilter(Math.max(0, parseInt(e.target.value) || 0))}
+                                                            placeholder="Unidades"
+                                                            className="bg-white dark:bg-gray-800 border border-indigo-200 dark:border-indigo-700 rounded-lg pl-7 pr-2 py-1 text-[10px] focus:outline-none focus:border-indigo-400 w-[72px]"
+                                                            title={unitsFilterMode === 'exact' ? 'Mostrar SKUs com exatamente X unidades' : 'Mostrar SKUs com X ou mais unidades'}
+                                                        />
+                                                    </div>
+                                                    <div className="flex rounded-lg border border-indigo-200 dark:border-indigo-700 overflow-hidden">
+                                                        <button
+                                                            onClick={() => setUnitsFilterMode('exact')}
+                                                            className={`px-1.5 py-1 text-[8px] font-black uppercase transition-all ${unitsFilterMode === 'exact' ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-gray-800 text-indigo-500 hover:bg-indigo-50'}`}
+                                                            title="Filtrar exatamente essa quantidade"
+                                                        >
+                                                            = {minUnitsFilter || '?'}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setUnitsFilterMode('gte')}
+                                                            className={`px-1.5 py-1 text-[8px] font-black uppercase transition-all ${unitsFilterMode === 'gte' ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-gray-800 text-indigo-500 hover:bg-indigo-50'}`}
+                                                            title="Filtrar a partir dessa quantidade (maior ou igual)"
+                                                        >
+                                                            ≥ {minUnitsFilter || '?'}
+                                                        </button>
+                                                    </div>
+                                                    {minUnitsFilter > 0 && (
+                                                        <button
+                                                            onClick={() => {
+                                                                const matchingSkus = new Set(ferramentasSkuList.map(item => item.masterSku));
+                                                                setSelectedSkuNames(matchingSkus);
+                                                            }}
+                                                            className="px-2 py-1 text-[8px] font-black uppercase rounded-lg border border-indigo-200 dark:border-indigo-700 bg-white dark:bg-gray-800 text-indigo-600 hover:bg-indigo-50 transition-all flex items-center gap-1"
+                                                            title="Selecionar apenas os SKUs filtrados"
+                                                        >
+                                                            <CheckSquare size={9} /> Sel. filtrados
+                                                        </button>
+                                                    )}
                                                 </div>
                                                 {/* Mostrar só gerados */}
                                                 <button
