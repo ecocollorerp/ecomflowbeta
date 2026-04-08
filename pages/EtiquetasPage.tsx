@@ -1,6 +1,6 @@
 
 import React, { useRef, useCallback, useState, useMemo, useEffect } from 'react';
-import { Settings, Printer, Trash2, X, FileText, Loader2, Image as ImageIcon, Zap, Link as LinkIcon, PlusCircle, AlertTriangle, Package, File, Eye, EyeOff, History, Clock, CheckCircle2, ExternalLink, ChevronDown, ChevronRight, Search, Copy, LayoutList, CalendarDays } from 'lucide-react';
+import { Settings, Printer, Trash2, X, FileText, Loader2, Image as ImageIcon, Zap, Link as LinkIcon, PlusCircle, AlertTriangle, Package, File, Eye, EyeOff, History, Clock, CheckCircle2, ExternalLink, ChevronDown, ChevronRight, Search, Copy, LayoutList, CalendarDays, Filter, ArrowUpDown, Download, SortAsc, SortDesc, Hash, CheckSquare } from 'lucide-react';
 import { ZplSettings, ExtractedZplData, GeneralSettings, UiSettings, StockItem, SkuLink, User, OrderItem, ZplPlatformSettings, EtiquetaHistoryItem, EtiquetasState, defaultZplSettings, ZplBatch } from '../types';
 import { buildPdf } from '../services/pdfGenerator';
 import LinkSkuModal from '../components/LinkSkuModal';
@@ -13,6 +13,7 @@ import { PDFDocument } from 'pdf-lib';
 
 // --- Types ---
 type ProcessingMode = 'completo' | 'rapido';
+type GeneratedDocInfo = { cor: string; zplContent: string; hasDanfe: boolean; count: number };
 
 interface EtiquetasPageProps {
     settings: ZplSettings;
@@ -444,6 +445,15 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
     const [useHalfCount, setUseHalfCount] = useState(false);
     const [showHistory, setShowHistory] = useState(true);
 
+    // ── Ferramentas de Etiquetas ──────────────────────────────────────────
+    const [showFerramentas, setShowFerramentas] = useState(false);
+    const [selectedSkuNames, setSelectedSkuNames] = useState<Set<string>>(new Set());
+    const [ferramentasSortMode, setFerramentasSortMode] = useState<'alpha' | 'qty'>('alpha');
+    const [ferramentasSortDir, setFerramentasSortDir] = useState<'asc' | 'desc'>('asc');
+    const [generatedDocSkus, setGeneratedDocSkus] = useState<Map<string, GeneratedDocInfo>>(new Map());
+    const [showOnlyGenerated, setShowOnlyGenerated] = useState(false);
+    const [ferramentasSearch, setFerramentasSearch] = useState('');
+
     useEffect(() => {
         const refresh = () => setPendingItems(loadPendingZpl());
         window.addEventListener('pendingZplChanged', refresh);
@@ -629,6 +639,253 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
         () => pendingItems.reduce((acc, i) => acc + i.labelCount, 0),
         [pendingItems]
     );
+
+    // ── Dados consolidados por SKU para "Ferramentas de Etiquetas" ───────
+    type SkuSummaryItem = {
+        skuName: string;
+        masterSku: string;
+        product: StockItem | null;
+        totalQty: number;
+        color: string;
+        hasDanfe: boolean;
+        pageIndices: number[]; // indices in zplPages (pair start)
+    };
+
+    const skuSummaryData = useMemo<SkuSummaryItem[]>(() => {
+        if (extractedData.size === 0) return [];
+        const map = new Map<string, SkuSummaryItem>();
+
+        extractedData.forEach((data, pageIndex) => {
+            const grouped = groupSkusByMasterProduct(data.skus);
+            // Determine color logic
+            const distinctProducts = grouped.filter(g => g.product).map(g => g.product!);
+            const distinctColors = [...new Set(distinctProducts.map(p => (p.color || 'Sem cor').toUpperCase()))];
+
+            grouped.forEach(({ product, totalQty }) => {
+                const key = product ? product.code.toUpperCase() : 'DESCONHECIDO';
+                const skuName = product ? product.name : 'Produto não encontrado';
+                let color = product?.color || 'Sem cor';
+
+                // Se há 2+ SKUs diferentes no mesmo pedido = Diversos
+                // Cor principal = cor do primeiro SKU (maior qtd)
+                const isDiversos = grouped.length > 1;
+                if (isDiversos) {
+                    // "Diversos" com a cor do primeiro produto (ordenado por qtd desc)
+                    const sortedByQty = [...grouped].sort((a, b) => b.totalQty - a.totalQty);
+                    const primaryProduct = sortedByQty[0]?.product;
+                    color = primaryProduct?.color || 'Sem cor';
+                }
+
+                if (map.has(key)) {
+                    const existing = map.get(key)!;
+                    existing.totalQty += totalQty;
+                    existing.hasDanfe = existing.hasDanfe || (data.hasDanfe ?? false);
+                    if (!existing.pageIndices.includes(pageIndex)) {
+                        existing.pageIndices.push(pageIndex);
+                    }
+                } else {
+                    map.set(key, {
+                        skuName: isDiversos ? `DIVERSOS (${skuName})` : skuName,
+                        masterSku: key,
+                        product,
+                        totalQty,
+                        color: color.toUpperCase(),
+                        hasDanfe: data.hasDanfe ?? false,
+                        pageIndices: [pageIndex],
+                    });
+                }
+            });
+        });
+
+        return Array.from(map.values());
+    }, [extractedData, groupSkusByMasterProduct]);
+
+    // ── SKUs filtrados/ordenados para ferramentas ────────────────────────
+    const ferramentasSkuList = useMemo(() => {
+        let list = [...skuSummaryData];
+
+        // Filtrar por busca
+        if (ferramentasSearch.trim()) {
+            const q = ferramentasSearch.trim().toLowerCase();
+            list = list.filter(item =>
+                item.skuName.toLowerCase().includes(q) ||
+                item.masterSku.toLowerCase().includes(q) ||
+                item.color.toLowerCase().includes(q)
+            );
+        }
+
+        // Mostrar apenas gerados
+        if (showOnlyGenerated) {
+            list = list.filter(item => generatedDocSkus.has(item.masterSku));
+        }
+
+        // Ordenação
+        list.sort((a, b) => {
+            let cmp = 0;
+            if (ferramentasSortMode === 'alpha') {
+                cmp = a.skuName.localeCompare(b.skuName, 'pt-BR');
+            } else {
+                cmp = a.totalQty - b.totalQty;
+            }
+            return ferramentasSortDir === 'desc' ? -cmp : cmp;
+        });
+
+        return list;
+    }, [skuSummaryData, ferramentasSearch, showOnlyGenerated, generatedDocSkus, ferramentasSortMode, ferramentasSortDir]);
+
+    // ── Gerar PDF para um SKU específico ────────────────────────────────
+    const handleGenerateDocForSku = useCallback(async (skuKey: string) => {
+        const item = skuSummaryData.find(s => s.masterSku === skuKey);
+        if (!item) return;
+
+        // Montar previews e extractedData filtrados para este SKU
+        const filteredPreviews: string[] = [];
+        const filteredExtractedData = new Map<number, ExtractedZplData>();
+        let hasDanfe = false;
+        let newIdx = 0;
+
+        item.pageIndices.forEach(pageIdx => {
+            const data = extractedData.get(pageIdx);
+            if (data?.hasDanfe) hasDanfe = true;
+            // DANFE page (pageIdx) + Label page (pageIdx + 1)
+            const danfePreview = previews[pageIdx] || '';
+            const labelPreview = previews[pageIdx + 1] || '';
+            filteredPreviews.push(danfePreview, labelPreview);
+            if (data) {
+                filteredExtractedData.set(newIdx, data);
+            }
+            newIdx += 2;
+        });
+
+        const docCount = item.pageIndices.length;
+
+        try {
+            const pdfBlob = await buildPdf(filteredPreviews, filteredExtractedData, settings, includeMode, stockItems, skuLinks);
+            const url = URL.createObjectURL(pdfBlob);
+            window.open(url, '_blank');
+
+            setGeneratedDocSkus(prev => {
+                const next = new Map(prev);
+                next.set(skuKey, { cor: item.color, zplContent: '', hasDanfe, count: docCount });
+                return next;
+            });
+
+            addToast(`PDF gerado para ${item.skuName} - ${docCount} par(es)`, 'success');
+        } catch (error) {
+            addToast(`Erro ao gerar PDF: ${error instanceof Error ? error.message : 'Erro desconhecido'}`, 'error');
+        }
+    }, [skuSummaryData, extractedData, previews, settings, includeMode, stockItems, skuLinks, addToast]);
+
+    // ── Gerar PDFs para todos selecionados ──────────────────────────────
+    const handleGenerateAllSelected = useCallback(async () => {
+        if (selectedSkuNames.size === 0) {
+            addToast('Selecione ao menos um SKU para gerar documentos.', 'warning');
+            return;
+        }
+
+        // Montar previews e extractedData filtrados para TODOS os SKUs selecionados
+        const filteredPreviews: string[] = [];
+        const filteredExtractedData = new Map<number, ExtractedZplData>();
+        let hasDanfe = false;
+        let newIdx = 0;
+        let totalPairs = 0;
+
+        selectedSkuNames.forEach(skuKey => {
+            const item = skuSummaryData.find(s => s.masterSku === skuKey);
+            if (!item) return;
+
+            item.pageIndices.forEach(pageIdx => {
+                const data = extractedData.get(pageIdx);
+                if (data?.hasDanfe) hasDanfe = true;
+                const danfePreview = previews[pageIdx] || '';
+                const labelPreview = previews[pageIdx + 1] || '';
+                filteredPreviews.push(danfePreview, labelPreview);
+                if (data) {
+                    filteredExtractedData.set(newIdx, data);
+                }
+                newIdx += 2;
+                totalPairs++;
+            });
+
+            // Marcar como gerado no mapa
+            setGeneratedDocSkus(prev => {
+                const next = new Map(prev);
+                next.set(skuKey, { cor: item.color, zplContent: '', hasDanfe: item.hasDanfe, count: item.pageIndices.length });
+                return next;
+            });
+        });
+
+        try {
+            const pdfBlob = await buildPdf(filteredPreviews, filteredExtractedData, settings, includeMode, stockItems, skuLinks);
+            const url = URL.createObjectURL(pdfBlob);
+            window.open(url, '_blank');
+
+            setShowOnlyGenerated(true);
+            addToast(`PDF gerado com ${totalPairs} par(es) de ${selectedSkuNames.size} SKU(s)!`, 'success');
+        } catch (error) {
+            addToast(`Erro ao gerar PDF: ${error instanceof Error ? error.message : 'Erro desconhecido'}`, 'error');
+        }
+    }, [selectedSkuNames, skuSummaryData, extractedData, previews, settings, includeMode, stockItems, skuLinks, addToast]);
+
+    // ── Download ZPL de todos os documentos gerados ────────────────────
+    const handleDownloadGeneratedDocs = useCallback(() => {
+        if (generatedDocSkus.size === 0) {
+            addToast('Nenhum documento gerado ainda.', 'warning');
+            return;
+        }
+
+        // Coletar ZPL de todos os SKUs gerados
+        const zplBlocks: string[] = [];
+        let hasDanfe = false;
+        const allSelected = selectedSkuNames.size === 0 || selectedSkuNames.size === skuSummaryData.length;
+
+        generatedDocSkus.forEach((doc, skuKey) => {
+            if (doc.hasDanfe) hasDanfe = true;
+            const item = skuSummaryData.find(s => s.masterSku === skuKey);
+            if (item) {
+                item.pageIndices.forEach(pageIdx => {
+                    if (zplPages[pageIdx]) zplBlocks.push(zplPages[pageIdx]);
+                    if (zplPages[pageIdx + 1]) zplBlocks.push(zplPages[pageIdx + 1]);
+                });
+            }
+        });
+
+        const totalCount = generatedDocSkus.size;
+        let fileName: string;
+        if (allSelected) {
+            fileName = `total (${totalCount}) etiquetas`;
+            if (hasDanfe) fileName += ' com danfe';
+        } else {
+            const names = Array.from(generatedDocSkus.entries()).map(([key, doc]) => {
+                const item = skuSummaryData.find(s => s.masterSku === key);
+                return item ? item.skuName : key;
+            });
+            fileName = names.join(' + ');
+            if (hasDanfe) fileName += ' com danfe';
+        }
+
+        const mergedZpl = mergeZplBlocks(zplBlocks);
+        const blob = new Blob([mergedZpl], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${fileName}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        addToast(`Arquivo "${fileName}.txt" baixado!`, 'success');
+    }, [generatedDocSkus, selectedSkuNames, skuSummaryData, zplPages, addToast]);
+
+    // ── Selecionar/desselecionar todos ──────────────────────────────────
+    const handleToggleSelectAllSkus = useCallback(() => {
+        if (selectedSkuNames.size === ferramentasSkuList.length) {
+            setSelectedSkuNames(new Set());
+        } else {
+            setSelectedSkuNames(new Set(ferramentasSkuList.map(s => s.masterSku)));
+        }
+    }, [selectedSkuNames, ferramentasSkuList]);
 
     // Simply delegate the start command to the prop function (which is now in App.tsx)
     const startProcessing = (mode: ProcessingMode) => {
@@ -1015,6 +1272,12 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                             ))}
                                         </div>
                                         <button 
+                                            onClick={() => setShowFerramentas(p => !p)} 
+                                            className={`flex items-center gap-1.5 text-[10px] font-black uppercase px-4 py-2 rounded-xl border transition-all ${showFerramentas ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-600 hover:border-indigo-400'}`}
+                                        >
+                                            <Filter size={14} /> Ferramentas
+                                        </button>
+                                        <button 
                                             onClick={handlePdfAction} 
                                             disabled={previews.length === 0 || previews.every(p => !p) || isProcessing} 
                                             className="flex items-center gap-2 text-xs px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider shadow-lg disabled:opacity-50 transition-all hover:scale-[1.02] active:scale-[0.98]"
@@ -1023,6 +1286,202 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                         </button>
                                     </div>
                                 </div>
+
+                                {/* ── Painel Ferramentas de Etiquetas ───────────────────────── */}
+                                {showFerramentas && skuSummaryData.length > 0 && (
+                                    <div className="flex-shrink-0 mb-6 border-2 border-indigo-100 dark:border-indigo-900/50 rounded-2xl bg-indigo-50/30 dark:bg-indigo-950/20 overflow-hidden animate-in slide-in-from-top-2 duration-200">
+                                        {/* Header */}
+                                        <div className="px-4 py-3 bg-indigo-50 dark:bg-indigo-900/30 border-b border-indigo-100 dark:border-indigo-800/50 flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <Package size={16} className="text-indigo-600 dark:text-indigo-400" />
+                                                <h3 className="text-sm font-black text-indigo-800 dark:text-indigo-200 uppercase tracking-tight">Ferramentas de Etiquetas</h3>
+                                                <span className="bg-indigo-200 dark:bg-indigo-800 text-indigo-700 dark:text-indigo-300 text-[9px] font-black px-2 py-0.5 rounded-full">
+                                                    {skuSummaryData.length} SKU{skuSummaryData.length !== 1 ? 's' : ''}
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                {/* Busca */}
+                                                <div className="relative">
+                                                    <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-indigo-400" />
+                                                    <input
+                                                        type="text"
+                                                        value={ferramentasSearch}
+                                                        onChange={e => setFerramentasSearch(e.target.value)}
+                                                        placeholder="Buscar SKU..."
+                                                        className="bg-white dark:bg-gray-800 border border-indigo-200 dark:border-indigo-700 rounded-lg pl-7 pr-3 py-1 text-[10px] focus:outline-none focus:border-indigo-400 w-40"
+                                                    />
+                                                </div>
+                                                {/* Ordenação */}
+                                                <div className="flex items-center bg-white dark:bg-gray-800 rounded-lg border border-indigo-200 dark:border-indigo-700 overflow-hidden">
+                                                    <button
+                                                        onClick={() => setFerramentasSortMode('alpha')}
+                                                        className={`px-2 py-1 text-[9px] font-black uppercase flex items-center gap-1 transition-all ${ferramentasSortMode === 'alpha' ? 'bg-indigo-600 text-white' : 'text-indigo-600 hover:bg-indigo-50'}`}
+                                                        title="Ordenar Alfabeticamente"
+                                                    >
+                                                        <SortAsc size={10} /> A-Z
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setFerramentasSortMode('qty')}
+                                                        className={`px-2 py-1 text-[9px] font-black uppercase flex items-center gap-1 transition-all ${ferramentasSortMode === 'qty' ? 'bg-indigo-600 text-white' : 'text-indigo-600 hover:bg-indigo-50'}`}
+                                                        title="Ordenar por Quantidade"
+                                                    >
+                                                        <Hash size={10} /> Qtd
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setFerramentasSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+                                                        className="px-1.5 py-1 text-indigo-500 hover:bg-indigo-50 transition-all"
+                                                        title={ferramentasSortDir === 'asc' ? 'Crescente' : 'Decrescente'}
+                                                    >
+                                                        {ferramentasSortDir === 'asc' ? <SortAsc size={10} /> : <SortDesc size={10} />}
+                                                    </button>
+                                                </div>
+                                                {/* Mostrar só gerados */}
+                                                <button
+                                                    onClick={() => setShowOnlyGenerated(p => !p)}
+                                                    className={`text-[9px] font-black uppercase px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1 ${showOnlyGenerated ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white dark:bg-gray-800 text-emerald-600 border-emerald-200 dark:border-emerald-700 hover:bg-emerald-50'}`}
+                                                >
+                                                    <CheckCircle2 size={10} /> {showOnlyGenerated ? 'Gerados' : 'Todos'}
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* Botões de ação do topo */}
+                                        <div className="px-4 py-2 bg-white/50 dark:bg-gray-800/50 border-b border-indigo-100 dark:border-indigo-800/50 flex items-center justify-between gap-2 flex-wrap">
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    onClick={handleToggleSelectAllSkus}
+                                                    className="text-[9px] font-black uppercase px-3 py-1.5 rounded-lg border border-indigo-200 dark:border-indigo-700 bg-white dark:bg-gray-800 text-indigo-600 hover:bg-indigo-50 transition-all flex items-center gap-1"
+                                                >
+                                                    <CheckSquare size={10} /> {selectedSkuNames.size === ferramentasSkuList.length ? 'Desselecionar Tudo' : 'Selecionar Tudo'}
+                                                </button>
+                                                <span className="text-[9px] text-indigo-500 font-bold">
+                                                    {selectedSkuNames.size} selecionado{selectedSkuNames.size !== 1 ? 's' : ''}
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    onClick={handleGenerateAllSelected}
+                                                    disabled={selectedSkuNames.size === 0}
+                                                    className="text-[10px] font-black uppercase px-4 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shadow-md"
+                                                >
+                                                    <Printer size={12} /> Gerar PDF ({selectedSkuNames.size})
+                                                </button>
+                                                {generatedDocSkus.size > 0 && (
+                                                    <button
+                                                        onClick={handleDownloadGeneratedDocs}
+                                                        className="text-[10px] font-black uppercase px-4 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-all flex items-center gap-1.5 shadow-md"
+                                                    >
+                                                        <Download size={12} /> Baixar ZPL ({generatedDocSkus.size})
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {/* Lista de SKUs */}
+                                        <div className="max-h-72 overflow-y-auto divide-y divide-indigo-100 dark:divide-indigo-800/40">
+                                            {ferramentasSkuList.length === 0 ? (
+                                                <div className="py-6 text-center text-xs text-indigo-400 font-bold">
+                                                    {showOnlyGenerated ? 'Nenhum documento gerado ainda.' : 'Nenhum SKU encontrado.'}
+                                                </div>
+                                            ) : ferramentasSkuList.map(item => {
+                                                const isSelected = selectedSkuNames.has(item.masterSku);
+                                                const generatedDoc = generatedDocSkus.get(item.masterSku);
+                                                const isDiversos = item.skuName.startsWith('DIVERSOS');
+
+                                                return (
+                                                    <div key={item.masterSku} className={`flex items-center gap-3 px-4 py-3 transition-colors ${generatedDoc ? 'bg-emerald-50/60 dark:bg-emerald-900/20 border-l-4 border-emerald-500' : isSelected ? 'bg-indigo-100/40 dark:bg-indigo-900/30' : 'hover:bg-indigo-50/50 dark:hover:bg-indigo-900/20'}`}>
+                                                        {/* Checkbox */}
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={isSelected}
+                                                            onChange={() => {
+                                                                setSelectedSkuNames(prev => {
+                                                                    const next = new Set(prev);
+                                                                    if (next.has(item.masterSku)) next.delete(item.masterSku);
+                                                                    else next.add(item.masterSku);
+                                                                    return next;
+                                                                });
+                                                            }}
+                                                            className="w-4 h-4 rounded border-indigo-300 text-indigo-600 focus:ring-indigo-500 flex-shrink-0"
+                                                        />
+
+                                                        {/* Info */}
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center gap-2 mb-0.5">
+                                                                <p className="text-[11px] font-black text-gray-800 dark:text-gray-200 truncate uppercase tracking-tight">{item.skuName}</p>
+                                                                {isDiversos && (
+                                                                    <span className="bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300 text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase flex-shrink-0">Diversos</span>
+                                                                )}
+                                                            </div>
+                                                            <div className="flex items-center gap-2 text-[9px]">
+                                                                <span className="font-mono font-bold text-gray-500 dark:text-gray-400">{item.masterSku}</span>
+                                                                <span className="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-black px-1.5 py-0.5 rounded-full">
+                                                                    {item.totalQty} un
+                                                                </span>
+                                                                {item.hasDanfe && (
+                                                                    <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-black px-1.5 py-0.5 rounded-full">DANFE</span>
+                                                                )}
+                                                                <span className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 font-bold px-1.5 py-0.5 rounded-full">
+                                                                    {item.pageIndices.length} par{item.pageIndices.length !== 1 ? 'es' : ''}
+                                                                </span>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Ação */}
+                                                        <div className="flex items-center gap-2 flex-shrink-0">
+                                                            {/* Gerar PDF individual */}
+                                                            <button
+                                                                onClick={() => handleGenerateDocForSku(item.masterSku)}
+                                                                className={`text-[9px] font-black uppercase px-2.5 py-1.5 rounded-lg border transition-all flex items-center gap-1 ${
+                                                                    generatedDoc
+                                                                        ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-700'
+                                                                        : 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-700 hover:bg-indigo-100'
+                                                                }`}
+                                                            >
+                                                                {generatedDoc ? <><CheckCircle2 size={10} /> PDF Gerado ({generatedDoc.count})</> : <><Printer size={10} /> Gerar PDF</>}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+
+                                        {/* ── Resumo de Documentos Gerados ──────────────────────── */}
+                                        {generatedDocSkus.size > 0 && (
+                                            <div className="px-4 py-3 bg-emerald-50/50 dark:bg-emerald-900/20 border-t-2 border-emerald-100 dark:border-emerald-800/50">
+                                                <div className="flex items-center gap-2 mb-2">
+                                                    <FileText size={14} className="text-emerald-600 dark:text-emerald-400" />
+                                                    <h4 className="text-[11px] font-black text-emerald-800 dark:text-emerald-200 uppercase tracking-tight">PDFs Gerados ({generatedDocSkus.size})</h4>
+                                                </div>
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                                                    {Array.from(generatedDocSkus.entries()).map(([key, doc]) => {
+                                                        const item = skuSummaryData.find(s => s.masterSku === key);
+                                                        const fileName = `${item?.skuName || key}${doc.hasDanfe ? ' com danfe' : ''}`;
+                                                        return (
+                                                            <div key={key} className="flex items-center gap-2 bg-white dark:bg-gray-800 rounded-lg px-3 py-2 border border-emerald-200 dark:border-emerald-700 shadow-xs">
+                                                                <FileText size={12} className="text-emerald-500 flex-shrink-0" />
+                                                                <div className="min-w-0 flex-1">
+                                                                    <p className="text-[9px] font-bold text-gray-700 dark:text-gray-300 truncate" title={fileName}>{fileName}</p>
+                                                                    <p className="text-[8px] text-emerald-600 dark:text-emerald-400 font-black uppercase">{doc.count} par{doc.count !== 1 ? 'es' : ''} de etiqueta{doc.count !== 1 ? 's' : ''}</p>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                                {/* Totalizador */}
+                                                <div className="mt-2 flex items-center justify-between text-[9px] font-black uppercase text-emerald-700 dark:text-emerald-300">
+                                                    <span>Total: {(Array.from(generatedDocSkus.values()) as GeneratedDocInfo[]).reduce((acc, d) => acc + d.count, 0)} documentos em {generatedDocSkus.size} arquivo{generatedDocSkus.size !== 1 ? 's' : ''}</span>
+                                                    <button
+                                                        onClick={() => { setGeneratedDocSkus(new Map()); setShowOnlyGenerated(false); }}
+                                                        className="text-red-500 hover:text-red-700 transition-colors"
+                                                    >
+                                                        Limpar Gerados
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
 
                                 <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar pb-10">
                                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
@@ -1036,6 +1495,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                                 : (pairData?.isMercadoLivre ? settings.mercadoLivre : settings.shopee);
 
                                             const previewLines: string[] = [];
+                                            let isPairGenerated = false;
                                             if (pairData && pairData.skus.length > 0) {
                                                 const grouped = groupSkusByMasterProduct(pairData.skus);
                                                 grouped.forEach(({ product, totalQty }) => {
@@ -1046,11 +1506,22 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                                         .replace('{name}', finalName)
                                                         .replace('{qty}', String(totalQty));
                                                     previewLines.push(line);
+                                                    if (product && generatedDocSkus.has(product.code.toUpperCase())) {
+                                                        isPairGenerated = true;
+                                                    }
                                                 });
                                             }
 
                                             return (
                                                 <div key={index} className="space-y-3 relative group animate-in fade-in zoom-in duration-300">
+                                                    {isPairGenerated && !printedIndices.has(index) && (
+                                                        <div className="absolute inset-0 bg-emerald-600/70 backdrop-blur-[1px] flex items-center justify-center z-10 rounded-2xl pointer-events-none border-2 border-emerald-400">
+                                                            <div className="flex flex-col items-center gap-1">
+                                                                <CheckCircle2 size={28} className="text-white" />
+                                                                <span className="text-white font-black text-[10px] uppercase tracking-wider">PDF Gerado</span>
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                     {printedIndices.has(index) && (
                                                         <div className="absolute inset-0 bg-emerald-900/80 backdrop-blur-[2px] flex items-center justify-center z-10 rounded-2xl pointer-events-none border-2 border-emerald-400">
                                                             <div className="flex flex-col items-center gap-2">
