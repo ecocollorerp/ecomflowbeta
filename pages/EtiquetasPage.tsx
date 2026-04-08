@@ -449,10 +449,14 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
     const [showFerramentas, setShowFerramentas] = useState(false);
     const [selectedSkuNames, setSelectedSkuNames] = useState<Set<string>>(new Set());
     const [ferramentasSortMode, setFerramentasSortMode] = useState<'alpha' | 'qty'>('alpha');
+    const [minUnitsFilter, setMinUnitsFilter] = useState<number>(0);
     const [ferramentasSortDir, setFerramentasSortDir] = useState<'asc' | 'desc'>('asc');
     const [generatedDocSkus, setGeneratedDocSkus] = useState<Map<string, GeneratedDocInfo>>(new Map());
     const [showOnlyGenerated, setShowOnlyGenerated] = useState(false);
     const [ferramentasSearch, setFerramentasSearch] = useState('');
+    const [showOnlyGeneratedPreviews, setShowOnlyGeneratedPreviews] = useState(false);
+    const [showOnlyNotGeneratedPreviews, setShowOnlyNotGeneratedPreviews] = useState(false);
+    const [showOnlyPrintedPreviews, setShowOnlyPrintedPreviews] = useState(false);
 
     useEffect(() => {
         const refresh = () => setPendingItems(loadPendingZpl());
@@ -646,6 +650,8 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
         masterSku: string;
         product: StockItem | null;
         totalQty: number;
+        etiquetaOnlyQty: number;
+        etiquetaOnlyPages: number;
         color: string;
         hasDanfe: boolean;
         pageIndices: number[]; // indices in zplPages (pair start)
@@ -676,9 +682,14 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                     color = primaryProduct?.color || 'Sem cor';
                 }
 
+                const isEtiquetaOnly = !(data.hasDanfe ?? false);
                 if (map.has(key)) {
                     const existing = map.get(key)!;
                     existing.totalQty += totalQty;
+                    if (isEtiquetaOnly) {
+                        existing.etiquetaOnlyQty += totalQty;
+                        existing.etiquetaOnlyPages += 1;
+                    }
                     existing.hasDanfe = existing.hasDanfe || (data.hasDanfe ?? false);
                     if (!existing.pageIndices.includes(pageIndex)) {
                         existing.pageIndices.push(pageIndex);
@@ -689,6 +700,8 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                         masterSku: key,
                         product,
                         totalQty,
+                        etiquetaOnlyQty: isEtiquetaOnly ? totalQty : 0,
+                        etiquetaOnlyPages: isEtiquetaOnly ? 1 : 0,
                         color: color.toUpperCase(),
                         hasDanfe: data.hasDanfe ?? false,
                         pageIndices: [pageIndex],
@@ -719,19 +732,46 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
             list = list.filter(item => generatedDocSkus.has(item.masterSku));
         }
 
+        // Filtro por mínimo de unidades
+        if (minUnitsFilter > 0) {
+            list = list.filter(item => item.pageIndices.length >= minUnitsFilter);
+        }
+
         // Ordenação
         list.sort((a, b) => {
             let cmp = 0;
             if (ferramentasSortMode === 'alpha') {
                 cmp = a.skuName.localeCompare(b.skuName, 'pt-BR');
             } else {
-                cmp = a.totalQty - b.totalQty;
+                // Quantidade de etiquetas (maior primeiro)
+                cmp = b.pageIndices.length - a.pageIndices.length;
             }
             return ferramentasSortDir === 'desc' ? -cmp : cmp;
         });
 
         return list;
-    }, [skuSummaryData, ferramentasSearch, showOnlyGenerated, generatedDocSkus, ferramentasSortMode, ferramentasSortDir]);
+    }, [skuSummaryData, ferramentasSearch, showOnlyGenerated, generatedDocSkus, ferramentasSortMode, ferramentasSortDir, minUnitsFilter]);
+
+    // ── Resumo por cor (somente etiquetas, sem DANFE) ───────────────────
+    const colorSummary = useMemo(() => {
+        const map = new Map<string, { color: string; totalEtiquetas: number; totalQty: number; skuCount: number }>();
+        ferramentasSkuList.forEach(item => {
+            const c = item.color || 'SEM COR';
+            if (c === 'SEM COR') return;
+            if (map.has(c)) {
+                const existing = map.get(c)!;
+                existing.totalEtiquetas += item.pageIndices.length;
+                existing.totalQty += item.totalQty;
+                existing.skuCount += 1;
+            } else {
+                map.set(c, { color: c, totalEtiquetas: item.pageIndices.length, totalQty: item.totalQty, skuCount: 1 });
+            }
+        });
+        return Array.from(map.values()).sort((a, b) => b.totalEtiquetas - a.totalEtiquetas);
+    }, [ferramentasSkuList]);
+
+    const totalEtiquetas = useMemo(() => ferramentasSkuList.reduce((acc, i) => acc + i.pageIndices.length, 0), [ferramentasSkuList]);
+    const totalUnits = useMemo(() => ferramentasSkuList.reduce((acc, i) => acc + i.totalQty, 0), [ferramentasSkuList]);
 
     // ── Gerar PDF para um SKU específico ────────────────────────────────
     const handleGenerateDocForSku = useCallback(async (skuKey: string) => {
@@ -1277,6 +1317,30 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                         >
                                             <Filter size={14} /> Ferramentas
                                         </button>
+                                        {generatedDocSkus.size > 0 && (
+                                            <button 
+                                                onClick={() => { setShowOnlyGeneratedPreviews(p => !p); setShowOnlyNotGeneratedPreviews(false); }} 
+                                                className={`flex items-center gap-1.5 text-[10px] font-black uppercase px-4 py-2 rounded-xl border transition-all ${showOnlyGeneratedPreviews ? 'bg-emerald-600 text-white border-emerald-600 shadow-lg' : 'bg-white dark:bg-gray-700 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-700 hover:border-emerald-400'}`}
+                                            >
+                                                <CheckCircle2 size={14} /> {showOnlyGeneratedPreviews ? 'Só Gerados' : 'Gerados'}
+                                            </button>
+                                        )}
+                                        {generatedDocSkus.size > 0 && (
+                                            <button 
+                                                onClick={() => { setShowOnlyNotGeneratedPreviews(p => !p); setShowOnlyGeneratedPreviews(false); }} 
+                                                className={`flex items-center gap-1.5 text-[10px] font-black uppercase px-4 py-2 rounded-xl border transition-all ${showOnlyNotGeneratedPreviews ? 'bg-orange-600 text-white border-orange-600 shadow-lg' : 'bg-white dark:bg-gray-700 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-700 hover:border-orange-400'}`}
+                                            >
+                                                <Eye size={14} /> {showOnlyNotGeneratedPreviews ? 'Só Não Gerados' : 'Não Gerados'}
+                                            </button>
+                                        )}
+                                        {printedIndices.size > 0 && (
+                                            <button 
+                                                onClick={() => setShowOnlyPrintedPreviews(p => !p)} 
+                                                className={`flex items-center gap-1.5 text-[10px] font-black uppercase px-4 py-2 rounded-xl border transition-all ${showOnlyPrintedPreviews ? 'bg-blue-600 text-white border-blue-600 shadow-lg' : 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400 border-blue-200 dark:border-blue-700 hover:border-blue-400'}`}
+                                            >
+                                                <Printer size={14} /> {showOnlyPrintedPreviews ? 'Só Emitidos' : 'Mostrar Emitidos'}
+                                            </button>
+                                        )}
                                         <button 
                                             onClick={handlePdfAction} 
                                             disabled={previews.length === 0 || previews.every(p => !p) || isProcessing} 
@@ -1297,6 +1361,9 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                                 <h3 className="text-sm font-black text-indigo-800 dark:text-indigo-200 uppercase tracking-tight">Ferramentas de Etiquetas</h3>
                                                 <span className="bg-indigo-200 dark:bg-indigo-800 text-indigo-700 dark:text-indigo-300 text-[9px] font-black px-2 py-0.5 rounded-full">
                                                     {skuSummaryData.length} SKU{skuSummaryData.length !== 1 ? 's' : ''}
+                                                </span>
+                                                <span className="bg-blue-200 dark:bg-blue-800 text-blue-700 dark:text-blue-300 text-[9px] font-black px-2 py-0.5 rounded-full" title="Total de etiquetas">
+                                                    {totalEtiquetas} etiqueta{totalEtiquetas !== 1 ? 's' : ''}
                                                 </span>
                                             </div>
                                             <div className="flex items-center gap-2">
@@ -1323,9 +1390,9 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                                     <button
                                                         onClick={() => setFerramentasSortMode('qty')}
                                                         className={`px-2 py-1 text-[9px] font-black uppercase flex items-center gap-1 transition-all ${ferramentasSortMode === 'qty' ? 'bg-indigo-600 text-white' : 'text-indigo-600 hover:bg-indigo-50'}`}
-                                                        title="Ordenar por Quantidade"
+                                                        title="Ordenar por Total de Unidades"
                                                     >
-                                                        <Hash size={10} /> Qtd
+                                                        <Hash size={10} /> Un
                                                     </button>
                                                     <button
                                                         onClick={() => setFerramentasSortDir(d => d === 'asc' ? 'desc' : 'asc')}
@@ -1334,6 +1401,19 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                                     >
                                                         {ferramentasSortDir === 'asc' ? <SortAsc size={10} /> : <SortDesc size={10} />}
                                                     </button>
+                                                </div>
+                                                {/* Filtro mínimo de unidades */}
+                                                <div className="relative">
+                                                    <Hash size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-indigo-400" />
+                                                    <input
+                                                        type="number"
+                                                        min={0}
+                                                        value={minUnitsFilter || ''}
+                                                        onChange={e => setMinUnitsFilter(Math.max(0, parseInt(e.target.value) || 0))}
+                                                        placeholder="Mín. un."
+                                                        className="bg-white dark:bg-gray-800 border border-indigo-200 dark:border-indigo-700 rounded-lg pl-7 pr-2 py-1 text-[10px] focus:outline-none focus:border-indigo-400 w-20"
+                                                        title="Mostrar apenas SKUs com no mínimo X unidades"
+                                                    />
                                                 </div>
                                                 {/* Mostrar só gerados */}
                                                 <button
@@ -1377,6 +1457,29 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                             </div>
                                         </div>
 
+                                        {/* ── Resumo por Cor (somente etiquetas) ──────────────────── */}
+                                        {colorSummary.length > 0 && (
+                                            <div className="px-4 py-2.5 bg-white/40 dark:bg-gray-800/40 border-b border-indigo-100 dark:border-indigo-800/50">
+                                                <div className="flex items-center gap-2 mb-1.5">
+                                                    <span className="text-[9px] font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">Etiquetas por Cor</span>
+                                                    <span className="text-[9px] font-bold text-gray-500 dark:text-gray-400">
+                                                        ({totalEtiquetas} etiqueta{totalEtiquetas !== 1 ? 's' : ''} · {totalUnits} un)
+                                                    </span>
+                                                </div>
+                                                <div className="flex flex-wrap gap-1.5">
+                                                    {colorSummary.map(cs => (
+                                                        <span key={cs.color} className="inline-flex items-center gap-1 bg-gray-100 dark:bg-gray-700 text-[9px] font-bold px-2 py-1 rounded-lg">
+                                                            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: cs.color === 'SEM COR' ? '#9ca3af' : cs.color.toLowerCase().includes('branc') ? '#f3f4f6' : cs.color.toLowerCase().includes('pret') ? '#1f2937' : cs.color.toLowerCase().includes('azul') ? '#3b82f6' : cs.color.toLowerCase().includes('vermelh') ? '#ef4444' : cs.color.toLowerCase().includes('verd') ? '#22c55e' : cs.color.toLowerCase().includes('amarel') ? '#eab308' : cs.color.toLowerCase().includes('rosa') ? '#ec4899' : cs.color.toLowerCase().includes('roxo') || cs.color.toLowerCase().includes('lilás') ? '#8b5cf6' : cs.color.toLowerCase().includes('cinz') ? '#6b7280' : cs.color.toLowerCase().includes('marr') ? '#92400e' : cs.color.toLowerCase().includes('laranj') ? '#f97316' : '#a78bfa', border: cs.color.toLowerCase().includes('branc') ? '1px solid #d1d5db' : 'none' }} />
+                                                            <span className="text-gray-700 dark:text-gray-300 uppercase">{cs.color}</span>
+                                                            <span className="text-indigo-600 dark:text-indigo-400 font-black">{cs.totalEtiquetas} etiq.</span>
+                                                            <span className="text-gray-400">·</span>
+                                                            <span className="text-gray-500 dark:text-gray-400">{cs.totalQty} un</span>
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+
                                         {/* Lista de SKUs */}
                                         <div className="max-h-72 overflow-y-auto divide-y divide-indigo-100 dark:divide-indigo-800/40">
                                             {ferramentasSkuList.length === 0 ? (
@@ -1415,15 +1518,20 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                                             </div>
                                                             <div className="flex items-center gap-2 text-[9px]">
                                                                 <span className="font-mono font-bold text-gray-500 dark:text-gray-400">{item.masterSku}</span>
-                                                                <span className="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-black px-1.5 py-0.5 rounded-full">
-                                                                    {item.totalQty} un
+                                                                <span className="bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-black px-1.5 py-0.5 rounded-full" title="Etiquetas deste SKU">
+                                                                    {item.pageIndices.length} etiqueta{item.pageIndices.length !== 1 ? 's' : ''}
                                                                 </span>
+                                                                <span className="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-black px-1.5 py-0.5 rounded-full" title="Quantidade total do SKU">
+                                                                    {item.totalQty} un total
+                                                                </span>
+                                                                {item.color !== 'SEM COR' && (
+                                                                    <span className="bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 font-black px-1.5 py-0.5 rounded-full" title="Cor do produto">
+                                                                        {item.color}
+                                                                    </span>
+                                                                )}
                                                                 {item.hasDanfe && (
                                                                     <span className="bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-black px-1.5 py-0.5 rounded-full">DANFE</span>
                                                                 )}
-                                                                <span className="bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 font-bold px-1.5 py-0.5 rounded-full">
-                                                                    {item.pageIndices.length} par{item.pageIndices.length !== 1 ? 'es' : ''}
-                                                                </span>
                                                             </div>
                                                         </div>
 
@@ -1511,6 +1619,13 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                                     }
                                                 });
                                             }
+
+                                            // Filtro: mostrar apenas os que já tiveram PDF gerado (via botão header ou via ferramentas)
+                                            if ((showOnlyGeneratedPreviews || showOnlyGenerated) && !isPairGenerated) return null;
+                                            // Filtro: mostrar apenas os que NÃO tiveram PDF gerado
+                                            if (showOnlyNotGeneratedPreviews && isPairGenerated) return null;
+                                            // Filtro: mostrar apenas os emitidos/impressos
+                                            if (showOnlyPrintedPreviews && !printedIndices.has(index)) return null;
 
                                             return (
                                                 <div key={index} className="space-y-3 relative group animate-in fade-in zoom-in duration-300">
