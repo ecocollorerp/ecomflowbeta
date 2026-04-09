@@ -834,12 +834,15 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
         let hasDanfe = false;
         let newIdx = 0;
         let totalPairs = 0;
+        const processedPageIndices = new Set<number>();
 
         selectedSkuNames.forEach(skuKey => {
             const item = skuSummaryData.find(s => s.masterSku === skuKey);
             if (!item) return;
 
             item.pageIndices.forEach(pageIdx => {
+                if (processedPageIndices.has(pageIdx)) return;
+                processedPageIndices.add(pageIdx);
                 const data = extractedData.get(pageIdx);
                 if (data?.hasDanfe) hasDanfe = true;
                 const danfePreview = previews[pageIdx] || '';
@@ -883,12 +886,15 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
         const zplBlocks: string[] = [];
         let hasDanfe = false;
         const allSelected = selectedSkuNames.size === 0 || selectedSkuNames.size === skuSummaryData.length;
+        const processedPageIndices = new Set<number>();
 
         generatedDocSkus.forEach((doc, skuKey) => {
             if (doc.hasDanfe) hasDanfe = true;
             const item = skuSummaryData.find(s => s.masterSku === skuKey);
             if (item) {
                 item.pageIndices.forEach(pageIdx => {
+                    if (processedPageIndices.has(pageIdx)) return;
+                    processedPageIndices.add(pageIdx);
                     if (zplPages[pageIdx]) zplBlocks.push(zplPages[pageIdx]);
                     if (zplPages[pageIdx + 1]) zplBlocks.push(zplPages[pageIdx + 1]);
                 });
