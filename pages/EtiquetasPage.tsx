@@ -452,6 +452,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
     const [minUnitsFilter, setMinUnitsFilter] = useState<number>(0);
     const [unitsFilterMode, setUnitsFilterMode] = useState<'exact' | 'gte'>('exact');
     const [ferramentasSortDir, setFerramentasSortDir] = useState<'asc' | 'desc'>('asc');
+    const [sortPagesWithinProduct, setSortPagesWithinProduct] = useState(false);
     const [generatedDocSkus, setGeneratedDocSkus] = useState<Map<string, GeneratedDocInfo>>(new Map());
     const [showOnlyGenerated, setShowOnlyGenerated] = useState(false);
     const [ferramentasSearch, setFerramentasSearch] = useState('');
@@ -621,6 +622,18 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
         return Array.from(grouped.values());
     }, [skuLinkMap, stockItemMap]);
 
+    // Helper: ordena pageIndices por quantidade total de SKUs na página (menor → maior)
+    const sortPageIndicesByQty = useCallback((indices: number[]): number[] => {
+        if (!sortPagesWithinProduct) return indices;
+        return [...indices].sort((a, b) => {
+            const dataA = extractedData.get(a);
+            const dataB = extractedData.get(b);
+            const qtyA = dataA ? dataA.skus.reduce((sum, s) => sum + s.qty, 0) : 0;
+            const qtyB = dataB ? dataB.skus.reduce((sum, s) => sum + s.qty, 0) : 0;
+            return qtyA - qtyB; // menor primeiro
+        });
+    }, [sortPagesWithinProduct, extractedData]);
+
     const filteredPendingItems = useMemo(() => {
         const q = pendSearch.trim().toLowerCase();
         if (!q) return pendingItems;
@@ -759,23 +772,29 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
 
     // ── Resumo por cor (somente etiquetas, sem DANFE) ───────────────────
     const colorSummary = useMemo(() => {
-        const map = new Map<string, { color: string; totalEtiquetas: number; totalQty: number; skuCount: number }>();
+        const map = new Map<string, { color: string; uniquePages: Set<number>; totalQty: number; skuCount: number }>();
         ferramentasSkuList.forEach(item => {
             const c = item.color || 'SEM COR';
             if (c === 'SEM COR') return;
             if (map.has(c)) {
                 const existing = map.get(c)!;
-                existing.totalEtiquetas += item.pageIndices.length;
+                item.pageIndices.forEach(p => existing.uniquePages.add(p));
                 existing.totalQty += item.totalQty;
                 existing.skuCount += 1;
             } else {
-                map.set(c, { color: c, totalEtiquetas: item.pageIndices.length, totalQty: item.totalQty, skuCount: 1 });
+                map.set(c, { color: c, uniquePages: new Set(item.pageIndices), totalQty: item.totalQty, skuCount: 1 });
             }
         });
-        return Array.from(map.values()).sort((a, b) => b.totalEtiquetas - a.totalEtiquetas);
+        return Array.from(map.values())
+            .map(({ uniquePages, ...rest }) => ({ ...rest, totalEtiquetas: uniquePages.size }))
+            .sort((a, b) => b.totalEtiquetas - a.totalEtiquetas);
     }, [ferramentasSkuList]);
 
-    const totalEtiquetas = useMemo(() => ferramentasSkuList.reduce((acc, i) => acc + i.pageIndices.length, 0), [ferramentasSkuList]);
+    const totalEtiquetas = useMemo(() => {
+        const uniquePages = new Set<number>();
+        ferramentasSkuList.forEach(i => i.pageIndices.forEach(p => uniquePages.add(p)));
+        return uniquePages.size;
+    }, [ferramentasSkuList]);
     const totalUnits = useMemo(() => ferramentasSkuList.reduce((acc, i) => acc + i.totalQty, 0), [ferramentasSkuList]);
 
     // ── Gerar PDF para um SKU específico ────────────────────────────────
@@ -789,7 +808,8 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
         let hasDanfe = false;
         let newIdx = 0;
 
-        item.pageIndices.forEach(pageIdx => {
+        const sortedIndices = sortPageIndicesByQty(item.pageIndices);
+        sortedIndices.forEach(pageIdx => {
             const data = extractedData.get(pageIdx);
             if (data?.hasDanfe) hasDanfe = true;
             // DANFE page (pageIdx) + Label page (pageIdx + 1)
@@ -819,7 +839,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
         } catch (error) {
             addToast(`Erro ao gerar PDF: ${error instanceof Error ? error.message : 'Erro desconhecido'}`, 'error');
         }
-    }, [skuSummaryData, extractedData, previews, settings, includeMode, stockItems, skuLinks, addToast]);
+    }, [skuSummaryData, extractedData, previews, settings, includeMode, stockItems, skuLinks, addToast, sortPageIndicesByQty]);
 
     // ── Gerar PDFs para todos selecionados ──────────────────────────────
     const handleGenerateAllSelected = useCallback(async () => {
@@ -836,11 +856,12 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
         let totalPairs = 0;
         const processedPageIndices = new Set<number>();
 
-        selectedSkuNames.forEach(skuKey => {
-            const item = skuSummaryData.find(s => s.masterSku === skuKey);
-            if (!item) return;
+        // Iterar na ordem definida pelo filtro/ordenação da lista
+        const orderedItems = ferramentasSkuList.filter(s => selectedSkuNames.has(s.masterSku));
 
-            item.pageIndices.forEach(pageIdx => {
+        orderedItems.forEach(item => {
+            const sortedIndices = sortPageIndicesByQty(item.pageIndices);
+            sortedIndices.forEach(pageIdx => {
                 if (processedPageIndices.has(pageIdx)) return;
                 processedPageIndices.add(pageIdx);
                 const data = extractedData.get(pageIdx);
@@ -858,7 +879,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
             // Marcar como gerado no mapa
             setGeneratedDocSkus(prev => {
                 const next = new Map(prev);
-                next.set(skuKey, { cor: item.color, zplContent: '', hasDanfe: item.hasDanfe, count: item.pageIndices.length });
+                next.set(item.masterSku, { cor: item.color, zplContent: '', hasDanfe: item.hasDanfe, count: item.pageIndices.length });
                 return next;
             });
         });
@@ -873,7 +894,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
         } catch (error) {
             addToast(`Erro ao gerar PDF: ${error instanceof Error ? error.message : 'Erro desconhecido'}`, 'error');
         }
-    }, [selectedSkuNames, skuSummaryData, extractedData, previews, settings, includeMode, stockItems, skuLinks, addToast]);
+    }, [selectedSkuNames, ferramentasSkuList, extractedData, previews, settings, includeMode, stockItems, skuLinks, addToast, sortPageIndicesByQty]);
 
     // ── Download ZPL de todos os documentos gerados ────────────────────
     const handleDownloadGeneratedDocs = useCallback(() => {
@@ -882,23 +903,26 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
             return;
         }
 
-        // Coletar ZPL de todos os SKUs gerados
+        // Coletar ZPL de todos os SKUs gerados, na ordem da lista filtrada
         const zplBlocks: string[] = [];
         let hasDanfe = false;
         const allSelected = selectedSkuNames.size === 0 || selectedSkuNames.size === skuSummaryData.length;
         const processedPageIndices = new Set<number>();
+        const generatedKeys = new Set(generatedDocSkus.keys());
 
-        generatedDocSkus.forEach((doc, skuKey) => {
-            if (doc.hasDanfe) hasDanfe = true;
-            const item = skuSummaryData.find(s => s.masterSku === skuKey);
-            if (item) {
-                item.pageIndices.forEach(pageIdx => {
-                    if (processedPageIndices.has(pageIdx)) return;
-                    processedPageIndices.add(pageIdx);
-                    if (zplPages[pageIdx]) zplBlocks.push(zplPages[pageIdx]);
-                    if (zplPages[pageIdx + 1]) zplBlocks.push(zplPages[pageIdx + 1]);
-                });
-            }
+        // Iterar na ordem definida pelo filtro/ordenação da lista
+        const orderedItems = ferramentasSkuList.filter(s => generatedKeys.has(s.masterSku));
+
+        orderedItems.forEach(item => {
+            const doc = generatedDocSkus.get(item.masterSku);
+            if (doc?.hasDanfe) hasDanfe = true;
+            const sortedIndices = sortPageIndicesByQty(item.pageIndices);
+            sortedIndices.forEach(pageIdx => {
+                if (processedPageIndices.has(pageIdx)) return;
+                processedPageIndices.add(pageIdx);
+                if (zplPages[pageIdx]) zplBlocks.push(zplPages[pageIdx]);
+                if (zplPages[pageIdx + 1]) zplBlocks.push(zplPages[pageIdx + 1]);
+            });
         });
 
         const totalCount = generatedDocSkus.size;
@@ -927,7 +951,7 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
         URL.revokeObjectURL(url);
 
         addToast(`Arquivo "${fileName}.txt" baixado!`, 'success');
-    }, [generatedDocSkus, selectedSkuNames, skuSummaryData, zplPages, addToast]);
+    }, [generatedDocSkus, selectedSkuNames, skuSummaryData, ferramentasSkuList, zplPages, addToast, sortPageIndicesByQty]);
 
     // ── Selecionar/desselecionar todos ──────────────────────────────────
     const handleToggleSelectAllSkus = useCallback(() => {
@@ -1413,6 +1437,14 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                                         {ferramentasSortDir === 'asc' ? <SortAsc size={10} /> : <SortDesc size={10} />}
                                                     </button>
                                                 </div>
+                                                {/* Ordenar páginas dentro de cada produto por qtd */}
+                                                <button
+                                                    onClick={() => setSortPagesWithinProduct(v => !v)}
+                                                    className={`px-2 py-1 text-[9px] font-black uppercase rounded-lg border flex items-center gap-1 transition-all ${sortPagesWithinProduct ? 'bg-indigo-600 text-white border-indigo-600' : 'border-indigo-200 dark:border-indigo-700 text-indigo-600 hover:bg-indigo-50 bg-white dark:bg-gray-800'}`}
+                                                    title="Ordenar etiquetas dentro de cada produto por quantidade (menor → maior)"
+                                                >
+                                                    <ArrowUpDown size={10} /> Menor → Maior
+                                                </button>
                                                 {/* Filtro por unidade */}
                                                 <div className="flex items-center gap-1">
                                                     <div className="relative">
@@ -1619,7 +1651,14 @@ const EtiquetasPage: React.FC<EtiquetasPageProps> = ({
                                                 </div>
                                                 {/* Totalizador */}
                                                 <div className="mt-2 flex items-center justify-between text-[9px] font-black uppercase text-emerald-700 dark:text-emerald-300">
-                                                    <span>Total: {(Array.from(generatedDocSkus.values()) as GeneratedDocInfo[]).reduce((acc, d) => acc + d.count, 0)} documentos em {generatedDocSkus.size} arquivo{generatedDocSkus.size !== 1 ? 's' : ''}</span>
+                                                    <span>Total: {(() => {
+                                                        const uniquePages = new Set<number>();
+                                                        generatedDocSkus.forEach((_, skuKey) => {
+                                                            const item = skuSummaryData.find(s => s.masterSku === skuKey);
+                                                            if (item) item.pageIndices.forEach(p => uniquePages.add(p));
+                                                        });
+                                                        return uniquePages.size;
+                                                    })()} documentos em {generatedDocSkus.size} arquivo{generatedDocSkus.size !== 1 ? 's' : ''}</span>
                                                     <button
                                                         onClick={() => { setGeneratedDocSkus(new Map()); setShowOnlyGenerated(false); }}
                                                         className="text-red-500 hover:text-red-700 transition-colors"
