@@ -1,11 +1,13 @@
 ﻿import React, { useState } from 'react';
-import { Factory, LogIn, Loader2, AlertTriangle } from 'lucide-react';
+import { Factory, LogIn, Loader2, AlertTriangle, WifiOff } from 'lucide-react';
 
 interface LoginPageProps {
     onLogin: (login: string, pass: string) => Promise<boolean>;
+    isOfflineMode?: boolean;
+    onOfflineLogin?: () => void;
 }
 
-const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
+const LoginPage: React.FC<LoginPageProps> = ({ onLogin, isOfflineMode, onOfflineLogin }) => {
     const [loginInput, setLoginInput] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
@@ -100,6 +102,22 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
                             {isLoading ? 'Entrando...' : 'Entrar'}
                         </button>
                     </div>
+
+                    {isOfflineMode && onOfflineLogin && (
+                        <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+                            <p className="text-xs text-center text-amber-600 dark:text-amber-400 mb-2 flex items-center justify-center gap-1">
+                                <WifiOff className="h-3.5 w-3.5" /> Banco de dados inacessível
+                            </p>
+                            <button
+                                type="button"
+                                onClick={onOfflineLogin}
+                                className="w-full flex justify-center items-center gap-2 py-2 px-4 border border-amber-400 text-sm font-medium rounded-md text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 hover:bg-amber-100 dark:hover:bg-amber-900/50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500"
+                            >
+                                <WifiOff className="h-4 w-4" />
+                                Entrar Offline (Etiquetas)
+                            </button>
+                        </div>
+                    )}
                 </form>
             </div>
         </div>

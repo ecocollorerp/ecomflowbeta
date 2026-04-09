@@ -121,6 +121,7 @@ const App: React.FC = () => {
     const [appStatus, setAppStatus] = useState<AppStatus>('initializing');
     const [currentUser, setCurrentUser] = useState<User | null>(null);
     const [setupDetails, setSetupDetails] = useState<any | null>(null);
+    const [isOfflineMode, setIsOfflineMode] = useState(false);
 
     // SPA Hash-based routing: read initial page from hash or localStorage
     const getInitialPage = (): string => {
@@ -975,7 +976,7 @@ const App: React.FC = () => {
         } catch (e: any) {
             console.error('❌ [loadData] EXCEÇÃO GERAL:', e?.message || e);
             console.error('Stack:', e?.stack);
-            setAppStatus('error');
+            if (!isOfflineMode) setAppStatus('error');
         }
     }, [currentUser]);
 
@@ -1106,10 +1107,15 @@ const App: React.FC = () => {
     useEffect(() => {
         const initializeApp = async () => {
             try {
-                const { setupNeeded, error, details } = await verifyDatabaseSetup();
+                const timeoutPromise = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000));
+                const { setupNeeded, error, details } = await Promise.race([verifyDatabaseSetup(), timeoutPromise]);
                 if (error) { setAppStatus('error'); return; }
                 if (setupNeeded) { setSetupDetails(details); setAppStatus('needs_setup'); } else { setAppStatus('ready'); }
-            } catch (e) { setAppStatus('error'); }
+            } catch (e) {
+                console.warn('[OfflineMode] Banco de dados inacessível, habilitando modo offline.', e);
+                setIsOfflineMode(true);
+                setAppStatus('ready');
+            }
         };
         initializeApp();
     }, []);
@@ -2358,11 +2364,20 @@ const App: React.FC = () => {
             return true;
         }
         return false;
+    }} isOfflineMode={isOfflineMode} onOfflineLogin={() => {
+        const offlineUser: User = { id: 'offline', name: 'Modo Offline', role: 'SUPER_ADMIN', setor: [], attendance: [] };
+        setCurrentUser(offlineUser);
+        setCurrentPage('etiquetas');
     }} />;
 
     return (
         <div>
             <style>{`:root { --font-size-dynamic: ${uiSettings.fontSize}px; }`}</style>
+            {isOfflineMode && (
+                <div className="bg-amber-500 text-white text-center text-xs py-1 px-2 flex items-center justify-center gap-1 z-50 relative">
+                    <span>⚡ Modo Offline — Apenas Etiquetas disponível. Histórico não será salvo.</span>
+                </div>
+            )}
             <div className="flex h-screen font-sans bg-[var(--color-bg)]">
                 {generalSettings.navMode !== 'topnav' && <Sidebar currentPage={currentPage} setCurrentPage={handlePageClick} lowStockCount={lowStockCount} isCollapsed={isSidebarCollapsed} toggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)} isMobileOpen={isMobileSidebarOpen} setIsMobileSidebarOpen={setIsMobileSidebarOpen} currentUser={currentUser} onLogout={() => { localStorage.removeItem('erp_current_user'); initialized.current = false; setCurrentUser(null) }} generalSettings={generalSettings} />}
                 <main className={`flex-1 flex flex-col transition-all duration-300 ${generalSettings.navMode === 'topnav' ? '' : isSidebarCollapsed ? 'md:pl-20' : 'md:pl-64'}`}>
