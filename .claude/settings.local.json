@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/MAQUINA/Desktop/ecomflow/ecomflowbeta/**)",
+      "Bash(find /c/Users/MAQUINA/Desktop/ecomflow/ecomflowbeta -type f \\\\\\( -size -15c \\\\\\) ! -path \"*/node_modules/*\" ! -path \"*/.git/*\" -exec ls -lh {} \\\\;)",
+      "Bash(ls -lh /c/Users/MAQUINA/Desktop/ecomflow/ecomflowbeta/BANCO_COMPLETO_v*.sql)",
+      "Bash(wc -l /c/Users/MAQUINA/Desktop/ecomflow/ecomflowbeta/BANCO_COMPLETO_v*.sql)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\MAQUINA\\Desktop\\ecomflow\\ecomflowbeta"
+    ]
+  }
+}

@@ -869,22 +869,19 @@ export async function enrichNfeSaida(
       linkXml: d.linkXml || d.xml || nfe.linkXml
     };
 
-    // Fallback final: tenta via /objetos-postagem se rastreamento ainda ausente
+    // Fallback final: tenta via objetos-postagem usando idVenda interno do Bling
     const rastreamentoFinal =
       rastreamento ||
       vData?.transporte?.codigoRastreamento ||
       vData?.rastreamento;
-    if (!rastreamentoFinal) {
-      const numLoja = numeroLoja || nfe.numeroLoja || nfe.numeroPedidoLoja;
-      if (numLoja) {
-        try {
-          const objetos = await fetchObjetosPostagem(token, numLoja);
-          const obj = objetos[0];
-          if (obj?.codigoRastreamento) {
-            return { ...enriched, rastreamento: obj.codigoRastreamento };
-          }
-        } catch (_) { /* skip */ }
-      }
+    if (!rastreamentoFinal && enriched.idVenda) {
+      try {
+        const objetos = await fetchObjetosPostagem(token, enriched.idVenda);
+        const obj = objetos[0];
+        if (obj?.codigoRastreamento) {
+          return { ...enriched, rastreamento: obj.codigoRastreamento };
+        }
+      } catch (_) { /* skip */ }
     }
 
     return enriched;
@@ -1055,19 +1052,15 @@ export async function enrichNfeSaidaBatch(
             }
           }
 
-          // Se rastreamento ainda não encontrado, tenta via objetos-postagem
-          if (!enriched[i].rastreamento) {
-            const numLoja = enriched[i].numeroPedidoLoja || enriched[i].numeroLoja ||
-              d.intermediador?.numeroPedido || d.numeroPedidoLoja;
-            if (numLoja || enriched[i].idVenda) {
-              try {
-                const objetos = await fetchObjetosPostagem(token, numLoja || "", enriched[i].idVenda);
-                const obj = objetos[0];
-                if (obj?.codigoRastreamento) {
-                  enriched[i].rastreamento = obj.codigoRastreamento;
-                }
-              } catch (_) { /* skip */ }
-            }
+          // Se rastreamento ainda não encontrado, tenta via objetos-postagem com idVenda do Bling
+          if (!enriched[i].rastreamento && enriched[i].idVenda) {
+            try {
+              const objetos = await fetchObjetosPostagem(token, enriched[i].idVenda!);
+              const obj = objetos[0];
+              if (obj?.codigoRastreamento) {
+                enriched[i].rastreamento = obj.codigoRastreamento;
+              }
+            } catch (_) { /* skip */ }
           }
           enrichCount++;
         }
@@ -2189,38 +2182,119 @@ export async function searchNfeByOrder(
 }
 
 /**
- * Busca objetos de postagem associados a um pedido.
- * Tenta com numeroPedidoLoja primeiro, depois com idVenda.
+ * Busca objetos de postagem de uma venda usando o ID interno do Bling (idVendas[]).
+ * O parâmetro correto da API v3 do Bling é `idVendas[]`, não `numeroPedidoLoja`.
  */
 export async function fetchObjetosPostagem(
   apiKey: string,
-  numeroPedidoLoja: string,
-  idVenda?: string | number
+  idVenda: string | number
 ): Promise<any[]> {
   const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
-  // Usa apenas numeroPedidoLoja — idVenda é um ID interno do Bling e não funciona como numeroPedidoLoja
-  const buscas = [numeroPedidoLoja].filter(Boolean);
-  for (const id of buscas) {
+  if (!idVenda) return [];
+  try {
+    const resp = await fetchWithRetry(
+      `/api/bling/objetos-postagem?idVendas[]=${encodeURIComponent(String(idVenda))}`,
+      { headers: { Authorization: authH, Accept: "application/json" } }
+    );
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      console.warn(`[fetchObjetosPostagem] Status ${resp.status} para idVenda=${idVenda}:`, err);
+      return [];
+    }
+    const data = await resp.json();
+    return data?.data || [];
+  } catch (e) {
+    console.warn(`[fetchObjetosPostagem] Erro para idVenda=${idVenda}:`, e);
+    return [];
+  }
+}
+
+/**
+ * Busca objetos de postagem para múltiplas vendas em uma única requisição.
+ * Usa `idVendas[]=id1&idVendas[]=id2` conforme API v3 do Bling.
+ * Retorna um mapa: idVenda → objeto de postagem.
+ */
+export async function fetchObjetosPostagemBatch(
+  apiKey: string,
+  idVendas: (string | number)[]
+): Promise<Map<string, any>> {
+  const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
+  const resultado = new Map<string, any>();
+  if (!idVendas.length) return resultado;
+
+  // Bling aceita até ~50 IDs por requisição
+  const CHUNK = 50;
+  for (let i = 0; i < idVendas.length; i += CHUNK) {
+    const chunk = idVendas.slice(i, i + CHUNK);
+    const qs = chunk.map(id => `idVendas[]=${encodeURIComponent(String(id))}`).join("&");
     try {
       const resp = await fetchWithRetry(
-        `/api/bling/objetos-postagem?numeroPedidoLoja=${encodeURIComponent(id)}`,
-        {
-          headers: { Authorization: authH, Accept: "application/json" }
-        }
+        `/api/bling/objetos-postagem?${qs}`,
+        { headers: { Authorization: authH, Accept: "application/json" } }
       );
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        console.warn(`[fetchObjetosPostagem] Status ${resp.status} para ${id}:`, err);
-        continue;
-      }
+      if (!resp.ok) continue;
       const data = await resp.json();
-      const objetos = data?.data || [];
-      if (objetos.length > 0) return objetos;
+      const objetos: any[] = data?.data || [];
+      for (const obj of objetos) {
+        const vid = String(obj.venda?.id || obj.idVenda || "");
+        if (vid) resultado.set(vid, obj);
+      }
     } catch (e) {
-      console.warn(`[fetchObjetosPostagem] Erro para ${id}:`, e);
+      console.warn(`[fetchObjetosPostagemBatch] Erro no chunk ${i}:`, e);
     }
+    if (i + CHUNK < idVendas.length) await new Promise(r => setTimeout(r, 300));
   }
-  return [];
+  return resultado;
+}
+
+/**
+ * Busca etiquetas ZPL para múltiplas NF-es de uma vez.
+ * Fluxo: idVendas[] → objetos-postagem → idsObjetos[] → ZPL em lote.
+ * Retorna mapa: idVenda → zpl string.
+ */
+export async function fetchEtiquetasZplBatch(
+  apiKey: string,
+  idVendas: (string | number)[]
+): Promise<Map<string, string>> {
+  const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
+  const resultado = new Map<string, string>();
+  if (!idVendas.length) return resultado;
+
+  // 1. Busca todos os objetos de postagem
+  const objetosMap = await fetchObjetosPostagemBatch(apiKey, idVendas);
+  if (!objetosMap.size) return resultado;
+
+  // 2. Monta lista de idsObjetos e guarda relação objeto → venda
+  const objetoParaVenda = new Map<number, string>();
+  for (const [vid, obj] of objetosMap) {
+    if (obj.id) objetoParaVenda.set(Number(obj.id), vid);
+  }
+  const idsObjetos = Array.from(objetoParaVenda.keys());
+  if (!idsObjetos.length) return resultado;
+
+  // 3. Busca ZPL em lote (até 50 por vez)
+  const CHUNK = 50;
+  for (let i = 0; i < idsObjetos.length; i += CHUNK) {
+    const chunk = idsObjetos.slice(i, i + CHUNK);
+    const qs = chunk.map(id => `idsObjetos[]=${id}`).join("&");
+    try {
+      const resp = await fetchWithRetry(
+        `/api/bling/logisticas/etiquetas/zpl?${qs}`,
+        { headers: { Authorization: authH, Accept: "application/json" } }
+      );
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      const zpls: any[] = data?.data || [];
+      for (const item of zpls) {
+        const vid = objetoParaVenda.get(Number(item.id));
+        if (vid && item.zpl) resultado.set(vid, item.zpl);
+      }
+    } catch (e) {
+      console.warn(`[fetchEtiquetasZplBatch] Erro no chunk ${i}:`, e);
+    }
+    if (i + CHUNK < idsObjetos.length) await new Promise(r => setTimeout(r, 300));
+  }
+  return resultado;
 }
 
 /**

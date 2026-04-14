@@ -130,7 +130,7 @@ async function startServer() {
     try {
       const { data, error } = await supabase
         .from("nfes")
-        .select("numero, chave_acesso, id"); // Adicionado id
+        .select('numero, "chaveAcesso", id');
 
       if (error) {
         console.error("❌ [SYNCED IDS ERROR]:", error);
@@ -140,7 +140,7 @@ async function startServer() {
       const keys = new Set<string>();
       data?.forEach((n: any) => {
         if (n.numero) keys.add(String(n.numero));
-        if (n.chave_acesso) keys.add(String(n.chave_acesso));
+        if (n.chaveAcesso) keys.add(String(n.chaveAcesso));
         if (n.id) keys.add(String(n.id));
       });
 
@@ -3705,25 +3705,21 @@ async function startServer() {
         }
 
         // objetos-postagem: fonte principal para simplified/combined, fallback para transport_label
-        if (!pdfUrl) {
-          // Tenta múltiplas buscas: primeiro por idVenda, depois por numeroPedidoLoja
-          const buscas = [idVendaBling, numeroPedidoLoja].filter(Boolean);
+        // Parâmetro correto da API v3 do Bling é idVendas[] (ID interno), não numeroPedidoLoja
+        if (!pdfUrl && idVendaBling) {
           let objeto: any = null;
 
-          for (const idBusca of buscas) {
-            if (objeto) break;
-            try {
-              const objUrl = `https://www.bling.com.br/Api/v3/objetos-postagem?numeroPedidoLoja=${idBusca}`;
-              const objResp = await fetch(objUrl, {
-                headers: { Authorization: token, Accept: "application/json" }
-              });
-              if (objResp.ok) {
-                const objData = await objResp.json();
-                objeto = objData?.data?.[0];
-              }
-            } catch (e: any) {
-              console.warn(`⚠️ [Logística] objetos-postagem com ${idBusca} falhou:`, e.message);
+          try {
+            const objUrl = `https://www.bling.com.br/Api/v3/objetos-postagem?idVendas[]=${idVendaBling}`;
+            const objResp = await fetch(objUrl, {
+              headers: { Authorization: token, Accept: "application/json" }
+            });
+            if (objResp.ok) {
+              const objData = await objResp.json();
+              objeto = objData?.data?.[0];
             }
+          } catch (e: any) {
+            console.warn(`⚠️ [Logística] objetos-postagem para idVenda=${idVendaBling} falhou:`, e.message);
           }
 
           if (objeto) {
@@ -3886,31 +3882,58 @@ async function startServer() {
       let dataDirect = await respDirect.json().catch(() => ({}));
       let zplResult = dataDirect?.data?.zpl || dataDirect?.zpl || null;
 
-      // 2. Busca via Objeto Logístico (usando Pedido se fornecido)
-      if (!zplResult && numeroPedidoLoja) {
-        console.log(`🔍 [NFe Etiqueta] Fallback: buscando objeto logístico via pedido ${numeroPedidoLoja}...`);
-        const idBuscaLogistica = numeroPedidoLoja;
+      // 2. Fallback via Objeto Logístico usando idVendas[] (ID interno do Bling)
+      // Extrai idVenda do detalhe da NF-e para buscar o objeto correto
+      if (!zplResult) {
+        let idVendaParaBusca = "";
+        try {
+          const nfeDetail = await blingFetchRetry(
+            `https://www.bling.com.br/Api/v3/nfe/${nfeId}`,
+            { headers: { Authorization: token, Accept: "application/json" } }
+          );
+          if (nfeDetail.ok) {
+            const nfeDetailData = await nfeDetail.json();
+            const d = nfeDetailData?.data;
+            const vid =
+              d?.vendas?.[0]?.id ||
+              d?.pedidoVenda?.id ||
+              d?.pedido?.id ||
+              d?.idPedidoVenda ||
+              d?.idVenda;
+            if (vid) idVendaParaBusca = String(vid);
+          }
+        } catch (_) { /* segue sem idVenda */ }
 
-        const objUrl = `https://www.bling.com.br/Api/v3/objetos-postagem?numeroPedidoLoja=${idBuscaLogistica}`;
-        const objResp = await fetch(objUrl, {
-          headers: { Authorization: token, Accept: "application/json" }
-        });
+        if (idVendaParaBusca) {
+          console.log(`🔍 [NFe Etiqueta] Fallback: buscando objeto logístico via idVenda=${idVendaParaBusca}...`);
+          try {
+            const objUrl = `https://www.bling.com.br/Api/v3/objetos-postagem?idVendas[]=${idVendaParaBusca}`;
+            const objResp = await fetch(objUrl, {
+              headers: { Authorization: token, Accept: "application/json" }
+            });
+            if (objResp.ok) {
+              const objData = await objResp.json();
+              const idsObjetos: number[] = (objData?.data || [])
+                .map((o: any) => o.id)
+                .filter(Boolean);
 
-        if (objResp.ok) {
-          const objData = await objResp.json();
-          const idObjeto = objData?.data?.[0]?.id;
-          if (idObjeto) {
-            console.log(
-              `🏷️  [NFe Etiqueta] Encontrado objeto ${idObjeto}. Buscando ZPL...`
-            );
-            const zplResp = await fetch(
-              `https://www.bling.com.br/Api/v3/logisticas/etiquetas/zpl?idsObjetos[]=${idObjeto}`,
-              {
-                headers: { Authorization: token, Accept: "application/json" }
+              if (idsObjetos.length > 0) {
+                console.log(`🏷️  [NFe Etiqueta] ${idsObjetos.length} objeto(s) encontrado(s). Buscando ZPL...`);
+                const qs = idsObjetos.map(id => `idsObjetos[]=${id}`).join("&");
+                const zplResp = await fetch(
+                  `https://www.bling.com.br/Api/v3/logisticas/etiquetas/zpl?${qs}`,
+                  { headers: { Authorization: token, Accept: "application/json" } }
+                );
+                const zplData = await zplResp.json();
+                // Concatena ZPLs de múltiplos objetos quando existirem
+                const zpls: string[] = (zplData?.data || [])
+                  .map((item: any) => item.zpl)
+                  .filter(Boolean);
+                if (zpls.length > 0) zplResult = zpls.join("\n");
               }
-            );
-            const zplData = await zplResp.json();
-            zplResult = zplData?.data?.[0]?.zpl || zplData?.zpl;
+            }
+          } catch (e: any) {
+            console.warn(`⚠️ [NFe Etiqueta] Fallback objetos-postagem falhou:`, e.message);
           }
         }
       }
@@ -4178,6 +4201,8 @@ async function startServer() {
   });
 
   // Proxy para Objetos de Postagem (Bling v3)
+  // Reconstrói a query string preservando notação [] para arrays (idVendas[], idsObjetos[])
+  // porque Express parseia ?idVendas[]=1&idVendas[]=2 como { idVendas: ['1','2'] } sem os colchetes
   app.get("/api/bling/objetos-postagem", async (req, res) => {
     try {
       const token = normalizeBearerToken(
@@ -4185,7 +4210,17 @@ async function startServer() {
       );
       if (!token) return res.status(401).json({ error: "Token obrigatório" });
 
-      const query = new URLSearchParams(req.query as any).toString();
+      // Reconstrói query com colchetes para parâmetros array
+      const parts: string[] = [];
+      for (const [key, value] of Object.entries(req.query)) {
+        if (Array.isArray(value)) {
+          for (const v of value) parts.push(`${key}[]=${encodeURIComponent(String(v))}`);
+        } else if (value !== undefined && value !== null) {
+          // Se a chave já veio com [] (ex: "idVendas[]"), mantém; senão usa sem colchetes
+          parts.push(`${key}=${encodeURIComponent(String(value))}`);
+        }
+      }
+      const query = parts.join("&");
       const url = `https://www.bling.com.br/Api/v3/objetos-postagem${query ? `?${query}` : ""}`;
 
       console.log(`📦 [LOGISTICA] GET ${url}`);

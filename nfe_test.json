@@ -1,5 +1,0 @@
-{
-  "pedidoId": "PEDIDO-002",
-  "cliente": {"nome": "Cliente Teste", "cnpj": "12.345.678/0001-90"},
-  "valor": 1800
-}
