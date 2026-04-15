@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, LayoutGrid, ScanLine, Package, BarChart3, DollarSign, Printer, Settings, UserCircle, ArrowLeftToLine, ArrowRightFromLine, Weight, Factory, QrCode, Users, ShoppingCart, LogOut, ClipboardCheck, ListPlus, BookOpen, Recycle, HelpCircle, ChevronDown, Link as LinkIcon, Globe, PackageOpen, ShieldAlert, Calculator } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { LayoutDashboard, LayoutGrid, ScanLine, Package, BarChart3, DollarSign, Printer, Settings, UserCircle, ArrowLeftToLine, ArrowRightFromLine, Weight, Factory, QrCode, Users, ShoppingCart, LogOut, ClipboardCheck, ListPlus, BookOpen, Recycle, HelpCircle, ChevronDown, ChevronUp, Link as LinkIcon, Globe, PackageOpen, ShieldAlert, Calculator, Truck } from 'lucide-react';
 import { User, GeneralSettings } from '../types';
 import DynamicIcon from './DynamicIcon';
 import { canAccessPage } from '../lib/accessControl';
@@ -119,6 +119,31 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, lowStock
   const hasSettingsPermission = currentUser?.role === 'SUPER_ADMIN' || currentUser?.role === 'ADMIN';
   const canShow = (page: string) => canAccessPage(currentUser, page, generalSettings);
 
+  const navRef = useRef<HTMLElement>(null);
+  const [canScrollUp, setCanScrollUp] = useState(false);
+  const [canScrollDown, setCanScrollDown] = useState(false);
+
+  const checkScroll = useCallback(() => {
+    const el = navRef.current;
+    if (!el) return;
+    setCanScrollUp(el.scrollTop > 0);
+    setCanScrollDown(el.scrollTop + el.clientHeight < el.scrollHeight - 2);
+  }, []);
+
+  useEffect(() => {
+    const el = navRef.current;
+    if (!el) return;
+    checkScroll();
+    el.addEventListener('scroll', checkScroll);
+    const ro = new ResizeObserver(checkScroll);
+    ro.observe(el);
+    return () => { el.removeEventListener('scroll', checkScroll); ro.disconnect(); };
+  }, [checkScroll]);
+
+  const scrollNav = (dir: 'up' | 'down') => {
+    navRef.current?.scrollBy({ top: dir === 'down' ? 120 : -120, behavior: 'smooth' });
+  };
+
   const sidebarContent = (
     <>
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
@@ -127,7 +152,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, lowStock
             {!isCollapsed && <span className="ml-2 text-xl font-bold text-[var(--color-text-primary)] whitespace-nowrap">{generalSettings.companyName}</span>}
         </div>
       </div>
-      <nav className="flex-1 p-2 space-y-2 overflow-y-auto">
+      <div className="flex-1 flex flex-col overflow-hidden relative">
+        {canScrollUp && (
+          <button onClick={() => scrollNav('up')} className="sticky top-0 z-10 w-full flex justify-center py-1 bg-gradient-to-b from-[var(--color-surface)] to-transparent hover:from-[var(--color-surface-secondary)] transition-colors">
+            <ChevronUp size={16} className="text-[var(--color-text-secondary)]" />
+          </button>
+        )}
+        <nav ref={navRef} className="flex-1 p-2 space-y-2 overflow-y-auto scrollbar-hide" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
         <ul className="space-y-1">
           {canShow('dashboard') && <NavItem icon={<LayoutDashboard size={20} />} text="Dashboard" page="dashboard" active={currentPage === 'dashboard'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
         </ul>
@@ -157,8 +188,9 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, lowStock
         </NavSection>
 
         <NavSection title="Ferramentas" isCollapsed={isCollapsed}>
-          {canShow('etiquetas') && <NavItem icon={<Printer size={20} />} text="Etiquetas" page="etiquetas" active={currentPage === 'etiquetas'} onClick={handlePageClick} alertCount={pendingZplCount > 0 ? pendingZplCount : undefined} isCollapsed={isCollapsed} />}
           {canShow('bling') && <NavItem icon={<LinkIcon size={20} />} text="Bling" page="bling" active={currentPage === 'bling'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
+          {canShow('etiquetas') && <NavItem icon={<Printer size={20} />} text="Etiquetas" page="etiquetas" active={currentPage === 'etiquetas'} onClick={handlePageClick} isCollapsed={isCollapsed} alertCount={pendingZplCount} />}
+          {canShow('gestao-logistica') && <NavItem icon={<Truck size={20} />} text="Gestão e Logística" page="gestao-logistica" active={currentPage === 'gestao-logistica'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
           {canShow('integracoes') && <NavItem icon={<Globe size={20} />} text="Integrações" page="integracoes" active={currentPage === 'integracoes'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
         </NavSection>
 
@@ -178,6 +210,12 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, lowStock
           {canShow('ajuda') && <NavItem icon={<HelpCircle size={20} />} text="Ajuda" page="ajuda" active={currentPage === 'ajuda'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
         </NavSection>
       </nav>
+        {canScrollDown && (
+          <button onClick={() => scrollNav('down')} className="sticky bottom-0 z-10 w-full flex justify-center py-1 bg-gradient-to-t from-[var(--color-surface)] to-transparent hover:from-[var(--color-surface-secondary)] transition-colors">
+            <ChevronDown size={16} className="text-[var(--color-text-secondary)]" />
+          </button>
+        )}
+      </div>
       <div className="p-2 border-t border-[var(--color-border)]">
         <div className={`flex items-center px-2 py-3 rounded-lg ${isCollapsed ? 'justify-center' : ''}`}>
           {currentUser?.avatar_base64 ? (

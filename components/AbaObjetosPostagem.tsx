@@ -24,11 +24,16 @@ import {
   XCircle,
   ArrowUpRight,
   Ruler,
+  Send,
+  Printer,
+  FileText,
 } from "lucide-react";
 import {
   fetchLogisticas,
   fetchLogisticasObjetos,
   fetchNfeEtiquetaZpl,
+  criarRemessa,
+  fetchEtiquetaZplByObjetos,
 } from "../lib/blingApi";
 
 interface NfeSaidaMinimal {
@@ -48,6 +53,8 @@ interface Props {
   startDate: string;
   endDate: string;
   nfeSaida: NfeSaidaMinimal[];
+  onAddLote?: (lote: { id: string; zplContent: string; success: number; failed: { id: string; error: string }[]; total: number; timestamp: string; successIds?: string[] }) => void;
+  onRemessaCriada?: () => void;
 }
 
 interface ObjetoPostagem {
@@ -80,6 +87,8 @@ export const AbaObjetosPostagem: React.FC<Props> = ({
   startDate,
   endDate,
   nfeSaida,
+  onAddLote,
+  onRemessaCriada,
 }) => {
   const [transportadoras, setTransportadoras] = useState<any[]>([]);
   const [selectedTransp, setSelectedTransp] = useState<string>("todos");
@@ -88,6 +97,8 @@ export const AbaObjetosPostagem: React.FC<Props> = ({
   const [isLoadingTransp, setIsLoadingTransp] = useState(false);
   const [searchFilter, setSearchFilter] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isCreatingRemessa, setIsCreatingRemessa] = useState(false);
+  const [isGeneratingEtiquetas, setIsGeneratingEtiquetas] = useState(false);
 
   const downloadTextFile = (content: string, filename: string) => {
     const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
@@ -125,10 +136,15 @@ export const AbaObjetosPostagem: React.FC<Props> = ({
       }
       const mapped: ObjetoPostagem[] = allObjetos.map((obj: any) => ({
         bling_id: String(obj.id || Math.random()),
-        nfe_id: Number(obj.nota?.id || 0),
-        id_venda: obj.idVenda ? String(obj.idVenda) : undefined,
-        nfe_numero: obj.nota?.numero || obj.nfe?.numero || "—",
-        numero_pedido_loja: obj.pedidoLoja?.numeroPedido || obj.numeroPedidoLoja || "—",
+        nfe_id: Number(obj.notaFiscal?.id || obj.nota?.id || 0),
+        id_venda: obj.pedidoVenda?.id ? String(obj.pedidoVenda.id) : (obj.idVenda ? String(obj.idVenda) : undefined),
+        nfe_numero: obj.notaFiscal?.numero || obj.nota?.numero || obj.nfe?.numero || "—",
+        numero_pedido_loja:
+          obj.pedidoVenda?.numeroLoja ||
+          obj.pedidoVenda?.numero ||
+          obj.pedidoLoja?.numeroPedido ||
+          obj.numeroPedidoLoja ||
+          "—",
         destinatario: obj.contato?.nome || "—",
         rastreio: obj.rastreamento?.codigo || obj.codigoRastreamento || "",
         servico: obj.servico?.nome || obj.servico?.codigo || "—",
@@ -136,7 +152,7 @@ export const AbaObjetosPostagem: React.FC<Props> = ({
         situacao: typeof obj.situacao === "object"
           ? (obj.situacao?.nome || String(obj.situacao?.id || ""))
           : String(obj.situacao || "—"),
-        valor_nota: obj.valorNota || 0,
+        valor_nota: obj.valorNota || obj.notaFiscal?.valorNota || 0,
         data_criacao: obj.dataCriacao || "",
         prazo_entrega: obj.prazoEntregaPrevisto || obj.prazoEntrega || "",
         dimensoes: {
@@ -183,8 +199,118 @@ export const AbaObjetosPostagem: React.FC<Props> = ({
     addToast(`${count} objeto(s) removido(s) da visualização.`, "success");
   };
 
+  // Carrega transportadoras apenas ao montar. Objetos são buscados manualmente via botão "Atualizar".
   useEffect(() => { loadTransportadoras(); }, [loadTransportadoras]);
-  useEffect(() => { fetchFromBling(); }, [fetchFromBling]);
+
+  // ── Criar remessa com os objetos selecionados ──
+  const handleCriarRemessa = async () => {
+    if (!token || selectedIds.size === 0) return;
+    setIsCreatingRemessa(true);
+    try {
+      // Pegar os IDs numéricos dos objetos selecionados (do Bling)
+      const selectedObjs = objetos.filter(o => selectedIds.has(o.bling_id));
+      const objetoNumIds = selectedObjs
+        .map(o => Number(o.bling_id))
+        .filter(id => !isNaN(id) && id > 0);
+
+      if (objetoNumIds.length === 0) {
+        addToast("Nenhum objeto válido selecionado para criar remessa.", "warning");
+        return;
+      }
+      if (objetoNumIds.length > 50) {
+        addToast("Máximo de 50 objetos por remessa. Selecione menos objetos.", "warning");
+        return;
+      }
+
+      // Determinar logística (transportadora selecionada)
+      const idLogistica = selectedTransp !== "todos" ? Number(selectedTransp) : null;
+
+      const result = await criarRemessa(token, idLogistica, objetoNumIds);
+      if (result && result.id) {
+        addToast(`Remessa #${result.id} criada com ${objetoNumIds.length} objeto(s)!`, "success");
+        setSelectedIds(new Set());
+        onRemessaCriada?.();
+        // Refresh objetos
+        fetchFromBling();
+      } else {
+        addToast("Não foi possível criar a remessa. Verifique os objetos selecionados.", "error");
+      }
+    } catch (err: any) {
+      addToast(`Erro ao criar remessa: ${err.message}`, "error");
+    } finally {
+      setIsCreatingRemessa(false);
+    }
+  };
+
+  // ── Gerar etiquetas ZPL em lote dos objetos selecionados ──
+  const handleGerarEtiquetasLote = async () => {
+    if (!token || selectedIds.size === 0) return;
+    setIsGeneratingEtiquetas(true);
+    try {
+      const selectedObjs = objetos.filter(o => selectedIds.has(o.bling_id));
+      const objetoNumIds = selectedObjs
+        .map(o => Number(o.bling_id))
+        .filter(id => !isNaN(id) && id > 0);
+
+      if (objetoNumIds.length === 0) {
+        addToast("Nenhum objeto válido selecionado.", "warning");
+        return;
+      }
+
+      // Buscar etiquetas ZPL (max 100 por vez)
+      const batchSize = 100;
+      let allZpls: string[] = [];
+      const failed: { id: string; error: string }[] = [];
+      const successIds: string[] = [];
+
+      for (let i = 0; i < objetoNumIds.length; i += batchSize) {
+        const batch = objetoNumIds.slice(i, i + batchSize);
+        try {
+          const results = await fetchEtiquetaZplByObjetos(token, batch);
+          for (const r of results) {
+            if (r.zpl) {
+              allZpls.push(r.zpl);
+              successIds.push(String(r.id));
+            }
+          }
+          // Identificar falhas
+          const returnedIds = new Set(results.map(r => r.id));
+          for (const id of batch) {
+            if (!returnedIds.has(id)) {
+              failed.push({ id: String(id), error: "Sem etiqueta disponível" });
+            }
+          }
+        } catch (err: any) {
+          for (const id of batch) {
+            failed.push({ id: String(id), error: err.message });
+          }
+        }
+      }
+
+      if (allZpls.length === 0) {
+        addToast("Nenhuma etiqueta ZPL retornada pelo Bling. Verifique se os objetos possuem etiqueta.", "warning");
+        return;
+      }
+
+      const zplContent = allZpls.join("\n");
+      const lote = {
+        id: `lote_objetos_${Date.now()}`,
+        zplContent,
+        success: successIds.length,
+        failed,
+        total: objetoNumIds.length,
+        timestamp: new Date().toISOString(),
+        successIds,
+      };
+
+      onAddLote?.(lote);
+      addToast(`${successIds.length} etiqueta(s) gerada(s)${failed.length > 0 ? `, ${failed.length} falha(s)` : ""}`, "success");
+    } catch (err: any) {
+      addToast(`Erro ao gerar etiquetas: ${err.message}`, "error");
+    } finally {
+      setIsGeneratingEtiquetas(false);
+    }
+  };
 
   const handleCopyRastreio = async (codigo: string) => {
     try {
@@ -314,16 +440,30 @@ export const AbaObjetosPostagem: React.FC<Props> = ({
 
       {/* Batch actions */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-red-50 border border-red-200">
-          <span className="text-[10px] font-black text-red-700 bg-red-100 px-2.5 py-1 rounded-full">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-blue-50 border border-blue-200">
+          <span className="text-[10px] font-black text-blue-700 bg-blue-100 px-2.5 py-1 rounded-full">
             {selectedIds.size} selecionado(s)
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={handleGerarEtiquetasLote}
+              disabled={isGeneratingEtiquetas}
+              className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition-all disabled:opacity-50"
+            >
+              {isGeneratingEtiquetas ? <Loader2 size={11} className="animate-spin" /> : <Printer size={11} />} Gerar Etiquetas
+            </button>
+            <button
+              onClick={handleCriarRemessa}
+              disabled={isCreatingRemessa}
+              className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-all disabled:opacity-50"
+            >
+              {isCreatingRemessa ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />} Criar Remessa
+            </button>
             <button onClick={() => setSelectedIds(new Set())} className="text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-lg bg-white text-slate-400 hover:bg-slate-50 border border-slate-200">
               Limpar
             </button>
             <button onClick={handleDeleteSelected} className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-red-600 text-white hover:bg-red-700 transition-all">
-              <Trash2 size={11} /> Remover da visualização
+              <Trash2 size={11} /> Remover
             </button>
           </div>
         </div>

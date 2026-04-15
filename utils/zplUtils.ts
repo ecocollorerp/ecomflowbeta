@@ -129,15 +129,30 @@ export const filterAndPairZplPages = async (
         // Detect TikTok Shop: the TikTok-provided label is a full GFA bitmap
         // paired directly after a DANFE Simplificado in the ZPL file.
         // We set the flag so the UI can display the badge and apply the right settings.
+        // IMPORTANT: Exclude Mercado Livre labels — they also contain ^GFA bitmaps
+        // (the ML logo), but have distinct markers like LOGO_MELI, PACK ID, MERCADO ENVIOS, etc.
         if (labelPage && labelPage.includes('^GFA,') &&
                 danfePage && danfePage.toUpperCase().includes('DANFE SIMPLIFICADO')) {
-            finalData.isTikTokShop = true;
+            const upperLabel = labelPage.toUpperCase();
+            const isMLLabel =
+                upperLabel.includes('LOGO_MELI') ||
+                upperLabel.includes('MERCADO ENVIOS') ||
+                upperLabel.includes('PACK ID:') ||
+                upperLabel.includes('SHIPMENT_NUMBER_BAR_CODE');
+            if (!isMLLabel) {
+                finalData.isTikTokShop = true;
+            }
         }
 
         let dataExtracted = false;
 
         if (labelPage) {
-            finalData.isMercadoLivre = labelPage.toUpperCase().includes('MERCADO ENVIOS') || labelPage.toUpperCase().includes('PACK ID:');
+            const upperLbl = labelPage.toUpperCase();
+            finalData.isMercadoLivre =
+                upperLbl.includes('MERCADO ENVIOS') ||
+                upperLbl.includes('PACK ID:') ||
+                upperLbl.includes('LOGO_MELI') ||
+                upperLbl.includes('SHIPMENT_NUMBER_BAR_CODE');
             finalData.containsDanfeInLabel = labelPage.toUpperCase().includes('DANFE SIMPLIFICADO') || labelPage.toUpperCase().includes('CHAVE DE ACESSO');
         }
 

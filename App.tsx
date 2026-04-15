@@ -20,6 +20,7 @@ import PedidosPage from './pages/PedidosPage';
 import LoginPage from './pages/LoginPage';
 import BlingPage from './pages/BlingPage';
 import IntegracoesPage from './pages/IntegracoesPage';
+import GestaoLogisticaPage from './pages/GestaoLogisticaPage';
 import { Loader2 } from 'lucide-react';
 import DatabaseSetupPage from './pages/DatabaseSetupPage';
 import ToastContainer from './components/ToastContainer';
@@ -169,7 +170,7 @@ const App: React.FC = () => {
         setCurrentPage(page);
     };
 
-    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
     const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
     const [toasts, setToasts] = useState<ToastMessage[]>([]);
     const [adminNotices, setAdminNotices] = useState<AdminNotice[]>([]);
@@ -2341,6 +2342,14 @@ const App: React.FC = () => {
             case 'etiquetas': return <EtiquetasPage settings={etiquetasSettings} onSettingsSave={handleSaveEtiquetasSettings} generalSettings={generalSettings} uiSettings={uiSettings} onSetUiSettings={setUiSettings as any} stockItems={stockItems} skuLinks={skuLinks} onLinkSku={handleLinkSku} onUnlinkSku={handleUnlinkSku} onAddNewItem={handleAddNewItem} etiquetasState={etiquetasState} setEtiquetasState={setEtiquetasState} currentUser={currentUser!} allOrders={allOrders} etiquetasHistory={etiquetasHistory} onSaveHistory={handleSaveEtiquetaHistory} onGetHistoryDetails={handleGetEtiquetaHistoryDetails} onProcessZpl={handleProcessZpl} isProcessing={isProcessingLabels} progressMessage={labelProgressMessage} progress={labelProcessingProgress} addToast={addToast} onSaveBatch={handleSaveZplBatch} />
             case 'bling': return <BlingPage generalSettings={generalSettings} onLaunchSuccess={handleLaunchSuccess} onUpdateOrdersBatch={handleUpdateOrdersBatch} addToast={addToast} setCurrentPage={setCurrentPage} onLoadZpl={handleLoadZplFromBling} onSaveSettings={handleSaveGeneralSettings} stockItems={stockItems} skuLinks={skuLinks} allOrders={allOrders} onLinkSku={handleLinkSku} />;
             case 'integracoes': return <IntegracoesPage generalSettings={generalSettings} onSaveSettings={handleSaveGeneralSettings} onLaunchSuccess={handleLaunchSuccess} addToast={addToast} setCurrentPage={setCurrentPage} />;
+            case 'gestao-logistica': return <GestaoLogisticaPage 
+                token={generalSettings.bling?.apiKey}
+                generalSettings={generalSettings}
+                addToast={addToast}
+                onAddLote={(lote) => {
+                    addToast(`Novo lote ${lote.id} gerado com sucesso!`, 'success');
+                }}
+            />;
             case 'passo-a-passo': return <PassoAPassoPage />
             case 'ajuda': return <AjudaPage />
             case 'powerbi': return <BiDashboardPage biData={biData} users={users} />

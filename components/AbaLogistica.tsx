@@ -234,10 +234,7 @@ export const AbaLogistica: React.FC<Props> = ({ token, addToast, startDate, endD
     }
   }, [token, authH]);
 
-  useEffect(() => { 
-    fetchAll();
-    fetchRemessas();
-  }, [fetchAll, fetchRemessas]);
+  // Auto-fetch removido de propósito conforme ordens. Uso estrito do botão Atualizar.
 
   // ─── Filtered + sorted list ───────────────────────────────────────────────
 

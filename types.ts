@@ -465,6 +465,7 @@ export interface BlingSettings {
   clientId?: string;
   clientSecret?: string;
   refreshToken?: string;
+  cryptoPassword?: string;
   expiresIn?: number;
   createdAt?: number;
   autoSync: boolean;

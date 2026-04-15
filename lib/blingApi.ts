@@ -2,6 +2,90 @@
 import { OrderItem, BlingInvoice, BlingProduct } from "../types";
 import { getMultiplicadorFromSku, classificarCor } from "./sku";
 
+// ═══════════════════════════════════════════════════════════════════════
+// Segurança — Criptografia AES-GCM para tokens OAuth em repouso
+// ═══════════════════════════════════════════════════════════════════════
+
+const CRYPTO_SALT = "ecomflow-bling-v1";
+
+/**
+ * Deriva uma chave AES-GCM determinística a partir de uma senha + salt.
+ * A senha é fornecida pelo usuário nas configurações.
+ */
+async function deriveKey(password: string): Promise<CryptoKey> {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw", enc.encode(password), "PBKDF2", false, ["deriveKey"]
+  );
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: enc.encode(CRYPTO_SALT), iterations: 100000, hash: "SHA-256" },
+    keyMaterial,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+/**
+ * Criptografa um texto usando AES-GCM com senha do usuário.
+ * Retorna base64 (iv + ciphertext).
+ */
+export async function encryptToken(plaintext: string, password: string): Promise<string> {
+  try {
+    const key = await deriveKey(password);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const enc = new TextEncoder();
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      key,
+      enc.encode(plaintext)
+    );
+    // Concatena IV + ciphertext e converte para base64
+    const combined = new Uint8Array(iv.length + new Uint8Array(ciphertext).length);
+    combined.set(iv);
+    combined.set(new Uint8Array(ciphertext), iv.length);
+    return btoa(String.fromCharCode(...combined));
+  } catch {
+    // Fallback: retorna em plaintext se crypto não disponível
+    return plaintext;
+  }
+}
+
+/**
+ * Descriptografa um token criptografado com AES-GCM.
+ */
+export async function decryptToken(encrypted: string, password: string): Promise<string> {
+  try {
+    // Se não parece ser base64 criptografado, retorna como está (migração)
+    if (!encrypted || encrypted.length < 20 || encrypted.includes(".")) {
+      return encrypted;
+    }
+    const key = await deriveKey(password);
+    const combined = Uint8Array.from(atob(encrypted), c => c.charCodeAt(0));
+    const iv = combined.slice(0, 12);
+    const ciphertext = combined.slice(12);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      key,
+      ciphertext
+    );
+    return new TextDecoder().decode(decrypted);
+  } catch {
+    // Se falhar, assume que é plaintext (migração de dados antigos)
+    return encrypted;
+  }
+}
+
+/**
+ * Sanitiza um token para exibição em logs (mostra apenas os primeiros 8 chars).
+ */
+export function sanitizeTokenForLog(token: string): string {
+  if (!token || token.length < 12) return "***";
+  const clean = token.replace(/^Bearer\s+/i, "");
+  return clean.substring(0, 8) + "..." + clean.substring(clean.length - 4);
+}
+
+
 // Status do Pedido no Bling v3 (IDs):
 // 6 = Em aberto, 9 = Atendido, 15 = Em andamento, 12 = Cancelado
 const BLING_V3_STATUS_MAP: { [key: string]: number } = {
@@ -1212,6 +1296,70 @@ export async function fetchPedidoVendaDetalhe(
 }
 
 /**
+ * Busca pedidos no Bling por faixa de datas e retorna mapa indexado
+ * para enriquecimento de notas fiscais.
+ */
+export async function fetchPedidosForNfeEnrichment(
+  apiKey: string,
+  dataInicial: string,
+  dataFinal: string
+): Promise<Map<string, {
+  id: string;
+  numeroLoja: string;
+  numero: string;
+  rastreamento: string;
+  loja: string;
+  lojaId: number;
+  cnpjCpf: string;
+}>> {
+  const token = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
+  const authH = { Authorization: token, Accept: "application/json" };
+  const pedidosMap = new Map();
+
+  let pagina = 1;
+  let continuar = true;
+
+  while (continuar) {
+    try {
+      const url = `/api/bling/pedidos/vendas?limite=100&pagina=${pagina}&dataInicial=${dataInicial}&dataFinal=${dataFinal}`;
+      const resp = await fetchWithRetry(url, { headers: authH });
+      if (!resp.ok) break;
+
+      const data = await resp.json();
+      const pedidos: any[] = data?.data || [];
+      if (pedidos.length === 0) break;
+
+      for (const p of pedidos) {
+        const id = String(p.id);
+        const numeroLoja = p.numeroLoja || p.numeroPedidoLoja || "";
+        const numero = p.numero ? String(p.numero) : "";
+        const rastreamento = p.transporte?.codigoRastreamento || p.transporte?.volumes?.[0]?.codigoRastreamento || "";
+        const loja = p.loja?.descricao || p.loja?.nome || "";
+        const lojaId = p.loja?.id ? Number(p.loja.id) : 0;
+        const cnpjCpf = p.contato?.numeroDocumento || "";
+
+        // Guarda por ID interno do Bling
+        pedidosMap.set(id, { id, numeroLoja, numero, rastreamento, loja, lojaId, cnpjCpf });
+        // Guarda por número da loja (se existir)
+        if (numeroLoja) pedidosMap.set("loja:" + numeroLoja, { id, numeroLoja, numero, rastreamento, loja, lojaId, cnpjCpf });
+        // Guarda por CNPJ/CPF (se existir)
+        if (cnpjCpf) pedidosMap.set("doc:" + cnpjCpf, { id, numeroLoja, numero, rastreamento, loja, lojaId, cnpjCpf });
+      }
+
+      if (pedidos.length < 100) break;
+      pagina++;
+      await new Promise((r) => setTimeout(r, 400));
+    } catch (e) {
+      console.warn("[fetchPedidosForNfeEnrichment] Erro na página", pagina, e);
+      break;
+    }
+  }
+
+  console.log(`[fetchPedidosForNfeEnrichment] ${pedidosMap.size / 3} pedidos carregados (indexados por id, numeroLoja, cnpjCpf)`);
+  return pedidosMap;
+}
+
+/**
  * Atualiza um pedido de venda no Bling (PUT).
  * Útil para corrigir dados fiscais, nome do cliente, etc.
  */
@@ -1240,25 +1388,36 @@ export async function atualizarPedidoVenda(
 export async function fetchBlingProducts(
   apiKey: string
 ): Promise<BlingProduct[]> {
-  const params = {
-    limit: "100",
-    criterio: "1",
-    tipo: "P"
-  };
+  const allProducts: BlingProduct[] = [];
+  let page = 1;
+  const limit = 100;
 
-  const data = await fetchV3("/produtos", apiKey, params);
-
-  if (!data.data) return [];
-
-  return data.data.map((prod: any): BlingProduct => {
-    return {
-      id: String(prod.id),
-      codigo: prod.codigo,
-      descricao: prod.nome,
-      preco: cleanMoney(prod.preco),
-      estoqueAtual: cleanMoney(prod.estoque?.saldoVirtual || 0)
+  while (true) {
+    const params: Record<string, string> = {
+      limit: String(limit),
+      pagina: String(page),
+      tipo: "P"
     };
-  });
+
+    const data = await fetchV3("/produtos", apiKey, params);
+
+    if (!data.data || data.data.length === 0) break;
+
+    for (const prod of data.data) {
+      allProducts.push({
+        id: String(prod.id),
+        codigo: prod.codigo,
+        descricao: prod.nome,
+        preco: cleanMoney(prod.preco),
+        estoqueAtual: cleanMoney(prod.estoque?.saldoVirtual || 0)
+      });
+    }
+
+    if (data.data.length < limit) break;
+    page++;
+  }
+
+  return allProducts;
 }
 // SYNC ENDPOINTS - PHASE 1
 /**
@@ -2390,5 +2549,106 @@ export async function fetchEtiquetaZplByObjetos(
   } catch (e) {
     console.warn("[fetchEtiquetaZplByObjetos] Erro:", e);
     return [];
+  }
+}
+
+/**
+ * Lista remessas logísticas do Bling.
+ * GET /logisticas/remessas?pagina=X&limite=Y
+ */
+export async function fetchRemessas(
+  apiKey: string,
+  opts: { pagina?: number; limite?: number } = {}
+): Promise<{ data: any[]; hasMore: boolean }> {
+  const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
+  const params = new URLSearchParams();
+  if (opts.pagina) params.set("pagina", String(opts.pagina));
+  if (opts.limite) params.set("limite", String(opts.limite || 100));
+  try {
+    const resp = await fetchWithRetry(
+      `/api/bling/logisticas/remessas?${params.toString()}`,
+      { headers: { Authorization: authH, Accept: "application/json" } }
+    );
+    if (!resp.ok) return { data: [], hasMore: false };
+    const json = await resp.json();
+    const data = json?.data || [];
+    return { data, hasMore: data.length >= (opts.limite || 100) };
+  } catch (e) {
+    console.warn("[fetchRemessas] Erro:", e);
+    return { data: [], hasMore: false };
+  }
+}
+
+/**
+ * Busca detalhes de uma remessa pelo ID.
+ * GET /logisticas/remessas/:id
+ */
+export async function fetchRemessaById(
+  apiKey: string,
+  idRemessa: number | string
+): Promise<any | null> {
+  const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
+  try {
+    const resp = await fetchWithRetry(
+      `/api/bling/logisticas/remessas/${idRemessa}`,
+      { headers: { Authorization: authH, Accept: "application/json" } }
+    );
+    if (!resp.ok) return null;
+    const json = await resp.json();
+    return json?.data || null;
+  } catch (e) {
+    console.warn("[fetchRemessaById] Erro:", e);
+    return null;
+  }
+}
+
+/**
+ * Busca objetos de uma remessa.
+ * GET /logisticas/remessas/:id/objetos
+ */
+export async function fetchRemessaObjetos(
+  apiKey: string,
+  idRemessa: number | string
+): Promise<any[]> {
+  const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
+  try {
+    const resp = await fetchWithRetry(
+      `/api/bling/logisticas/remessas/${idRemessa}/objetos`,
+      { headers: { Authorization: authH, Accept: "application/json" } }
+    );
+    if (!resp.ok) return [];
+    const json = await resp.json();
+    return json?.data || [];
+  } catch (e) {
+    console.warn("[fetchRemessaObjetos] Erro:", e);
+    return [];
+  }
+}
+
+/**
+ * Busca remessas de uma logística específica.
+ * GET /logisticas/:idLogistica/remessas
+ */
+export async function fetchRemessasByLogistica(
+  apiKey: string,
+  idLogistica: number | string,
+  opts: { pagina?: number; limite?: number } = {}
+): Promise<{ data: any[]; hasMore: boolean }> {
+  const authH = apiKey.startsWith("Bearer ") ? apiKey : `Bearer ${apiKey}`;
+  const params = new URLSearchParams();
+  if (opts.pagina) params.set("pagina", String(opts.pagina));
+  if (opts.limite) params.set("limite", String(opts.limite || 100));
+  try {
+    const resp = await fetchWithRetry(
+      `/api/bling/logisticas/${idLogistica}/remessas?${params.toString()}`,
+      { headers: { Authorization: authH, Accept: "application/json" } }
+    );
+    if (!resp.ok) return { data: [], hasMore: false };
+    const json = await resp.json();
+    const data = json?.data || [];
+    return { data, hasMore: data.length >= (opts.limite || 100) };
+  } catch (e) {
+    console.warn("[fetchRemessasByLogistica] Erro:", e);
+    return { data: [], hasMore: false };
   }
 }

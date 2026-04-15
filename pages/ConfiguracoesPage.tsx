@@ -5,12 +5,13 @@ import {
     Users, Plus, Settings2, ChevronRight, User as UserIcon, KeyRound, Trash2, 
     Loader2, Mail, Edit3, FileSpreadsheet, Truck, Printer, Building, Save, 
     UploadCloud, CheckSquare, Square, RefreshCw, Download, AlertTriangle, Terminal, 
-    History, Check, ArrowRight, Settings, Box, Layers, Volume2
+    History, Check, ArrowRight, Settings, Box, Layers, Volume2, Activity,
+    CheckCircle2, XCircle, Database, Wifi
 } from 'lucide-react';
 import ConfirmDeleteUserModal from '../components/ConfirmDeleteUserModal';
 import ConfirmActionModal from '../components/ConfirmActionModal';
 import EditAdminModal from '../components/EditAdminModal';
-import { syncDatabase } from '../lib/supabaseClient';
+import { syncDatabase, dbClient, verifyDatabaseSetup } from '../lib/supabaseClient';
 import * as XLSX from 'xlsx';
 import { ALL_APP_PAGES } from '../lib/accessControl';
 import { CustomSector } from '../types';
@@ -59,6 +60,80 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
 
     // Expedition states
     const [newRule, setNewRule] = useState<ExpeditionRule>({ id: '', from: 1, to: 1, stockItemCode: '', quantity: 1, category: 'ALL' });
+
+    // Health Check states
+    type CheckStatus = 'idle' | 'running' | 'done';
+    type CheckResult = { name: string; ok: boolean; detail?: string };
+    const [healthStatus, setHealthStatus] = useState<CheckStatus>('idle');
+    const [healthResults, setHealthResults] = useState<CheckResult[]>([]);
+
+    const SYSTEM_TABLES = [
+        'orders', 'scan_logs', 'returns', 'sku_links', 'users', 'product_boms',
+        'stock_movements', 'stock_items', 'weighing_batches', 'grinding_batches',
+        'production_plans', 'shopping_list_items', 'app_settings', 'admin_notices',
+        'import_history', 'production_plan_items', 'etiquetas_historico',
+        'stock_pack_groups', 'setores', 'cost_calculations', 'zpl_batches'
+    ];
+
+    const runHealthCheck = async () => {
+        setHealthStatus('running');
+        setHealthResults([]);
+        const results: CheckResult[] = [];
+
+        // 1. Conexão Supabase
+        try {
+            const start = Date.now();
+            const { error } = await dbClient.from('app_settings').select('key').limit(1);
+            const ms = Date.now() - start;
+            results.push({ name: 'Conexão Supabase', ok: !error, detail: error ? error.message : `${ms}ms` });
+        } catch (e: any) {
+            results.push({ name: 'Conexão Supabase', ok: false, detail: e.message });
+        }
+        setHealthResults([...results]);
+
+        // 2. Schema / RPC check_setup_status
+        try {
+            const { setupNeeded, error, details } = await verifyDatabaseSetup();
+            if (error) {
+                results.push({ name: 'Schema (check_setup_status)', ok: false, detail: error });
+            } else if (setupNeeded) {
+                const missing: string[] = [];
+                if (details?.tables_status?.some((t: any) => !t.exists)) missing.push('tabelas');
+                if (details?.types_status?.some((t: any) => !t.exists)) missing.push('tipos');
+                if (details?.functions_status?.some((t: any) => !t.exists)) missing.push('funções');
+                if (details?.columns_status?.some((c: any) => !c.exists)) missing.push('colunas');
+                if (!details?.versionMatch) missing.push(`versão (DB: ${details?.dbVersion || '?'}, esperada: ${details?.expectedVersion || '?'})`);
+                results.push({ name: 'Schema (check_setup_status)', ok: false, detail: `Faltando: ${missing.join(', ')}` });
+            } else {
+                results.push({ name: 'Schema (check_setup_status)', ok: true, detail: `v${details?.dbVersion || '?'}` });
+            }
+        } catch (e: any) {
+            results.push({ name: 'Schema (check_setup_status)', ok: false, detail: e.message });
+        }
+        setHealthResults([...results]);
+
+        // 3. Checar cada tabela
+        for (const table of SYSTEM_TABLES) {
+            try {
+                const { count, error } = await dbClient.from(table).select('*', { count: 'exact', head: true });
+                results.push({ name: table, ok: !error, detail: error ? error.message : `${count ?? 0} registros` });
+            } catch (e: any) {
+                results.push({ name: table, ok: false, detail: e.message });
+            }
+            setHealthResults([...results]);
+        }
+
+        // 4. Checar view analítica
+        try {
+            const { error } = await dbClient.from('vw_dados_analiticos').select('*', { count: 'exact', head: true });
+            results.push({ name: 'vw_dados_analiticos (view)', ok: !error, detail: error ? error.message : 'OK' });
+        } catch (e: any) {
+            results.push({ name: 'vw_dados_analiticos (view)', ok: false, detail: e.message });
+        }
+        setHealthResults([...results]);
+
+        setHealthStatus('done');
+    };
 
     useEffect(() => {
         setSettings(generalSettings);
@@ -565,6 +640,7 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
             )}
 
             {activeTab === 'sistema' && (
+                <div className="space-y-8">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                     <Section title="Dados Corporativos" icon={<Building size={24} className="text-slate-800"/>}>
                         <div className="space-y-6">
@@ -604,6 +680,90 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
                             </button>
                         </div>
                     </Section>
+                </div>
+
+                {/* Health Check Section */}
+                <Section title="Diagnóstico do Sistema" icon={<Activity size={24} className="text-blue-600"/>}>
+                    <div className="space-y-4">
+                        <div className="flex items-center gap-4">
+                            <button
+                                onClick={runHealthCheck}
+                                disabled={healthStatus === 'running'}
+                                className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-2xl font-bold text-sm hover:bg-blue-700 disabled:opacity-60 transition-all"
+                            >
+                                {healthStatus === 'running' ? <Loader2 size={18} className="animate-spin" /> : <Wifi size={18} />}
+                                {healthStatus === 'running' ? 'Verificando...' : 'Executar Diagnóstico'}
+                            </button>
+                            {healthStatus === 'done' && (
+                                <span className={`text-sm font-bold ${healthResults.every(r => r.ok) ? 'text-emerald-600' : 'text-amber-600'}`}>
+                                    {healthResults.filter(r => r.ok).length}/{healthResults.length} verificações OK
+                                </span>
+                            )}
+                        </div>
+
+                        {healthResults.length > 0 && (
+                            <div className="border border-slate-100 rounded-2xl overflow-hidden">
+                                {/* Resumo */}
+                                <div className={`flex items-center gap-3 px-5 py-3 ${healthResults.every(r => r.ok) ? 'bg-emerald-50' : 'bg-amber-50'}`}>
+                                    {healthResults.every(r => r.ok)
+                                        ? <CheckCircle2 size={20} className="text-emerald-600" />
+                                        : <AlertTriangle size={20} className="text-amber-600" />
+                                    }
+                                    <span className={`font-black text-xs uppercase tracking-widest ${healthResults.every(r => r.ok) ? 'text-emerald-800' : 'text-amber-800'}`}>
+                                        {healthResults.every(r => r.ok) ? 'Todos os sistemas operacionais' : 'Problemas detectados'}
+                                    </span>
+                                </div>
+
+                                {/* Conexão e Schema (primeiros 2 results) */}
+                                {healthResults.slice(0, 2).map((r, i) => (
+                                    <div key={`sys-${i}`} className="flex items-center justify-between px-5 py-3 border-t border-slate-100 bg-white">
+                                        <div className="flex items-center gap-3">
+                                            {r.ok
+                                                ? <CheckCircle2 size={16} className="text-emerald-500 flex-shrink-0" />
+                                                : <XCircle size={16} className="text-red-500 flex-shrink-0" />
+                                            }
+                                            <span className="font-bold text-sm text-slate-700">{r.name}</span>
+                                        </div>
+                                        <span className={`text-xs font-mono ${r.ok ? 'text-emerald-600' : 'text-red-600'}`}>{r.detail}</span>
+                                    </div>
+                                ))}
+
+                                {/* Tabelas */}
+                                {healthResults.length > 2 && (
+                                    <>
+                                        <div className="flex items-center gap-2 px-5 py-2 bg-slate-50 border-t border-slate-100">
+                                            <Database size={14} className="text-slate-500" />
+                                            <span className="font-black text-[10px] uppercase tracking-widest text-slate-500">Tabelas do Banco</span>
+                                        </div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-0">
+                                            {healthResults.slice(2).map((r, i) => (
+                                                <div key={`tbl-${i}`} className="flex items-center justify-between px-5 py-2.5 border-t border-slate-100 bg-white">
+                                                    <div className="flex items-center gap-2">
+                                                        {r.ok
+                                                            ? <CheckCircle2 size={14} className="text-emerald-500 flex-shrink-0" />
+                                                            : <XCircle size={14} className="text-red-500 flex-shrink-0" />
+                                                        }
+                                                        <span className="font-mono text-xs text-slate-600">{r.name}</span>
+                                                    </div>
+                                                    <span className={`text-[10px] font-mono ${r.ok ? 'text-slate-400' : 'text-red-500 font-bold'}`}>
+                                                        {r.detail}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
+
+                                {healthStatus === 'running' && (
+                                    <div className="flex items-center gap-2 px-5 py-3 bg-blue-50 border-t border-slate-100">
+                                        <Loader2 size={14} className="animate-spin text-blue-600" />
+                                        <span className="text-xs text-blue-700 font-bold">Verificando próximo item...</span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </Section>
                 </div>
             )}
 

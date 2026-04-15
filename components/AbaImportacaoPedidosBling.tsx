@@ -4,7 +4,7 @@
 // por accordion e fluxo NF-e com persistência de lotes no Supabase.
 // ============================================================================
 
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Package,
   Truck,
@@ -21,7 +21,14 @@ import {
   Edit,
   X,
   ArrowRight,
-  Download
+  Download,
+  Globe,
+  Music2,
+  ShoppingBag,
+  ArrowUpDown,
+  Hash,
+  ExternalLink,
+  Copy
 } from "lucide-react";
 import { ImportacaoControllerService } from "../services/importacaoControllerService";
 import type { PedidoOverride, LoteNfe, LoteNfeFalha } from "../types";
@@ -89,6 +96,10 @@ interface AbaImportacaoPedidosBlingProps {
   canaisVenda?: Array<{ id: string; descricao: string; tipo?: string }>;
   /** Callback quando um lote é gerado — usado pela BlingPage para exibir na aba NF-e */
   onLoteGerado?: (lote: LoteNfe) => void;
+  /** Pedidos cacheados vindos do BlingPage — evita re-fetch ao trocar aba */
+  cachedPedidos?: PedidoEmAberto[];
+  /** Callback para atualizar cache no BlingPage */
+  onPedidosChange?: (pedidos: PedidoEmAberto[]) => void;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -119,23 +130,74 @@ function blingRawId(id: string): string {
   return id.replace(/^bling_/, "");
 }
 
-function LojaBadge({ nome }: { nome: string }) {
+function getPlataformaInfo(nome: string): {
+  icon: React.ReactNode;
+  label: string;
+  cls: string;
+} {
   const upper = nome.toUpperCase();
-  let cls = "bg-slate-100 text-slate-600 border-slate-200";
+  if (upper.includes("TIKTOK") || upper.includes("TIK TOK"))
+    return {
+      icon: <Music2 size={9} />,
+      label: "TikTok Shop",
+      cls: "bg-slate-900 text-white border-slate-700"
+    };
+  if (upper.includes("SHOPEE"))
+    return {
+      icon: <ShoppingBag size={9} />,
+      label: "Shopee",
+      cls: "bg-orange-500 text-white border-orange-600"
+    };
   if (
     upper.includes("MERCADO") ||
     upper.includes("LIVRE") ||
     upper.includes("ML")
   )
-    cls = "bg-yellow-100 text-yellow-800 border-yellow-300";
-  else if (upper.includes("SHOPEE"))
-    cls = "bg-orange-100 text-orange-700 border-orange-300";
+    return {
+      icon: (
+        <span className="text-[7px] font-black leading-none">ML</span>
+      ),
+      label: "Mercado Livre",
+      cls: "bg-yellow-400 text-yellow-900 border-yellow-500"
+    };
+  if (upper.includes("MAGAZINE") || upper.includes("MAGALU"))
+    return {
+      icon: <ShoppingBag size={9} />,
+      label: "Magalu",
+      cls: "bg-blue-700 text-white border-blue-800"
+    };
+  if (upper.includes("AMAZON"))
+    return {
+      icon: <Package size={9} />,
+      label: "Amazon",
+      cls: "bg-amber-500 text-black border-amber-600"
+    };
+  if (
+    upper.includes("SITE") ||
+    upper.includes("LOJA VIRTUAL") ||
+    upper.includes("NUVEM")
+  )
+    return {
+      icon: <Globe size={9} />,
+      label: nome,
+      cls: "bg-blue-500 text-white border-blue-600"
+    };
+  return {
+    icon: <Tag size={9} />,
+    label: nome,
+    cls: "bg-slate-100 text-slate-600 border-slate-200"
+  };
+}
+
+function LojaBadge({ nome }: { nome: string }) {
+  const info = getPlataformaInfo(nome);
   return (
     <span
-      className={`text-[9px] font-black px-1.5 py-0.5 rounded border leading-none truncate max-w-[120px] ${cls}`}
+      className={`inline-flex items-center gap-1 text-[9px] font-black px-1.5 py-0.5 rounded border leading-none truncate max-w-[140px] ${info.cls}`}
       title={nome}
     >
-      {nome}
+      {info.icon}
+      {info.label}
     </span>
   );
 }
@@ -146,9 +208,9 @@ function LojaBadge({ nome }: { nome: string }) {
 
 export const AbaImportacaoPedidosBling: React.FC<
   AbaImportacaoPedidosBlingProps
-> = ({ token, addToast, canaisVenda = [], onLoteGerado }) => {
+> = ({ token, addToast, canaisVenda = [], onLoteGerado, cachedPedidos, onPedidosChange }) => {
   // ── Estado de pedidos ──────────────────────────────────────────────────────
-  const [pedidos, setPedidos] = useState<PedidoEmAberto[]>([]);
+  const [pedidos, setPedidosRaw] = useState<PedidoEmAberto[]>(cachedPedidos || []);
   const [isCarregando, setIsCarregando] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
 
@@ -188,6 +250,25 @@ export const AbaImportacaoPedidosBling: React.FC<
   const [filtroSku, setFiltroSku] = useState("");
   const [lojaFiltroNome, setLojaFiltroNome] = useState<string>("TODOS");
 
+  // ── Menu de alteração de situação em lote ──────────────────────────────
+  const [showStatusMenu, setShowStatusMenu] = useState(false);
+  const [isAlterandoSituacao, setIsAlterandoSituacao] = useState(false);
+  const [situacaoProgresso, setSituacaoProgresso] = useState<{
+    atual: number;
+    total: number;
+  } | null>(null);
+  const statusMenuRef = useRef<HTMLDivElement>(null);
+
+  // wrapper setPedidos que apenas altera o estado local
+  const setPedidos = useCallback((action: PedidoEmAberto[] | ((prev: PedidoEmAberto[]) => PedidoEmAberto[])) => {
+    setPedidosRaw((prev) => typeof action === "function" ? action(prev) : action);
+  }, []);
+
+  // Dispara o callback para o parent APÓS o render seguro
+  useEffect(() => {
+    onPedidosChange?.(pedidos);
+  }, [pedidos, onPedidosChange]);
+
   // ── Limpar lista ao trocar filtros que afetam o resultado da API ──────────
   useEffect(() => {
     if (token) {
@@ -203,10 +284,10 @@ export const AbaImportacaoPedidosBling: React.FC<
     situacoesFiltro.join(",")
   ]);
 
-  // ── Auto-carregamento na primeira montagem ─────────────────────────────
+  // ── Auto-carregamento na primeira montagem (só se não tem cache) ────────
   const [jaCarregou, setJaCarregou] = useState(false);
   useEffect(() => {
-    if (token && !jaCarregou) {
+    if (token && !jaCarregou && pedidos.length === 0) {
       setJaCarregou(true);
       buscarPedidosRef.current?.();
     }
@@ -290,9 +371,16 @@ export const AbaImportacaoPedidosBling: React.FC<
             dataFinal: dataFinal || undefined
           }
         );
-      setPedidos(resultado.pedidosDisponiveis);
+      // Dedup por ID (evita chave duplicada no React)
+      const seen = new Set<string>();
+      const deduped = resultado.pedidosDisponiveis.filter((p: PedidoEmAberto) => {
+        if (seen.has(p.id)) return false;
+        seen.add(p.id);
+        return true;
+      });
+      setPedidos(deduped);
       addToast?.(
-        `${resultado.pedidosDisponiveis.length} pedidos carregados`,
+        `${deduped.length} pedidos carregados`,
         "success"
       );
     } catch (err: any) {
@@ -529,6 +617,75 @@ export const AbaImportacaoPedidosBling: React.FC<
     a.download = `${lote.id}.txt`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  // ── Fechar menu de situação ao clicar fora ─────────────────────────────────
+  useEffect(() => {
+    if (!showStatusMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        statusMenuRef.current &&
+        !statusMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowStatusMenu(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showStatusMenu]);
+
+  // ── Alterar situação em lote ───────────────────────────────────────────────
+  const alterarSituacaoLote = async (idSituacao: number) => {
+    setShowStatusMenu(false);
+    if (selecionados.size === 0 || !token) return;
+    setIsAlterandoSituacao(true);
+    const ids = Array.from(selecionados);
+    const sitLabel =
+      SITUACOES_BLING.find((s) => s.id === idSituacao)?.label ||
+      String(idSituacao);
+    let ok = 0;
+    let fail = 0;
+    setSituacaoProgresso({ atual: 0, total: ids.length });
+
+    for (let i = 0; i < ids.length; i++) {
+      const id = blingRawId(ids[i]);
+      setSituacaoProgresso({ atual: i + 1, total: ids.length });
+      try {
+        const resp = await fetch(
+          `/api/bling/pedidos/vendas/${id}/situacoes/${idSituacao}`,
+          {
+            method: "PATCH",
+            headers: { Authorization: `Bearer ${token}` }
+          }
+        );
+        if (resp.ok || resp.status === 204) {
+          ok++;
+          setPedidos((prev) =>
+            prev.map((p) =>
+              p.id === ids[i] ? { ...p, status: sitLabel } : p
+            )
+          );
+        } else {
+          fail++;
+          const data = await resp.json().catch(() => ({}));
+          addToast?.(
+            `Falha #${ids[i]}: ${data?.error?.message || resp.statusText}`,
+            "error"
+          );
+        }
+      } catch {
+        fail++;
+      }
+      if (i < ids.length - 1) await new Promise((r) => setTimeout(r, 400));
+    }
+
+    setSituacaoProgresso(null);
+    setIsAlterandoSituacao(false);
+    addToast?.(
+      `Situação → "${sitLabel}": ${ok} alterado(s)${fail > 0 ? `, ${fail} falha(s)` : ""}`,
+      fail > 0 ? "warning" : "success"
+    );
+    setSelecionados(new Set());
   };
 
   // ── Seleção ────────────────────────────────────────────────────────────────
@@ -1022,10 +1179,57 @@ export const AbaImportacaoPedidosBling: React.FC<
                 )}
                 Gerar e Emitir ({totalSelecionados})
               </button>
+
+              {/* ── Mudar Situação em lote ──────────────────────────── */}
+              <div className="relative" ref={statusMenuRef}>
+                <button
+                  onClick={() => setShowStatusMenu((v) => !v)}
+                  disabled={
+                    totalSelecionados === 0 || isAlterandoSituacao
+                  }
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 text-white text-[10px] font-black rounded-lg hover:bg-slate-800 disabled:opacity-40 uppercase"
+                >
+                  {isAlterandoSituacao ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <ArrowUpDown size={12} />
+                  )}
+                  Situação ({totalSelecionados})
+                </button>
+                {showStatusMenu && (
+                  <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-50 py-1 min-w-[180px] overflow-hidden">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-wider px-3 py-1.5">
+                      Alterar situação para:
+                    </p>
+                    {SITUACOES_BLING.map((sit) => (
+                      <button
+                        key={sit.id}
+                        onClick={() => alterarSituacaoLote(sit.id)}
+                        className="w-full text-left px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-2 transition-colors"
+                      >
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            sit.cor === "blue"
+                              ? "bg-blue-500"
+                              : sit.cor === "amber"
+                                ? "bg-amber-500"
+                                : sit.cor === "green"
+                                  ? "bg-green-500"
+                                  : sit.cor === "red"
+                                    ? "bg-red-500"
+                                    : "bg-purple-500"
+                          }`}
+                        />
+                        {sit.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Barra de progresso */}
+          {/* Barra de progresso NF-e */}
           {loteProgresso && (
             <div className="px-3 py-2.5 bg-blue-50 border border-blue-200 rounded-xl">
               <div className="flex items-center justify-between mb-1.5">
@@ -1045,6 +1249,27 @@ export const AbaImportacaoPedidosBling: React.FC<
                   className="bg-blue-600 h-2 rounded-full transition-all duration-300"
                   style={{
                     width: `${(loteProgresso.atual / loteProgresso.total) * 100}%`
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Barra de progresso — alteração de situação */}
+          {situacaoProgresso && (
+            <div className="px-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Loader2 size={12} className="animate-spin" />
+                  Alterando situação {situacaoProgresso.atual}/
+                  {situacaoProgresso.total}...
+                </span>
+              </div>
+              <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-slate-600 h-2 rounded-full transition-all duration-300"
+                  style={{
+                    width: `${(situacaoProgresso.atual / situacaoProgresso.total) * 100}%`
                   }}
                 />
               </div>
@@ -1108,31 +1333,72 @@ export const AbaImportacaoPedidosBling: React.FC<
 
                   {/* Conteúdo */}
                   <div className="flex-1 min-w-0">
+                    {/* Linha 1: número, loja badge, status */}
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-bold text-slate-800">
                         #{pedido.numero}
                       </span>
-                      {pedido.numeroLoja && (
-                        <span className="text-[10px] text-slate-500 font-medium">
-                          ({pedido.numeroLoja})
-                        </span>
-                      )}
                       <LojaBadge nome={lojaNome} />
-                      {pedido.rastreamento && (
-                        <span
-                          title={pedido.rastreamento}
-                          className="text-[9px] bg-teal-100 text-teal-700 border border-teal-200 px-1.5 py-0.5 rounded font-bold"
-                        >
-                          <Truck size={9} className="inline mr-0.5" />
-                          RASTREIO
-                        </span>
-                      )}
+                      {/* Situação — badge colorido */}
+                      <span
+                        className={`text-[9px] px-1.5 py-0.5 rounded font-bold border ${
+                          pedido.status === "Atendido"
+                            ? "bg-green-100 text-green-700 border-green-200"
+                            : pedido.status === "Cancelado"
+                              ? "bg-red-100 text-red-700 border-red-200"
+                              : pedido.status === "Em Andamento" ||
+                                  pedido.status === "Em andamento"
+                                ? "bg-amber-100 text-amber-700 border-amber-200"
+                                : pedido.status === "Verificado"
+                                  ? "bg-purple-100 text-purple-700 border-purple-200"
+                                  : "bg-blue-100 text-blue-700 border-blue-200"
+                        }`}
+                      >
+                        {pedido.status}
+                      </span>
                       {pedido.jaImportado && (
                         <span className="text-[9px] bg-purple-100 text-purple-700 border border-purple-200 px-1.5 py-0.5 rounded font-bold">
                           JÁ IMPORTADO
                         </span>
                       )}
                     </div>
+
+                    {/* Linha 2: ícones informativos — nº loja virtual, rastreio */}
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      {/* Nº pedido loja virtual */}
+                      {pedido.numeroLoja && (
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(pedido.numeroLoja);
+                            addToast?.(`Copiado: ${pedido.numeroLoja}`, "info");
+                          }}
+                          title={`Nº loja virtual: ${pedido.numeroLoja} — clique para copiar`}
+                          className="inline-flex items-center gap-1 text-[9px] bg-indigo-50 text-indigo-700 border border-indigo-200 px-1.5 py-0.5 rounded font-bold hover:bg-indigo-100 transition-colors cursor-pointer"
+                        >
+                          <Hash size={9} />
+                          {pedido.numeroLoja}
+                          <Copy size={7} className="opacity-50" />
+                        </button>
+                      )}
+
+                      {/* Rastreio — clicável, copia código */}
+                      {pedido.rastreamento && (
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(pedido.rastreamento!);
+                            addToast?.(`Rastreio copiado: ${pedido.rastreamento}`, "info");
+                          }}
+                          title={`Rastreio: ${pedido.rastreamento} — clique para copiar`}
+                          className="inline-flex items-center gap-1 text-[9px] bg-teal-50 text-teal-700 border border-teal-200 px-1.5 py-0.5 rounded font-bold hover:bg-teal-100 transition-colors cursor-pointer"
+                        >
+                          <Truck size={9} />
+                          {pedido.rastreamento}
+                          <Copy size={7} className="opacity-50" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Linha 3: cliente, data, valor, itens */}
                     <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                       <span className="text-xs text-slate-600 truncate max-w-[180px]">
                         {pedido.cliente.nome}
@@ -1146,9 +1412,6 @@ export const AbaImportacaoPedidosBling: React.FC<
                         {pedido.itens.length} item
                         {pedido.itens.length !== 1 ? "s" : ""} · R${" "}
                         {pedido.total.toFixed(2)}
-                      </span>
-                      <span className="text-[9px] text-slate-400">
-                        {pedido.status}
                       </span>
                     </div>
                     {/* SKUs dos itens */}

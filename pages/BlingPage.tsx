@@ -36,13 +36,18 @@ import {
   atualizarNfe,
   searchNfeByOrder,
   fetchObjetosPostagem,
-  getNfeSituacaoLabel
+  getNfeSituacaoLabel,
+  fetchPedidosForNfeEnrichment
 } from "../lib/blingApi";
 import type { NfeSaida } from "../lib/blingApi";
 import { addPendingZplItem } from "../utils/pendingZpl";
 import { BlingSync } from "../components/BlingSync";
 import { AbaImportacaoPedidosBling } from "../components/AbaImportacaoPedidosBling";
 import { AbaLogistica } from "../components/AbaLogistica";
+import { AbaObjetosPostagem } from "../components/AbaObjetosPostagem";
+import { AbaRemessas } from "../components/AbaRemessas";
+import { FilaEtiquetasPanel } from "../components/FilaEtiquetasPanel";
+import { BlingNfeSituacaoBadge, BlingCanalBadge, BlingPedidoStatusBadge, BlingTransportadoraBadge } from "../components/BlingIcons";
 // NFeManager integrado diretamente no BlingPage
 import {
   Cloud,
@@ -93,7 +98,8 @@ import {
   ShieldCheck,
   FileCheck,
   Truck,
-  MoreVertical
+  MoreVertical,
+  Link
 } from "lucide-react";
 
 // Transforma pedido do endpoint de sync para o formato OrderItem do ERP
@@ -222,7 +228,7 @@ const isNfePendente = (nfe: NfeSaida): boolean => {
   return situacao === 1 || situacao === 3 || (situacao === 5 && !nfe.linkDanfe);
 };
 
-type Tab = "importacao" | "nfe" | "catalogo" | "etiquetas" | "logistica";
+type Tab = "importacao" | "nfe" | "catalogo" | "logistica";
 
 const DEFAULT_BLING_SCOPE: BlingScopeSettings = {
   importarProdutos: true,
@@ -1606,6 +1612,13 @@ const BlingPage: React.FC<BlingPageProps> = ({
   const [isGeneratingBatchZpl, setIsGeneratingBatchZpl] = useState(false);
   const [vendasPage, setVendasPage] = useState(1);
   const [vendasHasMore, setVendasHasMore] = useState(true);
+
+  // ── Cache de pedidos da aba Importação (evita re-fetch ao trocar aba) ────
+  const [importacaoPedidosCache, setImportacaoPedidosCache] = useState<any[]>([]);
+
+  // ── Estado da aba Logística (sub-abas) ──────────────────────────────────
+  const [logisticaSubTab, setLogisticaSubTab] = useState<"objetos" | "remessas" | "fila">("objetos");
+  const [remessaRefreshTrigger, setRemessaRefreshTrigger] = useState(0);
 
   // ── Estado da aba Notas Fiscais (multi-select ZPL) ───────────────────────
   const [nfeCanalFilter, setNfeCanalFilter] = useState<string>("TODOS");
@@ -3102,13 +3115,13 @@ const BlingPage: React.FC<BlingPageProps> = ({
       if (status === 1) setNfeSaidaFiltro("pendentes");
 
       addToast(
-        `${notas.length} nota(s) carregada(s). Iniciando enriquecimento automático...`,
+        `${notas.length} nota(s) carregada(s). Buscando pedidos para vinculação...`,
         notas.length > 0 ? "info" : "info"
       );
 
-      // Inicia enriquecimento em background automaticamente
+      // Auto-vinculação: busca pedidos e vincula automaticamente
       if (notas.length > 0) {
-        handleEnrichNfeList(notas);
+        handleVincularPedidosNfe(notas);
       }
     } catch (err: any) {
       addToast(`Erro ao buscar NF-e de saída: ${err.message}`, "error");
@@ -3267,6 +3280,116 @@ const BlingPage: React.FC<BlingPageProps> = ({
     setShowNfeSaveConfirm(false);
     setPendingNfeSaida(null);
     addToast("Notas carregadas sem salvar.", "info");
+  };
+
+  // ── Vincular pedidos automaticamente via API do Bling ─────────────────────
+  const handleVincularPedidosNfe = async (notasList: NfeSaida[]) => {
+    if (notasList.length === 0) return;
+    setIsEnrichingNfe(true);
+    try {
+      const token = await getValidToken();
+      if (!token) return;
+
+      // Calcula range de datas das notas
+      const datas = notasList
+        .map((n) => n.dataEmissao || n.dataSaida)
+        .filter(Boolean)
+        .map((d) => new Date(d!).getTime())
+        .filter((t) => !isNaN(t));
+
+      if (datas.length === 0) {
+        addToast("Nenhuma data de emissão encontrada.", "warning");
+        return;
+      }
+
+      const minDate = new Date(Math.min(...datas));
+      const maxDate = new Date(Math.max(...datas));
+      minDate.setDate(minDate.getDate() - 5);
+      maxDate.setDate(maxDate.getDate() + 5);
+
+      const fmtDate = (d: Date) => d.toISOString().split("T")[0];
+      const dataInicial = fmtDate(minDate);
+      const dataFinal = fmtDate(maxDate);
+
+      console.log(`[Vincular] Buscando pedidos de ${dataInicial} a ${dataFinal}...`);
+
+      const pedidosMap = await fetchPedidosForNfeEnrichment(token, dataInicial, dataFinal);
+
+      // Tenta vincular cada nota a um pedido
+      let vinculado = 0;
+      const updated = [...nfeSaida];
+
+      for (const nota of notasList) {
+        const idx = updated.findIndex((n) => n.id === nota.id);
+        if (idx === -1) continue;
+
+        const current = updated[idx];
+        if (current.idVenda && current.numeroLoja && current.rastreamento) continue;
+
+        let pedidoMatch: any = null;
+        let matchType = "";
+
+        // Normaliza documento para matching (só números)
+        const docNota = current.contato?.numeroDocumento?.replace(/\D/g, "") || "";
+
+        // 1. Tenta por número da loja (casamento exato)
+        if (current.numeroLoja) {
+          pedidoMatch = pedidosMap.get("loja:" + current.numeroLoja);
+          if (pedidoMatch) matchType = "número loja";
+        }
+
+        // 2. Tenta por CNPJ/CPF (normalizado)
+        if (!pedidoMatch && docNota.length >= 8) {
+          pedidoMatch = pedidosMap.get("doc:" + docNota);
+          if (pedidoMatch) matchType = "CNPJ/CPF";
+        }
+
+        // 3. Tenta por ID da venda (se existir na nota)
+        if (!pedidoMatch && current.idVenda) {
+          pedidoMatch = pedidosMap.get(String(current.idVenda));
+          if (pedidoMatch) matchType = "ID venda";
+        }
+
+        // 4. Por nome (busca apenas se não encontrou ainda)
+        if (!pedidoMatch && current.contato?.nome) {
+          for (const [key, ped] of pedidosMap) {
+            if (key.startsWith("id:") && ped.numeroLoja && ped.cnpjCpf) {
+              pedidoMatch = ped;
+              matchType = "nome";
+              break;
+            }
+          }
+        }
+
+        if (pedidoMatch) {
+          updated[idx] = {
+            ...current,
+            idVenda: current.idVenda || pedidoMatch.id,
+            numeroVenda: current.numeroVenda || pedidoMatch.numero,
+            numeroLoja: current.numeroLoja || pedidoMatch.numeroLoja,
+            rastreamento: current.rastreamento || pedidoMatch.rastreamento,
+            loja: current.loja || pedidoMatch.loja,
+            lojaId: current.lojaId || pedidoMatch.lojaId
+          };
+          vinculado++;
+          console.log(`[Vincular] NF ${nota.numero} -> Pedido ${pedidoMatch.id} (${matchType})`);
+        }
+      }
+
+      setNfeSaida(updated);
+      persistNfeSaida(updated);
+
+      if (vinculado > 0) {
+        addToast(`${vinculado} nota(s) vinculada(s) com sucesso!`, "success");
+      } else {
+        addToast("Nenhum pedido encontrado para vinculação.", "warning");
+      }
+    } catch (err: any) {
+      console.error("Erro ao vincular:", err);
+      addToast("Erro ao vincular pedidos. Tente novamente.", "error");
+    } finally {
+      setIsEnrichingNfe(false);
+    }
   };
 
   // ── Copiar chave de acesso / abrir DANFE ─────────────────────────────────
@@ -4976,6 +5099,22 @@ const BlingPage: React.FC<BlingPageProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, isConnected]);
 
+  // ── Auto-fetch NF-e ao entrar na aba ────────────────────────────────────
+  const hasAutoFetchedNfe = useRef(false);
+  useEffect(() => {
+    if (
+      activeTab === "nfe" &&
+      isConnected &&
+      nfeSaida.length === 0 &&
+      !isLoadingNfeSaida &&
+      !hasAutoFetchedNfe.current
+    ) {
+      hasAutoFetchedNfe.current = true;
+      handleFetchNfeSaida();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isConnected]);
+
   // ── Set de SKU codes ligados a produtos ERP (para indicador no catálogo) ──
   const erpSkuLinkedCodes = useMemo(() => {
     const s = new Set<string>();
@@ -5180,6 +5319,29 @@ const BlingPage: React.FC<BlingPageProps> = ({
     return "🏪 ";
   };
 
+  const handleEnviarParaFilaEtiquetas = () => {
+    const nfeIds = Array.from(selectedNfeSaidaIds);
+    const orderIds = nfeIds.map(id => {
+       const nfe = nfeSaida.find(n => n.id === id);
+       // Prioriza ID Venda interno do Bling (exato), depois fallback pro da Loja
+       return nfe?.idVenda || (nfe as any)?.venda?.id || nfe?.numeroPedidoLoja || nfe?.numeroLoja;
+    }).filter(Boolean);
+
+    if (orderIds.length === 0) {
+      addToast("Nenhuma das notas selecionadas possui vínculo com ID de Venda/Loja.", "error");
+      return;
+    }
+
+    setActiveTab("logistica");
+    setLogisticaSubTab("fila");
+
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("ADD_TO_FILA_ETIQUETAS", { detail: { ids: orderIds } }));
+    }, 400);
+
+    setSelectedNfeSaidaIds(new Set());
+  };
+
   const renderBatchActionsNfe = (isTop: boolean) => (
     <div
       className={`flex flex-wrap items-center justify-between gap-3 px-4 py-3 ${isTop ? "mb-4" : "mt-4"} rounded-2xl bg-emerald-50 border border-emerald-200`}
@@ -5196,6 +5358,13 @@ const BlingPage: React.FC<BlingPageProps> = ({
         </button>
       </div>
       <div className="flex items-center gap-2 flex-wrap">
+        {/* Enviar para a Fila de Etiquetas */}
+        <button
+          onClick={handleEnviarParaFilaEtiquetas}
+          className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 transition-all shadow-md active:scale-95"
+        >
+          <Package size={12} /> Etiquetas (Fila)
+        </button>
         {/* Emitir NF-e (para pendentes) */}
         <button
           onClick={handleBatchEmitirNfe}
@@ -5394,17 +5563,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
         >
           <FileText size={16} /> NF-e
         </button>
-        <button
-          onClick={() => setActiveTab("etiquetas")}
-          className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === "etiquetas" ? "border-blue-600 text-blue-700 bg-blue-50/50" : "border-transparent text-gray-400 hover:text-gray-600"}`}
-        >
-          <Printer size={16} /> Etiquetas{" "}
-          {zplLotes.length > 0 && (
-            <span className="bg-blue-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full">
-              {zplLotes.length}
-            </span>
-          )}
-        </button>
+        {/* Etiquetas removida — fluxo unificado na nova aba Logística */}
         {canViewProducts && (
           <button
             onClick={() => setActiveTab("catalogo")}
@@ -5413,6 +5572,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
             <Package size={16} /> Catálogo
           </button>
         )}
+        {/* Logística — Objetos de Postagem + Remessas */}
         <button
           onClick={() => setActiveTab("logistica")}
           className={`flex items-center gap-2 px-6 py-4 text-xs font-black uppercase tracking-widest border-b-2 transition-all ${activeTab === "logistica" ? "border-orange-500 text-orange-700 bg-orange-50/50" : "border-transparent text-gray-400 hover:text-gray-600"}`}
@@ -5446,6 +5606,8 @@ const BlingPage: React.FC<BlingPageProps> = ({
                 descricao: c.descricao,
                 tipo: c.tipo
               }))}
+              cachedPedidos={importacaoPedidosCache}
+              onPedidosChange={setImportacaoPedidosCache}
               onLoteGerado={(lote) => {
                 setImportacaoLotes((prev) => {
                   const next = [lote, ...prev];
@@ -5667,6 +5829,24 @@ const BlingPage: React.FC<BlingPageProps> = ({
                         : selectedNfeSaidaIds.size > 0
                           ? `Enriquecer Selecionadas (${selectedNfeSaidaIds.size})`
                           : "Enriquecer Lista"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        const selected = filteredNfeSaida.filter((n) => selectedNfeSaidaIds.has(n.id));
+                        if (selected.length === 0) {
+                          addToast("Selecione pelo menos uma NF-e para vincular.", "warning");
+                          return;
+                        }
+                        handleVincularPedidosNfe(selected);
+                      }}
+                      disabled={isEnrichingNfe || filteredNfeSaida.length === 0}
+                      className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100 hover:bg-indigo-100 disabled:opacity-50 transition-all font-sans"
+                      title="Vincular automaticamente pedidos do Bling às NF-es selecionadas"
+                    >
+                      <Link size={11} />
+                      {selectedNfeSaidaIds.size > 0
+                        ? `Vincular (${selectedNfeSaidaIds.size})`
+                        : "Vincular"}
                     </button>
                     <button
                       onClick={handleBaixarXmlLote}
@@ -6608,25 +6788,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
                                 </div>
                               </td>
                               <td className="p-3">
-                                <span
-                                  className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-widest whitespace-nowrap ${
-                                    isPendente
-                                      ? "bg-yellow-100 text-yellow-700 border border-yellow-200"
-                                      : isEmitidaDanfe
-                                        ? "bg-green-100 text-green-700 border border-green-200"
-                                        : isAutorizadaSemDanfe
-                                          ? "bg-blue-100 text-blue-700 border border-blue-200"
-                                          : nfe.situacao === 2
-                                            ? "bg-red-100 text-red-700 border border-red-200"
-                                            : nfe.situacao === 3
-                                              ? "bg-orange-100 text-orange-700 border border-orange-200"
-                                              : nfe.situacao === 4
-                                                ? "bg-red-100 text-red-700 border border-red-200"
-                                                : "bg-gray-100 text-gray-500 border border-gray-200"
-                                  }`}
-                                >
-                                  {getNfeSituacaoLabel(nfe)}
-                                </span>
+                                <BlingNfeSituacaoBadge situacao={Number(nfe.situacao) || 1} />
                               </td>
                               <td className="p-3 font-black text-emerald-600 whitespace-nowrap">
                                 {nfe.valorTotal != null
@@ -7065,8 +7227,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
                                           </div>
                                         ) : (
                                           <p className="text-[10px] text-slate-300 italic">
-                                            Clique em 'Enriquecer' para ver
-                                            taxas e lucro.
+                                            Dados carregados automaticamente.
                                           </p>
                                         )}
                                       </div>
@@ -7260,11 +7421,7 @@ const BlingPage: React.FC<BlingPageProps> = ({
                                             <span className="text-slate-500">
                                               Situação:
                                             </span>
-                                            <span
-                                              className={`font-black ${nfe.situacao === 4 || nfe.situacao === 7 ? "text-red-600" : nfe.situacao === 6 ? "text-green-600" : "text-slate-700"}`}
-                                            >
-                                              {getNfeSituacaoLabel(nfe)}
-                                            </span>
+                                            <BlingNfeSituacaoBadge situacao={Number(nfe.situacao) || 1} />
                                           </div>
                                           <div className="flex gap-2 mt-2 flex-wrap">
                                             {nfe.linkDanfe && (
@@ -7642,22 +7799,60 @@ const BlingPage: React.FC<BlingPageProps> = ({
         </div>
       )}
 
-      {/* Content: Logística — Objetos de Postagem */}
+      {/* Content: Logística — Objetos de Postagem + Remessas + Fila de Etiquetas */}
       {activeTab === "logistica" && (
-        <div className="animate-in fade-in slide-in-from-bottom-4">
-          <AbaLogistica
-            token={settings?.apiKey}
-            addToast={(msg, tipo) => addToast(msg, tipo as any)}
-            startDate={filters.startDate}
-            endDate={filters.endDate}
-            nfeSaida={nfeSaida}
-            onAddLote={(lote) => setZplLotes((prev) => [lote, ...prev])}
-          />
+        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
+          {/* Sub-tab selector */}
+          <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
+            {(["objetos", "remessas", "fila"] as const).map((sub) => (
+              <button
+                key={sub}
+                onClick={() => setLogisticaSubTab(sub)}
+                className={`flex items-center gap-1.5 px-5 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${logisticaSubTab === sub ? "bg-white shadow-sm text-orange-700" : "text-slate-500 hover:text-slate-700"}`}
+              >
+                {sub === "objetos" ? <Package size={12} /> : sub === "fila" ? <Printer size={12} /> : <FileText size={12} />}
+                {sub === "objetos" ? "Objetos de Postagem" : sub === "fila" ? "Fila de Etiquetas" : "Remessas"}
+              </button>
+            ))}
+          </div>
+
+          {logisticaSubTab === "objetos" && (
+            <AbaObjetosPostagem
+              token={settings?.apiKey}
+              addToast={(msg, tipo) => addToast(msg, tipo as any)}
+              startDate={filters.startDate}
+              endDate={filters.endDate}
+              nfeSaida={nfeSaida}
+              onAddLote={(lote) => setZplLotes((prev) => [lote, ...prev])}
+              onRemessaCriada={() => setRemessaRefreshTrigger((p) => p + 1)}
+            />
+          )}
+
+          {logisticaSubTab === "remessas" && (
+            <AbaRemessas
+              token={settings?.apiKey}
+              addToast={(msg, tipo) => addToast(msg, tipo as any)}
+              onAddLote={(lote) => setZplLotes((prev) => [lote, ...prev])}
+              refreshTrigger={remessaRefreshTrigger}
+            />
+          )}
+
+          {logisticaSubTab === "fila" && (
+            <FilaEtiquetasPanel
+              token={settings?.apiKey}
+              addToast={(msg, tipo) => addToast(msg, tipo as any)}
+              danfeZplConfig={{
+                offsetTop: 0,
+                offsetLeft: 0,
+                showLogo: true
+              }}
+            />
+          )}
         </div>
       )}
 
-      {/* Content: Etiquetas ZPL */}
-      {activeTab === "etiquetas" && (
+      {/* Content: Etiquetas ZPL — REMOVIDO: fluxo unificado na aba Logística */}
+      {false && activeTab === "etiquetas" && (
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
           {/* Header */}
           <div className="bg-white p-3 sm:p-6 rounded-3xl border border-gray-200 shadow-xl">
@@ -8502,6 +8697,52 @@ const BlingPage: React.FC<BlingPageProps> = ({
               </div>
               <div>
                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">
+                  Itens do Pedido (Fiscais)
+                </label>
+                {editPedidoModal.data?.itens?.length > 0 ? (
+                  <div className="space-y-3">
+                    {editPedidoModal.data.itens.map((item: any, i: number) => (
+                      <div key={i} className="p-3 border border-slate-100 bg-slate-50 rounded-xl relative">
+                        <p className="text-[11px] font-bold text-slate-700 mb-2 truncate pr-6">{item.descricao}</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">NCM</label>
+                            <input
+                              type="text"
+                              value={item.ncm || ""}
+                              onChange={(e) => {
+                                const newItens = [...editPedidoModal.data.itens];
+                                newItens[i].ncm = e.target.value;
+                                setEditPedidoModal(p => p ? { ...p, data: { ...p.data, itens: newItens } } : null);
+                              }}
+                              className="w-full p-2 border border-slate-200 rounded text-xs font-mono bg-white outline-none focus:border-amber-400"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-0.5">Origem</label>
+                            <input
+                              type="text"
+                              value={item.origem || ""}
+                              onChange={(e) => {
+                                const newItens = [...editPedidoModal.data.itens];
+                                newItens[i].origem = e.target.value;
+                                setEditPedidoModal(p => p ? { ...p, data: { ...p.data, itens: newItens } } : null);
+                              }}
+                              className="w-full p-2 border border-slate-200 rounded text-xs font-mono bg-white outline-none focus:border-amber-400"
+                              placeholder="0, 1, 2..."
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-slate-400">Nenhum item carregado.</p>
+                )}
+              </div>
+              
+              <div>
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">
                   Observações
                 </label>
                 <textarea
@@ -8542,6 +8783,74 @@ const BlingPage: React.FC<BlingPageProps> = ({
                   }
                   className="w-full p-3 border-2 border-slate-200 rounded-xl bg-white font-bold text-sm outline-none focus:border-amber-400 resize-none"
                 />
+              </div>
+              
+              {/* Seção de Itens (NCM e Origem) */}
+              <div className="pt-4 border-t border-slate-100">
+                <label className="text-[10px] font-black text-amber-600 uppercase tracking-widest mb-3 block flex items-center gap-2">
+                  <Package size={12} /> Itens do Pedido (Dados Fiscais)
+                </label>
+                
+                <div className="space-y-3 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
+                  {editPedidoModal.data?.itens?.map((item: any, idx: number) => (
+                    <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-100 space-y-2">
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-[10px] font-bold text-slate-700 truncate flex-1">
+                          {item.descricao || "Item sem descrição"}
+                        </span>
+                        <span className="text-[9px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded font-mono">
+                          SKU: {item.codigo || item.sku || "—"}
+                        </span>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[8px] font-black text-slate-400 uppercase tracking-normal mb-0.5 block">
+                            NCM
+                          </label>
+                          <input
+                            type="text"
+                            value={item.ncm || ""}
+                            onChange={(e) => {
+                              const newItens = [...editPedidoModal.data.itens];
+                              newItens[idx] = { ...item, ncm: e.target.value };
+                              setEditPedidoModal(prev => prev ? { ...prev, data: { ...prev.data, itens: newItens } } : null);
+                            }}
+                            placeholder="ex: 3304.99.90"
+                            className="w-full p-2 border border-slate-200 rounded-lg bg-white font-bold text-[11px] outline-none focus:border-amber-400"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[8px] font-black text-slate-400 uppercase tracking-normal mb-0.5 block">
+                            Origem
+                          </label>
+                          <select
+                            value={item.origem ?? 0}
+                            onChange={(e) => {
+                              const newItens = [...editPedidoModal.data.itens];
+                              newItens[idx] = { ...item, origem: Number(e.target.value) };
+                              setEditPedidoModal(prev => prev ? { ...prev, data: { ...prev.data, itens: newItens } } : null);
+                            }}
+                            className="w-full p-2 border border-slate-200 rounded-lg bg-white font-bold text-[11px] outline-none focus:border-amber-400"
+                          >
+                            <option value={0}>0 — Nacional</option>
+                            <option value={1}>1 — Estrangeira (Direta)</option>
+                            <option value={2}>2 — Estrangeira (Interna)</option>
+                            <option value={3}>3 — Nacional ({">"}40% imp)</option>
+                            <option value={4}>4 — Nacional (CIDE)</option>
+                            <option value={5}>5 — Nacional (Básica)</option>
+                            <option value={6}>6 — Direta (Sem similar)</option>
+                            <option value={7}>7 — Interna (Sem similar)</option>
+                            <option value={8}>8 — Nacional (Especial)</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {(!editPedidoModal.data?.itens || editPedidoModal.data.itens.length === 0) && (
+                    <p className="text-[10px] text-slate-400 italic text-center py-4">Nenhum item encontrado neste pedido.</p>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -8812,6 +9121,65 @@ const BlingPage: React.FC<BlingPageProps> = ({
                           placeholder="0.00"
                         />
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Itens Fiscais */}
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">
+                      Itens Adicionados (Campos Fiscais)
+                    </label>
+                    <div className="space-y-2 mt-2">
+                      {editNfeModal.data.itens?.length > 0 ? (
+                        editNfeModal.data.itens.map((it: any, idx: number) => (
+                          <div key={idx} className="p-2 border border-slate-200 rounded-lg bg-white shadow-sm flex flex-col gap-2">
+                            <p className="text-xs font-bold text-slate-700 truncate">{it.descricao}</p>
+                            <div className="grid grid-cols-3 gap-2">
+                              <div>
+                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">NCM</label>
+                                <input
+                                  type="text"
+                                  value={it.ncm || ""}
+                                  onChange={(e) => {
+                                    const newItens = [...editNfeModal.data.itens];
+                                    newItens[idx].ncm = e.target.value;
+                                    setEditNfeModal(p => p ? { ...p, data: { ...p.data, itens: newItens } } : null);
+                                  }}
+                                  className="w-full p-1 border rounded text-xs bg-slate-50 focus:border-amber-400 outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">CFOP</label>
+                                <input
+                                  type="text"
+                                  value={it.cfop || ""}
+                                  onChange={(e) => {
+                                    const newItens = [...editNfeModal.data.itens];
+                                    newItens[idx].cfop = e.target.value;
+                                    setEditNfeModal(p => p ? { ...p, data: { ...p.data, itens: newItens } } : null);
+                                  }}
+                                  className="w-full p-1 border rounded text-xs bg-slate-50 focus:border-amber-400 outline-none"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Origem</label>
+                                <input
+                                  type="text"
+                                  value={it.origem || ""}
+                                  onChange={(e) => {
+                                    const newItens = [...editNfeModal.data.itens];
+                                    newItens[idx].origem = e.target.value;
+                                    setEditNfeModal(p => p ? { ...p, data: { ...p.data, itens: newItens } } : null);
+                                  }}
+                                  className="w-full p-1 border rounded text-xs bg-slate-50 focus:border-amber-400 outline-none"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-xs text-slate-400 italic">Sem itens ou itens não carregados.</p>
+                      )}
                     </div>
                   </div>
 

@@ -384,7 +384,8 @@ export class ImportacaoControllerService {
               descricao: item.descricao,
               sku: item.codigo,
               quantidade: item.quantidade,
-              valor: item.valor
+              valor: item.valor,
+              ncm: item.produto?.ncm || item.ncm || ""
             })),
             total: pedido.total || 0,
             status: pedido.situacao?.descricao || "Em aberto",
