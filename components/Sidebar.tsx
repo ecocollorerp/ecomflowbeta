@@ -168,6 +168,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, setCurrentPage, lowStock
           {canShow('pacotes') && <NavItem icon={<PackageOpen size={20} />} text="Pacotes Prontos" page="pacotes" active={currentPage === 'pacotes' || currentPage === 'pacotes-prontos'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
           {canShow('bipagem') && <NavItem icon={<QrCode size={20} />} text="Bipagem" page="bipagem" active={currentPage === 'bipagem'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
           {canShow('pedidos') && <NavItem icon={<ShoppingCart size={20} />} text="Pedidos" page="pedidos" active={currentPage === 'pedidos'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
+          {canShow('resumo-producao') && <NavItem icon={<Factory size={20} />} text="Resumo de Produção" page="resumo-producao" active={currentPage === 'resumo-producao'} onClick={handlePageClick} isCollapsed={isCollapsed} />}
         </NavSection>
 
         <NavSection title="Estoque" isCollapsed={isCollapsed}>

@@ -137,16 +137,40 @@ const DatabaseSetupPage: React.FC<DatabaseSetupPageProps> = ({ onRetry, details 
                 </div>
 
                 <div>
-                    <h3 className="font-semibold text-gray-900 dark:text-gray-50 text-center">Passo 4: Verifique a Instalação</h3>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 text-center mb-2">Após completar os passos acima, clique no botão para conectar novamente.</p>
-                    <button
-                        type="button"
-                        onClick={onRetry}
-                        className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                    >
-                        Verificar e Tentar Novamente
-                        <ChevronRight className="h-5 w-5 ml-2" aria-hidden="true" />
-                    </button>
+                                <h3 className="font-semibold text-gray-900 dark:text-gray-50 text-center">Passo 4: Verifique a Instalação</h3>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 text-center mb-2">Após completar os passos acima, você pode tentar aplicar as migrations automaticamente (se a função `sync_database` existir) ou verificar novamente.</p>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            try {
+                                                const res = await fetch('/api/db/sync', { method: 'POST' });
+                                                const json = await res.json();
+                                                if (json && json.success) {
+                                                    alert('sync_database executado: ' + (json.message || 'OK'));
+                                                    onRetry();
+                                                } else {
+                                                    alert('Falha ao executar sync_database: ' + (json?.error || JSON.stringify(json)));
+                                                }
+                                            } catch (e: any) {
+                                                console.error('Erro ao chamar /api/db/sync', e);
+                                                alert('Erro ao executar sync_database: ' + (e?.message || e));
+                                            }
+                                        }}
+                                        className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-emerald-600 hover:bg-emerald-700"
+                                    >
+                                        Executar sync_database
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={onRetry}
+                                        className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                    >
+                                        Verificar e Tentar Novamente
+                                        <ChevronRight className="h-5 w-5 ml-2" aria-hidden="true" />
+                                    </button>
+                                </div>
                 </div>
             </div>
         </div>

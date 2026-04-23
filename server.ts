@@ -158,6 +158,364 @@ async function startServer() {
     }
   });
 
+  // Rota: resumo de produção por dia (agregação + necessidade de insumos)
+  app.get('/api/production/summary', async (req, res) => {
+    try {
+      const dateParam = String(req.query.date || '').trim(); // espera YYYY-MM-DD
+      if (!dateParam) return res.status(400).json({ success: false, error: 'query param `date` obrigatório (YYYY-MM-DD)' });
+
+      const d = new Date(dateParam);
+      if (isNaN(d.getTime())) return res.status(400).json({ success: false, error: 'formato de data inválido. Use YYYY-MM-DD' });
+
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      const formattedDate = `${dd}/${mm}/${yyyy}`; // formato usado na coluna orders.data
+
+      // Buscar pedidos importados na data. Se a coluna `data` não estiver preenchida,
+      // usamos created_at >= início do dia como fallback (casos de importação sem data)
+      const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+      const startISO = dayStart.toISOString();
+      const { data: ordersRaw, error: ordersErr } = await supabase
+        .from('orders')
+        .select('id, order_id, sku, qty_final, canal, data, price_total, customer_name')
+        .or(`data.eq.${formattedDate},created_at.gte.${startISO}`);
+      if (ordersErr) throw ordersErr;
+      const orders = Array.isArray(ordersRaw) ? ordersRaw : [];
+
+      // Agregar por plataforma e SKU (quantidade)
+      const ordersByPlatform: Record<string, number> = {};
+      const skuQtyMap = new Map();
+      orders.forEach((o: any) => {
+        const canal = o.canal || 'UNKNOWN';
+        ordersByPlatform[canal] = (ordersByPlatform[canal] || 0) + 1;
+        const sku = String(o.sku || '').toUpperCase();
+        skuQtyMap.set(sku, (skuQtyMap.get(sku) || 0) + (Number(o.qty_final) || 0));
+      });
+
+      // Mapear SKUs importados para master SKUs via sku_links
+      const skuList = Array.from(skuQtyMap.keys());
+      const skuLinksMap = new Map<string, string>();
+      if (skuList.length) {
+        const { data: links, error: linksErr } = await supabase
+          .from('sku_links')
+          .select('imported_sku, master_product_sku')
+          .in('imported_sku', skuList);
+        if (linksErr) throw linksErr;
+        (links || []).forEach((l: any) => skuLinksMap.set(String(l.imported_sku).toUpperCase(), String(l.master_product_sku).toUpperCase()));
+      }
+
+      // Consolidar quantidades por master SKU
+      const masterQtyMap = new Map<string, number>();
+      skuQtyMap.forEach((qty: number, sku: string) => {
+        const master = skuLinksMap.get(sku) || sku;
+        masterQtyMap.set(master, (masterQtyMap.get(master) || 0) + qty);
+      });
+
+      // Preparar cache de BOMs
+      const bomCache = new Map<string, any>();
+
+      const getBom = async (code: string) => {
+        const key = String(code || '').toUpperCase();
+        if (bomCache.has(key)) return bomCache.get(key);
+        const { data, error } = await supabase
+          .from('product_boms')
+          .select('code, items, bom_composition, kind, unit, name')
+          .eq('code', code)
+          .limit(1);
+        if (error) {
+          console.warn('Erro ao buscar product_bom', code, error.message || error);
+          bomCache.set(key, null);
+          return null;
+        }
+        const row = Array.isArray(data) && data.length ? data[0] : null;
+        bomCache.set(key, row);
+        return row;
+      };
+
+      // Explosão recursiva de BOM (soma necessidades por insumo)
+      const requirements = new Map<string, number>();
+
+      const explode = async (productCode: string, qty: number) => {
+        if (!productCode || qty === 0) return;
+        const bom = await getBom(productCode);
+        const items = (bom && (bom.items || (bom.bom_composition && bom.bom_composition.items))) || [];
+        if (!Array.isArray(items) || items.length === 0) return;
+        for (const bi of items) {
+          const compCode = String(bi.stockItemCode || bi.code || bi.stock_item_code || '').toUpperCase();
+          if (!compCode) continue;
+          const perPack = Number(bi.qty_per_pack || bi.qty || 0);
+          const needed = qty * perPack;
+          const compBom = await getBom(compCode);
+          if (compBom) {
+            // tratamos processados também como insumo e explodimos
+            requirements.set(compCode, (requirements.get(compCode) || 0) + needed);
+            await explode(compCode, needed);
+          } else {
+            requirements.set(compCode, (requirements.get(compCode) || 0) + needed);
+          }
+        }
+      };
+
+      // Executar explosão para cada produto master
+      for (const [masterSku, qty] of masterQtyMap.entries()) {
+        await explode(masterSku, qty);
+      }
+
+      // Enriquecer insumos com nome/unidade
+      const insumoCodes = Array.from(requirements.keys());
+      const stockMap = new Map<string, any>();
+      const pbMap = new Map<string, any>();
+      if (insumoCodes.length) {
+        const { data: stocks } = await supabase.from('stock_items').select('code, name, unit, kind').in('code', insumoCodes);
+        (stocks || []).forEach((s: any) => stockMap.set(String(s.code).toUpperCase(), s));
+        const { data: pbs } = await supabase.from('product_boms').select('code, name, unit, kind').in('code', insumoCodes);
+        (pbs || []).forEach((p: any) => pbMap.set(String(p.code).toUpperCase(), p));
+      }
+
+      const materials = insumoCodes.map(code => {
+        const qty = requirements.get(code) || 0;
+        const si = stockMap.get(code) || pbMap.get(code) || null;
+        return { code, name: si?.name || code, unit: si?.unit || 'un', quantity: qty };
+      }).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+      const products = Array.from(masterQtyMap.entries()).map(([sku, quantity]) => ({ sku, quantity }));
+
+      res.json({ success: true, date: formattedDate, ordersCount: orders.length, ordersByPlatform, products, materials });
+    } catch (error: any) {
+      console.error('❌ [PRODUCTION SUMMARY ERROR]:', error);
+      res.status(500).json({ success: false, error: error?.message || String(error) });
+    }
+  });
+
+  // Rota administrativa: executar RPC `sync_database` no Supabase (tenta aplicar migrations)
+  app.post('/api/db/sync', async (req, res) => {
+    try {
+      // chama o RPC no banco
+      const { data, error } = await supabase.rpc('sync_database');
+      if (error) {
+        console.error('❌ [DB SYNC RPC ERROR]:', error);
+        return res.status(500).json({ success: false, error: error.message || String(error) });
+      }
+      console.log('✅ [DB SYNC] sync_database executed:', data);
+      return res.json({ success: true, message: data });
+    } catch (err: any) {
+      console.error('❌ [DB SYNC ERROR]:', err);
+      return res.status(500).json({ success: false, error: err?.message || String(err) });
+    }
+  });
+
+  // Rota: detalhes de produção (usuários, lotes, bipagens, pacotes, estoque) para uma data/período
+  app.get('/api/production/details', async (req, res) => {
+    try {
+      const dateParam = String(req.query.date || '').trim();
+      if (!dateParam) return res.status(400).json({ success: false, error: 'query param `date` obrigatório (YYYY-MM-DD)' });
+
+      const period = String(req.query.period || 'daily'); // daily | weekly | monthly
+      let start = new Date(dateParam);
+      if (isNaN(start.getTime())) return res.status(400).json({ success: false, error: 'data inválida' });
+
+      const end = new Date(start.getTime());
+      if (period === 'daily') {
+        start.setHours(0,0,0,0);
+        end.setHours(23,59,59,999);
+      } else if (period === 'weekly') {
+        const day = start.getDay();
+        const diff = start.getDate() - day + (day === 0 ? -6 : 1);
+        start = new Date(start.setDate(diff));
+        start.setHours(0,0,0,0);
+        end.setTime(start.getTime());
+        end.setDate(start.getDate() + 6);
+        end.setHours(23,59,59,999);
+      } else if (period === 'monthly') {
+        start = new Date(start.getFullYear(), start.getMonth(), 1, 0,0,0,0);
+        end = new Date(start.getFullYear(), start.getMonth()+1, 0, 23,59,59,999);
+      }
+
+      const startISO = start.toISOString();
+      const endISO = end.toISOString();
+
+      // users and sectors
+      const [{ data: users }, { data: sectors }] = await Promise.all([
+        supabase.from('users').select('id, name, setor, role').order('name', { ascending: true }),
+        supabase.from('setores').select('*').order('name', { ascending: true })
+      ]);
+
+      // weighing and grinding batches in period
+      const [{ data: weighings }, { data: grindings }] = await Promise.all([
+        supabase.from('weighing_batches').select('*').gte('created_at', startISO).lte('created_at', endISO).order('created_at', { ascending: false }),
+        supabase.from('grinding_batches').select('*').gte('created_at', startISO).lte('created_at', endISO).order('created_at', { ascending: false })
+      ]);
+
+      // orders (filter by orders.data when available), scan_logs, production_bipagens and packages
+      const dd = String(start.getDate()).padStart(2,'0');
+      const mm = String(start.getMonth()+1).padStart(2,'0');
+      const yyyy = start.getFullYear();
+      const formattedDate = `${dd}/${mm}/${yyyy}`;
+
+      const [{ data: ordersForDate }, { data: scans }, { data: bipagens }, { data: packages }, { data: closures }, { data: importHistoryRows }, { data: estoqueProntoRows }, { data: stockItemsRows }] = await Promise.all([
+        supabase.from('orders').select('*').or(`data.eq.${formattedDate},created_at.gte.${startISO}`).order('created_at', { ascending: false }).limit(5000),
+        supabase.from('scan_logs').select('*').gte('scanned_at', startISO).lte('scanned_at', endISO).order('scanned_at', { ascending: false }).limit(5000),
+        supabase.from('production_bipagens').select('*').gte('created_at', startISO).lte('created_at', endISO).order('created_at', { ascending: false }),
+        supabase.from('production_packages').select('*').gte('created_at', startISO).lte('created_at', endISO).order('created_at', { ascending: false }),
+        supabase.from('production_stock_closures').select('*').gte('created_at', startISO).lte('created_at', endISO).order('created_at', { ascending: false }),
+        // Import history (usado para sugerir pedidos coletados gerados pela importação)
+        supabase.from('import_history').select('id, processed_data, processed_at').gte('processed_at', startISO).lte('processed_at', endISO).order('processed_at', { ascending: false }).limit(5000),
+        // Estoque pronto (pacotes prontos) no período
+        supabase.from('estoque_pronto').select('*').gte('created_at', startISO).lte('created_at', endISO).order('created_at', { ascending: false }).limit(5000),
+        // Snapshot de estoque geral
+        supabase.from('stock_items').select('id, code, name, current_qty, ready_qty, unit, kind')
+      ]);
+
+      // Processar import_history para sugerir 'pedidos coletados' — pegamos items das importações que tenham data prevista igual ao dia
+      const importedPackages: any[] = [];
+      try {
+        if (Array.isArray(importHistoryRows)) {
+          importHistoryRows.forEach((row: any) => {
+            const pd = row?.processed_data;
+            if (!pd) return;
+            const lists = pd.lists || {};
+            const completa = Array.isArray(lists.completa) ? lists.completa : [];
+            completa.forEach((it: any) => {
+              const itemDate = String(it.data_prevista_envio || it.data || '').trim();
+              // Aceita YYYY-MM-DD (parser) ou DD/MM/YYYY (fallback)
+              const matchesIso = itemDate === dateParam;
+              const matchesDmy = itemDate === formattedDate;
+              if (matchesIso || matchesDmy) {
+                importedPackages.push({ import_id: row.id, orderId: it.orderId || it.order_id || it.id, sku: it.sku, qty_final: it.qty_final || it.quantidade || it.quantity || 1, color: it.color || it.cor || null, canal: it.canal || it.channel || null });
+              }
+            });
+          });
+        }
+      } catch (e) {
+        console.warn('Erro ao processar import_history para sugestões de pacotes:', e);
+      }
+
+      // Resposta com dados adicionais: estoque pronto e sugestões de pacotes importados
+      res.json({ success: true, period, date: dateParam, start: startISO, end: endISO, users: users || [], sectors: sectors || [], weighings: weighings || [], grindings: grindings || [], orders: ordersForDate || [], scans: scans || [], bipagens: bipagens || [], packages: packages || [], closures: closures || [], importedPackages: importedPackages, estoquePronto: estoqueProntoRows || [], stockItemsSnapshot: stockItemsRows || [] });
+    } catch (error: any) {
+      console.error('❌ [PRODUCTION DETAILS ERROR]:', error);
+      res.status(500).json({ success: false, error: error?.message || String(error) });
+    }
+  });
+
+      // Rota: obter relatório salvo por data (se existir)
+      app.get('/api/production/report', async (req, res) => {
+        try {
+          const dateParam = String(req.query.date || '').trim();
+          if (!dateParam) return res.status(400).json({ success: false, error: 'query param `date` obrigatório (YYYY-MM-DD ou DD/MM/YYYY)' });
+
+          let isoDate = dateParam;
+          if (dateParam.includes('/')) {
+            const parts = dateParam.split('/');
+            if (parts.length === 3) isoDate = `${parts[2]}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
+          }
+
+          const { data, error } = await supabase.from('production_reports').select('*').eq('report_date', isoDate).limit(1);
+          if (error) throw error;
+          const row = Array.isArray(data) && data.length ? data[0] : null;
+          res.json({ success: true, report: row });
+        } catch (error: any) {
+          console.error('❌ [GET PRODUCTION REPORT ERROR]:', error);
+          const msg = error?.message || String(error);
+          if (msg.toLowerCase().includes('relation') || msg.toLowerCase().includes('does not exist')) {
+            return res.status(500).json({ success: false, error: 'Tabela production_reports não existe. Aplique a migration.' });
+          }
+          res.status(500).json({ success: false, error: msg });
+        }
+      });
+
+      // Rota: criar/atualizar relatório de produção (aceita payload manual e arrays de child records)
+      app.post('/api/production/reports', async (req, res) => {
+        try {
+          const body = req.body || {};
+          let reportDate = body.report_date || req.query.date;
+          if (!reportDate) return res.status(400).json({ success: false, error: 'report_date obrigatório (YYYY-MM-DD)' });
+
+          // aceitar DD/MM/YYYY também
+          if (String(reportDate).includes('/')) {
+            const [d, m, y] = String(reportDate).split('/');
+            reportDate = `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`;
+          }
+
+          // se for mensal, normalizamos para o primeiro dia do mês
+          if (body.is_monthly) {
+            const dt = new Date(reportDate);
+            reportDate = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-01`;
+          }
+
+          const payload: any = {
+            report_date: reportDate,
+            notes: body.notes || null,
+            employees_count: body.employees_count || 0,
+            total_orders_imported: body.total_orders_imported || body.ordersCount || 0,
+            total_orders_collected: body.total_orders_collected || 0,
+            total_site_complements: body.total_site_complements || 0,
+            indicators: body.indicators || {},
+            created_by: body.created_by || null
+          };
+
+          // Checar se já existe
+          const { data: existing, error: existingErr } = await supabase.from('production_reports').select('*').eq('report_date', payload.report_date).limit(1);
+          if (existingErr) throw existingErr;
+
+          let reportRow: any = null;
+          if (Array.isArray(existing) && existing.length) {
+            const { data: updated, error: updErr } = await supabase.from('production_reports').update(payload).eq('report_date', payload.report_date).select();
+            if (updErr) throw updErr;
+            reportRow = Array.isArray(updated) && updated.length ? updated[0] : updated;
+          } else {
+            const { data: inserted, error: insErr } = await supabase.from('production_reports').insert([payload]).select();
+            if (insErr) throw insErr;
+            reportRow = Array.isArray(inserted) && inserted.length ? inserted[0] : inserted;
+          }
+
+          // Inserir registros filhos quando fornecidos (não-fatal: apenas logamos falhas)
+          const reportId = reportRow?.id;
+          if (reportId) {
+            if (Array.isArray(body.bipagens) && body.bipagens.length) {
+              const toInsert = body.bipagens.map((b: any) => ({ ...b, report_id: reportId }));
+              const { error: bipErr } = await supabase.from('production_bipagens').insert(toInsert);
+              if (bipErr) console.warn('Erro ao inserir production_bipagens:', bipErr.message || bipErr);
+            }
+            if (Array.isArray(body.personnel) && body.personnel.length) {
+              const toInsert = body.personnel.map((p: any) => ({ ...p, report_id: reportId }));
+              const { error: perr } = await supabase.from('production_report_personnel').insert(toInsert);
+              if (perr) console.warn('Erro ao inserir production_report_personnel:', perr.message || perr);
+            }
+            if (Array.isArray(body.processes) && body.processes.length) {
+              const toInsert = body.processes.map((p: any) => ({ ...p, report_id: reportId }));
+              const { error: procErr } = await supabase.from('production_report_processes').insert(toInsert);
+              if (procErr) console.warn('Erro ao inserir production_report_processes:', procErr.message || procErr);
+            }
+            if (Array.isArray(body.collected_orders) && body.collected_orders.length) {
+              const toInsert = body.collected_orders.map((c: any) => ({ ...c, report_id: reportId }));
+              const { error: pcoErr } = await supabase.from('production_collected_orders').insert(toInsert);
+              if (pcoErr) console.warn('Erro ao inserir production_collected_orders:', pcoErr.message || pcoErr);
+            }
+            if (Array.isArray(body.packages) && body.packages.length) {
+              const toInsert = body.packages.map((p: any) => ({ ...p, report_id: reportId }));
+              const { error: pkErr } = await supabase.from('production_packages').insert(toInsert);
+              if (pkErr) console.warn('Erro ao inserir production_packages:', pkErr.message || pkErr);
+            }
+            if (Array.isArray(body.stock_closures) && body.stock_closures.length) {
+              const toInsert = body.stock_closures.map((s: any) => ({ ...s, report_id: reportId }));
+              const { error: scErr } = await supabase.from('production_stock_closures').insert(toInsert);
+              if (scErr) console.warn('Erro ao inserir production_stock_closures:', scErr.message || scErr);
+            }
+          }
+
+          res.json({ success: true, report: reportRow });
+        } catch (error: any) {
+          console.error('❌ [SAVE PRODUCTION REPORT ERROR]:', error);
+          const msg = error?.message || String(error);
+          if (msg.toLowerCase().includes('relation') || msg.toLowerCase().includes('does not exist')) {
+            return res.status(500).json({ success: false, error: 'Tabelas de produção não existem no banco. Aplique a migration.' });
+          }
+          res.status(500).json({ success: false, error: msg });
+        }
+      });
+
   // DEBUG: Teste de token simples
   app.get("/api/debug/token-test", (req, res) => {
     res.send(`

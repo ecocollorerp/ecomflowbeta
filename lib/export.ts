@@ -988,6 +988,115 @@ export const exportProductionPlanToPdf = (planItems: any[], params: any) => {
     doc.save(`plano_de_producao_${new Date().toISOString().split('T')[0]}.pdf`);
 };
 
+// Export production summary with provenance logging embedded in the PDF
+export const exportProductionSummary = (
+    date: string,
+    prodSummary: any,
+    details: any,
+    stockItems: StockItem[] = [],
+    options?: { filename?: string }
+) => {
+    const doc = new jsPDF();
+    const title = `Resumo de Produção - ${date}`;
+    doc.setFontSize(16);
+    doc.text(title, 14, 18);
+
+    // Build provenance info
+    const provenanceRows: (string | number)[][] = [];
+    const ordersCount = (details?.orders || []).length || 0;
+    const bipagensCount = (details?.bipagens || []).length || 0;
+    const packagesCount = (details?.packages || []).length || 0;
+    const importedPackagesCount = (details?.importedPackages || []).length || 0;
+    const estoqueProntoCount = (details?.estoquePronto || []).length || 0;
+    const stockItemsCount = (stockItems || []).length || 0;
+    const materialsCount = (prodSummary?.materials || []).length || 0;
+
+    provenanceRows.push(['Pedidos (orders)', "tabela 'orders'", ordersCount]);
+    provenanceRows.push(['Bipagens', "tabela 'production_bipagens' / scan_logs", bipagensCount]);
+    provenanceRows.push(['Pacotes registrados', "tabela 'production_packages'", packagesCount]);
+    provenanceRows.push(['Sugestões de pacotes', "import_history -> processed_data (parser)", importedPackagesCount]);
+    provenanceRows.push(['Estoque pronto', "tabela 'estoque_pronto'", estoqueProntoCount]);
+    provenanceRows.push(['Snapshot estoque', "tabela 'stock_items'", stockItemsCount]);
+    provenanceRows.push(['Materiais (calculados)', "product_boms + sku_links (servidor)", materialsCount]);
+
+    doc.setFontSize(12);
+    doc.text('Proveniência dos Dados', 14, 30);
+    autoTable(doc, {
+        startY: 34,
+        head: [['Seção', 'Origem', 'Registros']],
+        body: provenanceRows,
+        theme: 'grid',
+        headStyles: { fillColor: '#2563eb', textColor: '#fff' },
+        styles: { fontSize: 9 },
+        margin: { left: 14, right: 14 }
+    });
+
+    let y = (doc as any).lastAutoTable?.finalY || 50;
+
+    // Products / Orders summary table (from prodSummary.products)
+    if (prodSummary && Array.isArray(prodSummary.products) && prodSummary.products.length) {
+        doc.setFontSize(12);
+        doc.text('Produtos Importados (Resumo)', 14, y + 12);
+        const prodRows = (prodSummary.products || []).map((p: any) => {
+            return [String(p.sku || ''), Number(p.quantity || 0), "orders"];
+        });
+        autoTable(doc, {
+            startY: y + 16,
+            head: [['SKU', 'Qtd', 'Origem']],
+            body: prodRows,
+            theme: 'grid',
+            styles: { fontSize: 9 },
+            headStyles: { fillColor: '#0ea5e9', textColor: '#000' },
+            margin: { left: 14, right: 14 }
+        });
+        y = (doc as any).lastAutoTable?.finalY || y + 60;
+    }
+
+    // Materials table
+    if (prodSummary && Array.isArray(prodSummary.materials) && prodSummary.materials.length) {
+        doc.setFontSize(12);
+        doc.text('Materiais Necessários (Explodidos)', 14, y + 12);
+        const matRows = (prodSummary.materials || []).map((m: any) => {
+            const stock = stockItems.find(s => String(s.code || '').toUpperCase() === String(m.code || '').toUpperCase());
+            return [String(m.code || ''), String(m.name || ''), Number(m.quantity || 0).toFixed(3), stock ? Number(stock.current_qty || 0).toFixed(3) : '—', 'calculado'];
+        });
+        autoTable(doc, {
+            startY: y + 16,
+            head: [['Código', 'Nome', 'Necessidade', 'Estoque', 'Origem']],
+            body: matRows,
+            theme: 'grid',
+            styles: { fontSize: 8 },
+            headStyles: { fillColor: '#f59e0b', textColor: '#000' },
+            margin: { left: 14, right: 14 }
+        });
+        y = (doc as any).lastAutoTable?.finalY || y + 60;
+    }
+
+    // Packages / suggestions
+    if ((details?.packages && details.packages.length) || (details?.importedPackages && details.importedPackages.length)) {
+        doc.setFontSize(12);
+        doc.text('Pacotes Registrados / Sugestões', 14, y + 12);
+        const pkgRows: any[] = [];
+        (details?.packages || []).forEach((p: any) => pkgRows.push([p.description || p.product_sku || '—', p.quantity || 0, 'production_packages']));
+        (details?.importedPackages || []).forEach((s: any) => pkgRows.push([s.sku || s.product_sku || '—', s.qty_final || s.quantity || 0, 'import_history (suggestion)']));
+        autoTable(doc, {
+            startY: y + 16,
+            head: [['SKU/Descrição', 'Qtd', 'Origem']],
+            body: pkgRows,
+            theme: 'grid',
+            styles: { fontSize: 9 },
+            headStyles: { fillColor: '#14b8a6', textColor: '#000' },
+            margin: { left: 14, right: 14 }
+        });
+        y = (doc as any).lastAutoTable?.finalY || y + 60;
+    }
+
+    const filename = options?.filename || `resumo_producao_${date}.pdf`;
+    doc.save(filename);
+    // Also log provenance to console for diagnostics
+    console.log('Export Production Summary provenance:', { date, ordersCount, bipagensCount, packagesCount, importedPackagesCount, estoqueProntoCount, stockItemsCount, materialsCount });
+};
+
 export const exportExcel = (data: ProcessedData, skuLinks: SkuLink[], stockItems: StockItem[] = []) => {
     const wb = XLSX.utils.book_new();
     const linkedSkusMap = new Map(skuLinks.map(link => [link.importedSku, link.masterProductSku]));
