@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Calendar, FileDown, Save, Package, Box, Truck, ClipboardCheck } from 'lucide-react';
+import { Calendar, FileDown, Save, Package, Box, Truck, ClipboardCheck, Plus, Trash2, MapPin } from 'lucide-react';
 import InfoCard from '../components/InfoCard';
 import Collapsible from '../components/Collapsible';
 import ProductionReportModal from '../components/ProductionReportModal';
 import { exportProductionSummary } from '../lib/export';
-import { StockItem, StockMovement, OrderItem, WeighingBatch, GrindingBatch, ScanLogItem, User, ProdutoCombinado, SkuLink, GeneralSettings } from '../types';
+import { StockItem, StockMovement, OrderItem, WeighingBatch, GrindingBatch, ScanLogItem, User, ProdutoCombinado, SkuLink, GeneralSettings, ColetaItem, ColetaAdicional } from '../types';
 
 interface ResumoProducaoProps {
   stockItems: StockItem[];
@@ -44,6 +44,17 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
   const [dateRange, setDateRange] = useState<'today' | 'week' | 'month' | 'custom'>('today');
   const [customDateStart, setCustomDateStart] = useState<string>('');
   const [customDateEnd, setCustomDateEnd] = useState<string>('');
+
+  // Estado para Coleta
+  const [coletas, setColetas] = useState<ColetaItem[]>([]);
+  const [newColeta, setNewColeta] = useState<Partial<ColetaItem>>({
+    plataforma: 'ML',
+    status: 'pendente'
+  });
+  const [coletasAdicionais, setColetasAdicionais] = useState<ColetaAdicional[]>([]);
+  const [newColetaAdicional, setNewColetaAdicional] = useState<Partial<ColetaAdicional>>({
+    tipo: 'manual'
+  });
 
   useEffect(() => {
     const t = setTimeout(() => setLoading(false), 350);
@@ -232,8 +243,9 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
         <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 dark:from-emerald-900/30 dark:to-emerald-800/30 border border-emerald-200 dark:border-emerald-700 rounded-xl p-4 shadow-sm">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-xs font-bold text-emerald-600 dark:text-emerald-300 uppercase tracking-wide">Itens Totais</p>
-              <p className="text-3xl font-black text-emerald-800 dark:text-emerald-200 mt-1">{loading ? '—' : totalItems}</p>
+              <p className="text-xs font-bold text-emerald-600 dark:text-emerald-300 uppercase tracking-wide">Itens Produção</p>
+              <p className="text-3xl font-black text-emerald-800 dark:text-emerald-200 mt-1">{loading ? '—' : (totalItems - ordersForPeriod.reduce((s, o) => s + (o.qty_final || 0), 0))}</p>
+              <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1">(sem importação)</p>
             </div>
             <div className="p-2.5 bg-emerald-200 dark:bg-emerald-700 rounded-lg"><Box size={20} className="text-emerald-600 dark:text-emerald-300" /></div>
           </div>
@@ -756,12 +768,106 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
                 )}
               </div>
 
-              {/* Horário da coleta */}
+              {/* Registro de Coleta */}
               <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg p-4">
                 <label className="text-sm font-bold text-amber-900 dark:text-amber-200 block mb-3 flex items-center gap-2">
-                  <Calendar size={16} /> Horário da Coleta
+                  <MapPin size={16} /> Registrar Coleta
                 </label>
-                <input type="time" className="w-full px-3 py-2.5 border border-amber-300 dark:border-amber-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-amber-400" defaultValue={new Date().toTimeString().slice(0,5)} />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                  <div>
+                    <label className="text-xs font-black text-amber-700 dark:text-amber-300 block mb-1.5">ID Coleta</label>
+                    <input
+                      type="text"
+                      value={newColeta.coletaId || ''}
+                      onChange={e => setNewColeta({...newColeta, coletaId: e.target.value})}
+                      placeholder="ex: COLETA-001"
+                      className="w-full px-3 py-2 border border-amber-300 dark:border-amber-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-black text-amber-700 dark:text-amber-300 block mb-1.5">Plataforma</label>
+                    <select
+                      value={newColeta.plataforma || 'ML'}
+                      onChange={e => setNewColeta({...newColeta, plataforma: e.target.value})}
+                      className="w-full px-3 py-2 border border-amber-300 dark:border-amber-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-amber-400"
+                    >
+                      <option value="ML">Mercado Livre</option>
+                      <option value="SHOPEE">Shopee</option>
+                      <option value="SITE">Site</option>
+                      <option value="TIKTOK">TikTok</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-black text-amber-700 dark:text-amber-300 block mb-1.5">Motorista</label>
+                    <input
+                      type="text"
+                      value={newColeta.motorista || ''}
+                      onChange={e => setNewColeta({...newColeta, motorista: e.target.value})}
+                      placeholder="Nome do motorista"
+                      className="w-full px-3 py-2 border border-amber-300 dark:border-amber-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-black text-amber-700 dark:text-amber-300 block mb-1.5">Placa do Caminhão</label>
+                    <input
+                      type="text"
+                      value={newColeta.placaCaminhao || ''}
+                      onChange={e => setNewColeta({...newColeta, placaCaminhao: e.target.value})}
+                      placeholder="ex: ABC-1234"
+                      className="w-full px-3 py-2 border border-amber-300 dark:border-amber-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-black text-amber-700 dark:text-amber-300 block mb-1.5">Data</label>
+                    <input
+                      type="date"
+                      value={newColeta.dataColeta || date}
+                      onChange={e => setNewColeta({...newColeta, dataColeta: e.target.value})}
+                      className="w-full px-3 py-2 border border-amber-300 dark:border-amber-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-black text-amber-700 dark:text-amber-300 block mb-1.5">Horário</label>
+                    <input
+                      type="time"
+                      value={newColeta.horarioColeta || new Date().toTimeString().slice(0,5)}
+                      onChange={e => setNewColeta({...newColeta, horarioColeta: e.target.value})}
+                      className="w-full px-3 py-2 border border-amber-300 dark:border-amber-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-amber-400"
+                    />
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    if (!newColeta.coletaId || !newColeta.motorista || !newColeta.placaCaminhao) {
+                      if (addToast) addToast('Preencha todos os campos obrigatórios', 'warning');
+                      return;
+                    }
+                    const coleta: ColetaItem = {
+                      id: `COLETA-${Date.now()}`,
+                      coletaId: newColeta.coletaId!,
+                      plataforma: newColeta.plataforma as any,
+                      motorista: newColeta.motorista!,
+                      placaCaminhao: newColeta.placaCaminhao!,
+                      dataColeta: newColeta.dataColeta || date,
+                      horarioColeta: newColeta.horarioColeta || new Date().toTimeString().slice(0,5),
+                      lotes: manualBipagens.map(b => b.product_sku),
+                      pedidos: [],
+                      totalItens: manualBipagens.reduce((s, b) => s + b.quantity, 0),
+                      totalPedidos: ordersForPeriod.length,
+                      observacoes: '',
+                      status: 'pendente',
+                      createdAt: new Date().toISOString(),
+                      updatedAt: new Date().toISOString()
+                    };
+                    setColetas([...coletas, coleta]);
+                    setNewColeta({ plataforma: 'ML', status: 'pendente' });
+                    setManualBipagens([]);
+                    if (addToast) addToast('Coleta registrada com sucesso', 'success');
+                  }}
+                  className="w-full px-4 py-2.5 bg-gradient-to-r from-amber-500 to-orange-600 text-white rounded-lg hover:from-amber-600 hover:to-orange-700 transition-all font-bold text-sm flex items-center justify-center gap-2"
+                >
+                  <Plus size={16} /> Registrar Coleta
+                </button>
               </div>
 
               {/* Adicionar manualmente */}
@@ -790,7 +896,7 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
               {/* Lista de bipagens adicionadas */}
               {(manualBipagens || []).length > 0 && (
                 <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
-                  <p className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-3">Bipagens Adicionadas ({manualBipagens.length})</p>
+                  <p className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-3">Itens Adicionados ({manualBipagens.length})</p>
                   <div className="space-y-2 max-h-48 overflow-y-auto">
                     {manualBipagens.map((b, i) => (
                       <div key={i} className="flex items-center justify-between p-2.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg">
@@ -801,6 +907,33 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
                           <span className="ml-3 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-1 rounded">{b.platform}</span>
                         </div>
                         <button className="text-sm text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 font-bold" onClick={() => setManualBipagens(prev => prev.filter((_, idx) => idx !== i))}>✕ Remover</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Lista de coletas registradas */}
+              {coletas.length > 0 && (
+                <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded-lg p-4">
+                  <p className="text-sm font-bold text-green-900 dark:text-green-200 mb-3">Coletas Registradas ({coletas.length})</p>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {coletas.map((c, i) => (
+                      <div key={c.id} className="flex items-start justify-between p-3 bg-white dark:bg-slate-800 border border-green-200 dark:border-green-700 rounded-lg">
+                        <div className="text-sm flex-1">
+                          <div className="font-bold text-slate-900 dark:text-white">{c.coletaId}</div>
+                          <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                            <div>👤 {c.motorista} | 🚚 {c.placaCaminhao}</div>
+                            <div>📦 {c.plataforma} | ⏰ {c.horarioColeta}</div>
+                            <div>📊 {c.totalItens} itens | {c.totalPedidos} pedidos</div>
+                          </div>
+                        </div>
+                        <button
+                          className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 font-bold p-2"
+                          onClick={() => setColetas(prev => prev.filter((_, idx) => idx !== i))}
+                        >
+                          <Trash2 size={16} />
+                        </button>
                       </div>
                     ))}
                   </div>

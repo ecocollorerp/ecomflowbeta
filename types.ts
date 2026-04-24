@@ -1506,3 +1506,31 @@ export const NFE_SITUACAO_CODES: Record<string, number[]> = {
   autorizadas_sem_danfe: [5, 6, 9],
   emitidas: [11]
 };
+
+// Tipos para Coleta de Pedidos
+export interface ColetaItem {
+  id: string;
+  coletaId: string;
+  plataforma: 'ML' | 'SHOPEE' | 'SITE' | 'TIKTOK' | string;
+  motorista: string;
+  placaCaminhao: string;
+  dataColeta: string;
+  horarioColeta: string;
+  lotes: string[];
+  pedidos: string[];
+  totalItens: number;
+  totalPedidos: number;
+  observacoes: string;
+  status: 'pendente' | 'coletado' | 'finalizado';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ColetaAdicional {
+  id: string;
+  descricao: string;
+  quantidade: number;
+  plataforma: string;
+  tipo: 'manual' | 'pedido';
+  createdAt: string;
+}
