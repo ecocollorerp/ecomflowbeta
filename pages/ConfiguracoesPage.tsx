@@ -533,11 +533,11 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
                     <Section title="Regras Automáticas de Embalagem" icon={<Truck size={24} className="text-blue-600"/>}>
                         <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 mb-8">
                             <h3 className="text-xs font-black text-slate-500 mb-5 uppercase tracking-widest flex items-center gap-2"><Plus size={16}/> Adicionar Nova Faixa de Baixa</h3>
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                                 <div>
-                                    <label className="text-[10px] font-black text-gray-400 uppercase">Para Categoria:</label>
+                                    <label className="text-[10px] font-black text-gray-400 uppercase">Plataforma</label>
                                     <select value={newRule.category} onChange={e => setNewRule({...newRule, category: e.target.value})} className="w-full p-3 border-2 border-slate-100 rounded-xl text-xs font-black bg-white focus:border-blue-500">
-                                        <option value="ALL">Todas Categorias</option>
+                                        <option value="ALL">Todas Plataformas</option>
                                         {settings.productCategoryList?.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                                         {settings.insumoCategoryList?.filter(c => !settings.productCategoryList?.includes(c)).map(cat => <option key={cat} value={cat}>{cat}</option>)}
                                     </select>

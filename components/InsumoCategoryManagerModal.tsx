@@ -15,6 +15,7 @@ interface InsumoCategoryManagerModalProps {
     currentConfigs?: CategoryConfig[];
     onSaveConfigs?: (newConfigs: CategoryConfig[]) => void;
     showBaseConfig?: boolean;
+    title?: string;
 }
 
 const InsumoCategoryManagerModal: React.FC<InsumoCategoryManagerModalProps> = ({ 
@@ -135,9 +136,9 @@ const InsumoCategoryManagerModal: React.FC<InsumoCategoryManagerModalProps> = ({
             <div className="bg-white rounded-[2.5rem] shadow-2xl p-8 w-full max-w-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
                 <div className="flex justify-between items-center mb-6">
                     <div>
-                        <h2 className="text-2xl font-black uppercase tracking-tighter">Gerenciar Categorias</h2>
+                        <h2 className="text-2xl font-black uppercase tracking-tighter">{title || 'Gerenciar Categorias'}</h2>
                         <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                            {showBaseConfig ? 'Configure categorias e definições de base' : 'Crie e organize categorias'}
+                            {showBaseConfig ? `${title || 'Configure categorias'} e definições de base` : `Crie e organize ${title ? title.toLowerCase() : 'categorias'}`}
                         </p>
                     </div>
                     <button onClick={onClose} className="p-2 hover:bg-slate-50 rounded-full text-slate-400 transition-all"><X size={24} /></button>
@@ -149,7 +150,7 @@ const InsumoCategoryManagerModal: React.FC<InsumoCategoryManagerModalProps> = ({
                         value={newCategory}
                         onChange={e => setNewCategory(e.target.value)}
                         onKeyPress={e => e.key === 'Enter' && handleAdd()}
-                        placeholder="Nome da nova categoria..."
+                        placeholder={title ? `Nome da nova ${title.toLowerCase()}...` : 'Nome da nova categoria...'}
                         className="flex-grow p-3 bg-white border-2 border-slate-100 rounded-xl font-bold text-sm outline-none focus:border-blue-500 transition-all"
                     />
                     <button onClick={handleAdd} className="px-6 bg-blue-600 text-white rounded-xl font-black uppercase text-xs shadow-lg shadow-blue-100 hover:bg-blue-700 active:scale-95 transition-all flex items-center gap-2">

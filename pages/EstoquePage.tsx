@@ -1799,6 +1799,7 @@ const EstoquePage: React.FC<EstoquePageProps> = (props) => {
                     onSaveConfigs={(cfgs) => handleSaveProductCategories(generalSettings.productCategoryList, cfgs)}
                     currentConfigs={generalSettings.productCategoryConfigs}
                     showBaseConfig={true}
+                    title="Gerenciar Plataformas"
                     allProducts={produtos} 
                     onAssignProducts={handleAssignProductsToCategory} 
                 />

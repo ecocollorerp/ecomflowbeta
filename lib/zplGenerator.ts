@@ -34,6 +34,11 @@ export interface ZPLEtiquetaData {
     cep: string;
 }
 
+const prettyService = (s?: string) => {
+    if (!s) return '';
+    return String(s).replace(/[_-]/g, ' ').replace(/([A-Za-z])([0-9])/g, '$1 $2').replace(/\s+/g, ' ').trim();
+}
+
 export class ZPLGenerator {
     /**
      * Gera uma DANFE Simplificada em ZPL (Layout 100x150mm aproximadamente)
@@ -87,9 +92,9 @@ export class ZPLGenerator {
         const { transportadora, servico, rastreio, pedidoLoja, cliente, endereco, cidadeUf, cep } = data;
 
         return `^XA
-^CI28
-^CF0,30
-^FO50,30^FD${transportadora.substring(0, 20)} - ${servico.substring(0, 15)}^FS
+    ^CI28
+    ^CF0,30
+    ^FO50,30^FD${transportadora.substring(0, 20)} - ${prettyService(servico).substring(0, 15)}^FS
 
 ^FO50,80^GB700,2,2^FS
 

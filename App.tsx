@@ -945,7 +945,12 @@ const App: React.FC = () => {
                             tiktok: { ...prev.importer.tiktok, ...(general.importer?.tiktok || {}) },
                         },
                         pedidos: { ...prev.pedidos, ...(general.pedidos || {}) },
-                        productCategoryList: Array.isArray(general.productCategoryList) ? general.productCategoryList : prev.productCategoryList,
+                        productCategoryList: (() => {
+                            const defaults = ['ML', 'SHOPEE', 'SITE', 'TIKTOK'];
+                            const incoming = Array.isArray(general.productCategoryList) ? general.productCategoryList : (prev.productCategoryList || []);
+                            const merged = Array.from(new Set([...(incoming || []), ...defaults]));
+                            return merged.sort();
+                        })(),
                         insumoCategoryList: Array.isArray(general.insumoCategoryList) ? general.insumoCategoryList : prev.insumoCategoryList,
                     }));
                 }
@@ -2329,7 +2334,7 @@ const App: React.FC = () => {
             />
             case 'bipagem': return <BipagemPage isAutoBipagemActive={isAutoBipagemActive} allOrders={allOrders} onNewScan={handleNewScan} onBomDeduction={() => { }} scanHistory={scanHistory} onCancelBipagem={handleCancelBipagem} onBulkCancelBipagem={handleBulkCancelBipagem} products={stockItems} users={users} onAddNewUser={handleAddNewUser} onSaveUser={handleUpdateUser} uiSettings={uiSettings} currentUser={currentUser!} onSyncPending={handleSyncPending} skuLinks={skuLinks} addToast={addToast} currentPage={currentPage} onHardDeleteScanLog={handleHardDeleteScanLog} onBulkHardDeleteScanLog={handleBulkHardDeleteScanLog} />
             case 'pedidos': return <PedidosPage allOrders={allOrders} scanHistory={scanHistory} returns={returns} onLogError={handleLogError} onLogReturn={handleLogReturn} currentUser={currentUser!} onDeleteOrders={handleDeleteOrders} onBulkCancelBipagem={handleBulkCancelBipagem} onUpdateStatus={handleUpdateStatus} onRemoveReturn={handleRemoveReturn} onSolveOrders={handleSolveOrders} generalSettings={generalSettings} users={users} skuLinks={skuLinks} stockItems={stockItems} initialFilter={pedidosInitialFilter} />
-            case 'resumo-producao': return <ResumoProducaoPage stockItems={stockItems} stockMovements={stockMovements} orders={allOrders} weighingBatches={weighingBatches} grindingBatches={grindingBatches} scanHistory={scanHistory} users={users} produtosCombinados={produtosCombinados} skuLinks={skuLinks} generalSettings={generalSettings} addToast={addToast} />
+            case 'resumo-producao': return <ResumoProducaoPage stockItems={stockItems} stockMovements={stockMovements} orders={allOrders} weighingBatches={weighingBatches} grindingBatches={grindingBatches} scanHistory={scanHistory} users={users} produtosCombinados={produtosCombinados} skuLinks={skuLinks} generalSettings={generalSettings} addToast={addToast} currentUser={currentUser!} onSaveGeneralSettings={handleSaveGeneralSettings} />
             case 'planejamento': return <PlanejamentoPage stockItems={stockItems} allOrders={allOrders} skuLinks={skuLinks} produtosCombinados={produtosCombinados} productionPlans={productionPlans} onSaveProductionPlan={handleSaveProductionPlan} onDeleteProductionPlan={handleDeleteProductionPlan} onGenerateShoppingList={handleGenerateShoppingList} currentUser={currentUser!} planningSettings={generalSettings.estoque} onSavePlanningSettings={(s) => handleSaveGeneralSettings(p => ({ ...p, estoque: s }))} addToast={addToast} costCalculations={costCalculations} />
             case 'compras': return <ComprasPage shoppingList={shoppingList} onClearList={handleClearShoppingList} onUpdateItem={handleUpdateShoppingItem} stockItems={stockItems} />
             case 'pesagem': return <MaquinasPage stockItems={stockItems} weighingBatches={weighingBatches} onAddNewWeighing={handleAddNewWeighing} currentUser={currentUser!} onDeleteBatch={handleDeleteWeighingBatch} users={users} skuLinks={skuLinks} generalSettings={generalSettings} />

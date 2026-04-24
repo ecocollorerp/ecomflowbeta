@@ -995,13 +995,43 @@ export const exportProductionSummary = (
     details: any,
     stockItems: StockItem[] = [],
     dateSource: 'imported' | 'original' = 'imported',
-    options?: { filename?: string }
+    options?: {
+        filename?: string,
+        generatedBy?: string,
+        coletas?: any[],
+        personnel?: any[],
+        bipagens?: any[],
+        processes?: any[],
+        packages?: any[],
+        stockClosures?: any[],
+        observations?: string[],
+        isMonthly?: boolean,
+        periodStart?: string,
+        periodEnd?: string
+    }
 ) => {
     const doc = new jsPDF();
     const dateLabel = dateSource === 'imported' ? `(Data de Importação)` : `(Data de Envio)`;
     const title = `Resumo de Produção - ${date} ${dateLabel}`;
     doc.setFontSize(16);
     doc.text(title, 14, 18);
+
+    if (options?.generatedBy) {
+        doc.setFontSize(10);
+        doc.text(`Gerado por: ${options.generatedBy}`, 14, 24);
+    }
+
+    if (options?.observations && options.observations.length) {
+        doc.setFontSize(11);
+        doc.text('Observações:', 14, 30);
+        autoTable(doc, {
+            startY: 34,
+            body: options.observations.map(o => [String(o)]),
+            theme: 'plain',
+            styles: { fontSize: 9 },
+            margin: { left: 14, right: 14 }
+        });
+    }
 
     // Build provenance info
     const provenanceRows: (string | number)[][] = [];
@@ -1075,6 +1105,144 @@ export const exportProductionSummary = (
             headStyles: { fillColor: '#f59e0b', textColor: '#000' },
             margin: { left: 14, right: 14 }
         });
+        y = (doc as any).lastAutoTable?.finalY || y + 60;
+    }
+
+    // Extra: Pedidos do período (detalhes)
+    const orders = details?.orders || details?.ordersForDate || [];
+    if (orders && orders.length) {
+        doc.setFontSize(12);
+        doc.text('Pedidos do Período (amostra)', 14, y + 12);
+        const rows = (orders || []).slice(0, 200).map((o: any) => [o.orderId || o.id || '', o.cliente || o.customer_name || '', (o.items && o.items.map((it: any) => `${it.sku}×${it.qty_final || it.quantity || ''}`).join(', ')) || o.sku || '—', o.qty_final || o.quantity || 0, o.canal || '—']);
+        autoTable(doc, {
+            startY: y + 16,
+            head: [['Pedido', 'Cliente', 'Itens', 'Qtd', 'Canal']],
+            body: rows,
+            theme: 'grid',
+            styles: { fontSize: 8 },
+            headStyles: { fillColor: '#2563eb', textColor: '#fff' },
+            margin: { left: 14, right: 14 }
+        });
+        y = (doc as any).lastAutoTable?.finalY || y + 60;
+    }
+
+    // Produção por processos (Pesagem, Ensacamento, Moagem)
+    const weighings = details?.weighings || details?.weighing_batches || [];
+    const grindings = details?.grindings || details?.grinding_batches || [];
+    const pkgs = (details?.packages || details?.production_packages || []).concat(options?.packages || []);
+
+    const processTotals = new Map<string, number>();
+    weighings.forEach((w: any) => { const k = w.stock_item_code || w.stock_item_name || 'UNKNOWN'; processTotals.set(k, (processTotals.get(k) || 0) + Number(w.qty_produced || w.used_qty || w.initial_qty || 0)); });
+    grindings.forEach((g: any) => { const k = g.output_insumo_code || g.output_insumo_name || 'UNKNOWN'; processTotals.set(k, (processTotals.get(k) || 0) + Number(g.output_qty_produced || g.output_qty || 0)); });
+    pkgs.forEach((p: any) => { const k = p.product_sku || p.description || 'PACKAGE'; processTotals.set(k, (processTotals.get(k) || 0) + Number(p.quantity || p.qty || p.qty_final || 0)); });
+
+    if (processTotals.size) {
+        doc.setFontSize(12);
+        doc.text('Produção por Produto (processos combinados)', 14, y + 12);
+        const rows = Array.from(processTotals.entries()).sort((a,b) => b[1]-a[1]).slice(0,200).map(([k,v]) => [String(k), Number(v)]);
+        autoTable(doc, { startY: y + 16, head: [['Produto/SKU', 'Qtd Produzida']], body: rows, theme: 'grid', styles: { fontSize: 9 }, headStyles: { fillColor: '#0ea5e9', textColor: '#fff' }, margin: { left: 14, right: 14 } });
+        y = (doc as any).lastAutoTable?.finalY || y + 60;
+
+        // Draw simple bar chart for top products
+        const chartItems = rows.slice(0,8);
+        if (chartItems.length) {
+            const maxV = Math.max(...chartItems.map((r:any) => Number(r[1]) || 0));
+            const chartX = 14; const chartY = y + 8; const chartW = 180; const chartH = 40; const barH = Math.floor(chartH / chartItems.length) - 4;
+            chartItems.forEach((r:any, i:number) => {
+                const v = Number(r[1]) || 0; const wBar = maxV === 0 ? 0 : Math.max(2, Math.round((v / maxV) * (chartW - 40)));
+                doc.setFillColor('#2563eb');
+                doc.rect(chartX + 60, chartY + i*(barH+4), wBar, barH, 'F');
+                doc.setFontSize(8);
+                doc.text(String(r[0]), chartX, chartY + i*(barH+4) + (barH/1.5));
+                doc.text(String(v), chartX + 62 + wBar, chartY + i*(barH+4) + (barH/1.5));
+            });
+            y = chartY + chartH + 8;
+        }
+    }
+
+    // Miúdos (expedition_items) — derivado dos produtos produzidos no período
+    try {
+        const miudosMap = new Map<string, number>();
+        const products = prodSummary?.products || [];
+        (products || []).forEach((p: any) => {
+            const sku = String(p.sku || '').toUpperCase();
+            const qty = Number(p.quantity || p.qty || 0) || 0;
+            if (!sku || qty === 0) return;
+            const master = (stockItems || []).find(s => String(s.code || '').toUpperCase() === sku);
+            if (master) {
+                const exp = master.expedition_items || [];
+                if (Array.isArray(exp) && exp.length) {
+                    exp.forEach((ei: any) => {
+                        const code = String(ei.stockItemCode || ei.code || ei.stock_item_code || '').trim();
+                        const perPack = Number(ei.qty_per_pack || ei.qty || ei.quantity || 0) || 0;
+                        if (!code || perPack === 0) return;
+                        miudosMap.set(code, (miudosMap.get(code) || 0) + perPack * qty);
+                    });
+                } else if (master.product_type === 'miudos' || (master as any).is_miudo) {
+                    miudosMap.set(master.code, (miudosMap.get(master.code) || 0) + qty);
+                }
+            }
+        });
+
+        if (miudosMap.size) {
+            doc.setFontSize(12);
+            doc.text('Miúdos Utilizados', 14, y + 12);
+            const rows = Array.from(miudosMap.entries()).map(([code, q]) => {
+                const si = (stockItems || []).find((s: any) => String(s.code || '') === String(code));
+                return [String(code), si?.name || '', Number(q)];
+            });
+            autoTable(doc, { startY: y + 16, head: [['SKU','Nome','Qtd Usada']], body: rows, theme: 'grid', styles: { fontSize: 9 }, headStyles: { fillColor: '#ec4899', textColor: '#fff' }, margin: { left: 14, right: 14 } });
+            y = (doc as any).lastAutoTable?.finalY || y + 60;
+        }
+    } catch (err) {
+        console.warn('Erro ao calcular miúdos no export:', err);
+    }
+
+    // Coletas (se informadas)
+    const coletas = options?.coletas || [];
+    if (coletas && coletas.length) {
+        doc.setFontSize(12);
+        doc.text('Coletas realizadas', 14, y + 12);
+        const rows = coletas.map((c: any) => [c.coletaId || c.id || '', c.plataforma || c.plataforma || c.platform || '', c.motorista || c.driver || '', c.placaCaminhao || c.placa || c.truck || '', c.dataColeta || c.date || '', c.horarioColeta || c.time || '', (c.pedidos || []).length || c.totalPedidos || 0, c.totalItens || 0]);
+        autoTable(doc, { startY: y + 16, head: [['Coleta', 'Plataforma', 'Motorista', 'Placa', 'Data', 'Horário', 'Pedidos', 'Itens']], body: rows, theme: 'grid', styles: { fontSize: 8 }, headStyles: { fillColor: '#14b8a6', textColor: '#000' }, margin: { left: 14, right: 14 } });
+        y = (doc as any).lastAutoTable?.finalY || y + 60;
+    }
+
+    // Pedidos sem coleta
+    if (orders && orders.length) {
+        const allCollectedIds = new Set<string>();
+        (coletas || []).forEach((c: any) => (c.pedidos || []).forEach((p: any) => allCollectedIds.add(String(p))));
+        const withoutColeta = (orders || []).filter((o: any) => !allCollectedIds.has(String(o.orderId || o.id || o.tracking)));
+        if (withoutColeta.length) {
+            doc.setFontSize(12);
+            doc.text(`Pedidos sem coleta (${withoutColeta.length})`, 14, y + 12);
+            const rows = withoutColeta.slice(0,200).map((o: any) => [o.orderId || o.id || '', o.cliente || o.customer_name || '', o.qty_final || o.quantity || 0, o.canal || '—']);
+            autoTable(doc, { startY: y + 16, head: [['Pedido','Cliente','Qtd','Canal']], body: rows, theme: 'grid', styles: { fontSize: 8 }, headStyles: { fillColor: '#ef4444', textColor: '#fff' }, margin: { left: 14, right: 14 } });
+            y = (doc as any).lastAutoTable?.finalY || y + 60;
+        }
+    }
+
+    // Pessoas e bipagens (resumo por usuário)
+    const productionByPersonMap = new Map<string, any>();
+    (details?.bipagens || []).forEach((b: any) => { const key = String(b.user_id || b.user || b.user_name || 'unknown'); const e = productionByPersonMap.get(key) || { name: b.user_name || b.user || '', bipagens: 0, weighings: 0, grindings: 0 }; e.bipagens = (e.bipagens || 0) + (b.quantity || b.qty || 1); productionByPersonMap.set(key, e); });
+    (details?.weighings || []).forEach((w: any) => { const key = String(w.created_by_id || w.user_id || w.operador_maquina || w.created_by || 'unknown'); const e = productionByPersonMap.get(key) || { name: w.created_by_name || w.user_name || w.operador_maquina || '', bipagens: 0, weighings: 0, grindings: 0 }; e.weighings = (e.weighings || 0) + (w.qty_produced || w.used_qty || w.initial_qty || 0); productionByPersonMap.set(key, e); });
+    (details?.grindings || []).forEach((g: any) => { const key = String(g.user_id || g.user || 'unknown'); const e = productionByPersonMap.get(key) || { name: g.user_name || g.user || '', bipagens: 0, weighings: 0, grindings: 0 }; e.grindings = (e.grindings || 0) + (g.output_qty_produced || g.output_qty || 0); productionByPersonMap.set(key, e); });
+    const persons = Array.from(productionByPersonMap.values());
+    if (persons.length) {
+        doc.setFontSize(12);
+        doc.text('Produção por Pessoa (bipagens/pesagens/moagens)', 14, y + 12);
+        const rows = persons.map((p: any) => [p.name || '—', p.bipagens || 0, p.weighings || 0, p.grindings || 0]);
+        autoTable(doc, { startY: y + 16, head: [['Pessoa','Bipagens','Pesagens','Moagens']], body: rows, theme: 'grid', styles: { fontSize: 9 }, headStyles: { fillColor: '#6b7280', textColor: '#fff' }, margin: { left: 14, right: 14 } });
+        y = (doc as any).lastAutoTable?.finalY || y + 60;
+    }
+
+    // Estoque: listar snapshot
+    const snapshot = stockItems || [];
+    if (snapshot && snapshot.length) {
+        doc.setFontSize(12);
+        doc.text('Estoque (snapshot)', 14, y + 12);
+        const rows = snapshot.map((s: any) => [String(s.code || s.id), String(s.name || ''), Number(s.current_qty || s.ready_qty || 0), String(s.unit || ''), typeof s.added_at !== 'undefined' ? String(s.added_at) : (s.created_at || '—')]);
+        autoTable(doc, { startY: y + 16, head: [['SKU','Nome','Qtd Atual','Un','Adicionado']], body: rows, theme: 'grid', styles: { fontSize: 8 }, headStyles: { fillColor: '#1f2937', textColor: '#fff' }, margin: { left: 14, right: 14 } });
         y = (doc as any).lastAutoTable?.finalY || y + 60;
     }
 

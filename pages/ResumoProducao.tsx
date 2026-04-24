@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Calendar, FileDown, Save, Package, Box, Truck, ClipboardCheck, Plus, Trash2, MapPin, AlertCircle } from 'lucide-react';
+import { Calendar, FileDown, Save, Package, Box, Truck, ClipboardCheck, Plus, Trash2, MapPin, AlertCircle, X } from 'lucide-react';
 import InfoCard from '../components/InfoCard';
+import InsumoCategoryManagerModal from '../components/InsumoCategoryManagerModal';
 import Collapsible from '../components/Collapsible';
 import ProductionReportModal from '../components/ProductionReportModal';
 import DateRangePicker from '../components/DateRangePicker';
@@ -19,10 +20,12 @@ interface ResumoProducaoProps {
   skuLinks: SkuLink[];
   generalSettings: GeneralSettings;
   addToast?: (msg: string, type: string) => void;
+  currentUser?: User;
+  onSaveGeneralSettings?: (settingsUpdater: GeneralSettings | ((prev: GeneralSettings) => GeneralSettings)) => void;
 }
 
 
-const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMovements, orders, weighingBatches, grindingBatches, scanHistory, users, produtosCombinados, skuLinks, generalSettings, addToast }) => {
+const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMovements, orders, weighingBatches, grindingBatches, scanHistory, users, produtosCombinados, skuLinks, generalSettings, addToast, onSaveGeneralSettings }) => {
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayStr = yesterday.toISOString().slice(0, 10);
@@ -86,6 +89,18 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
 
   const [itemFilter, setItemFilter] = useState<string>('');
   const [showItemsView, setShowItemsView] = useState<boolean>(false);
+  const [viewOrdersModalOpen, setViewOrdersModalOpen] = useState<boolean>(false);
+  const [viewOrdersModalOrders, setViewOrdersModalOrders] = useState<OrderItem[]>([]);
+  const openOrdersModalForSKU = (sku: string) => {
+    const s = String(sku || '').toLowerCase();
+    const matched = ordersForPeriod.filter(o => {
+      if (String(o.sku || '').toLowerCase() === s) return true;
+      if (o.items && o.items.some((it: any) => String(it.sku || '').toLowerCase() === s)) return true;
+      return false;
+    }) as OrderItem[];
+    setViewOrdersModalOrders(matched);
+    setViewOrdersModalOpen(true);
+  };
 
   const groupedOrders = useMemo(() => {
     const map = new Map<string, any[]>();
@@ -132,6 +147,33 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
     });
     return Array.from(map.entries()).map(([sku, qty]) => ({ sku, qty })).sort((a, b) => b.qty - a.qty);
   }, [ordersForPeriod]);
+
+  const miudosStats = useMemo(() => {
+    const map = new Map<string, { code: string; name: string; qty: number }>();
+    const productsList = (prodSummary && Array.isArray(prodSummary.products) && prodSummary.products.length) ? prodSummary.products : itemsAggregate.map((it: any) => ({ sku: it.sku, quantity: it.qty }));
+    productsList.forEach((p: any) => {
+      const sku = String(p.sku || '').toUpperCase();
+      const qty = Number(p.quantity || p.qty || p.qty_final || 0) || 0;
+      if (!sku || qty === 0) return;
+      const master = stockItems.find(s => String(s.code || '').toUpperCase() === sku);
+      if (master && Array.isArray(master.expedition_items) && master.expedition_items.length) {
+        master.expedition_items.forEach((ei: any) => {
+          const code = String(ei.stockItemCode || ei.code || ei.stock_item_code || '').trim();
+          const perPack = Number(ei.qty_per_pack || ei.qty || ei.quantity || 0) || 0;
+          if (!code || perPack === 0) return;
+          const existing = map.get(code) || { code, name: (stockItems.find(s => s.code === code)?.name || code), qty: 0 };
+          existing.qty += perPack * qty;
+          map.set(code, existing);
+        });
+      } else if (master && (master.product_type === 'miudos' || master.is_miudo)) {
+        const code = master.code;
+        const existing = map.get(code) || { code, name: master.name || code, qty: 0 };
+        existing.qty += qty;
+        map.set(code, existing);
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => b.qty - a.qty);
+  }, [prodSummary, itemsAggregate, stockItems]);
 
   const toggleGroup = (key: string) => {
     setExpandedOrders(prev => {
@@ -232,6 +274,106 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
   const estoquePronto = details?.estoquePronto || details?.estoque_pronto || [];
   const stockSnapshot = details?.stockItemsSnapshot || [];
 
+  // --- Resumo objetivo (métricas condensadas) ---
+  const ordersCount = ordersForPeriod.length;
+
+  const totalProducedQty = useMemo(() => {
+    const mixesTotal = mixes.reduce((s, m) => s + (Number(m.qty) || 0), 0);
+    const packagesTotal = (packagesList.registered || []).reduce((s: number, p: any) => s + (Number(p.quantity || p.qty || p.quantidade_disponivel || 0) || 0), 0);
+    return mixesTotal + packagesTotal;
+  }, [mixes, packagesList]);
+
+  const miudosTotal = useMemo(() => miudosStats.reduce((s, m) => s + (Number(m.qty) || 0), 0), [miudosStats]);
+
+  const materialsUsedTotal = useMemo(() => {
+    return (prodSummary?.materials || []).reduce((s: number, m: any) => s + (Number(m.quantity || m.qty || 0) || 0), 0);
+  }, [prodSummary]);
+
+  const coletasCount = (coletas || []).length;
+
+  const collectedOrderSet = useMemo(() => {
+    const set = new Set<string>();
+    (coletas || []).forEach(c => (c.pedidos || []).forEach((p: any) => set.add(String(p))));
+    return set;
+  }, [coletas]);
+
+  const ordersWithoutColetaCount = useMemo(() => ordersForPeriod.filter(o => !collectedOrderSet.has(String(o.orderId || o.id || o.tracking))).length, [ordersForPeriod, collectedOrderSet]);
+
+  const absentCount = useMemo(() => users.filter(u => (u.attendance || []).some(a => a.date === dateRangeEnd && a.status === 'ABSENT')).length, [users, dateRangeEnd]);
+
+  const bipagensMap = useMemo(() => {
+    const m = new Map<string, number>();
+    (details?.bipagens || []).forEach((b: any) => {
+      const id = String(b.user_id || b.user || 'unknown');
+      m.set(id, (m.get(id) || 0) + (Number(b.quantity || b.qty || 1) || 1));
+    });
+    return m;
+  }, [details]);
+
+  const presentUsersMap = useMemo(() => {
+    const map = new Map<string, boolean>();
+    users.forEach(u => {
+      const att = (u.attendance || []).find(a => a.date === dateRangeEnd);
+      if (att && att.status === 'PRESENT') map.set(u.id, true);
+    });
+    return map;
+  }, [users, dateRangeEnd]);
+
+  const presentButNoBipagensCount = useMemo(() => users.filter(u => presentUsersMap.has(u.id) && !bipagensMap.has(u.id)).length, [users, presentUsersMap, bipagensMap]);
+
+  const [bipagensModalOpen, setBipagensModalOpen] = useState(false);
+  const [platformsModalOpen, setPlatformsModalOpen] = useState(false);
+
+  const markManualBipagemForUser = (userId: string) => {
+    if ((manualBipagens || []).some(b => String(b.user_id) === String(userId))) return;
+    setManualBipagens(prev => [...prev, { product_sku: 'MANUAL', quantity: 1, platform: 'MANUAL', user_id: userId }]);
+    if (addToast) addToast('Bipagem manual adicionada', 'success');
+  };
+
+  // Plataformas (categorias) gerenciáveis localmente
+  const platforms = useMemo(() => {
+    if (generalSettings && Array.isArray(generalSettings.productCategoryList) && generalSettings.productCategoryList.length) return generalSettings.productCategoryList;
+    return ['ML', 'SHOPEE', 'SITE', 'TIKTOK'];
+  }, [generalSettings]);
+
+  const perPlatformStats = useMemo(() => {
+    return platforms.map((p: string) => {
+      const key = String(p).toUpperCase();
+      const platformOrders = ordersForPeriod.filter(o => {
+        const canal = String(o.canal || o.plataforma_origem || o.venda_origem || '').toUpperCase();
+        return canal === key;
+      });
+      const ordersCount = platformOrders.length;
+      const units = platformOrders.reduce((s, o) => s + (Number(o.qty_final || o.quantity || 0) || 0), 0);
+      const skuMap = new Map<string, number>();
+      platformOrders.forEach(o => {
+        const sku = String(o.sku || o.product_sku || '').toUpperCase();
+        const qty = Number(o.qty_final || o.quantity || 1) || 0;
+        if (!sku) return;
+        skuMap.set(sku, (skuMap.get(sku) || 0) + qty);
+      });
+      const topSkus = Array.from(skuMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([sku, qty]) => ({ sku, qty }));
+      return { platform: p, orders: platformOrders, ordersCount, units, topSkus };
+    });
+  }, [platforms, ordersForPeriod]);
+
+  const openOrdersModalForPlatform = (platform: string) => {
+    const stat = perPlatformStats.find(s => String(s.platform).toUpperCase() === String(platform).toUpperCase());
+    if (!stat) return;
+    setViewOrdersModalOrders(stat.orders || []);
+    setViewOrdersModalOpen(true);
+  };
+
+  const handleSavePlatforms = (newCategories: string[]) => {
+    if (onSaveGeneralSettings) {
+      onSaveGeneralSettings(prev => ({ ...prev, productCategoryList: newCategories } as GeneralSettings));
+      setPlatformsModalOpen(false);
+      if (addToast) addToast('Plataformas salvas.', 'success');
+    } else {
+      if (addToast) addToast('Salvar plataformas não disponível aqui.', 'warning');
+    }
+  };
+
   return (
     <div className="h-full space-y-6">
       <div className="bg-gradient-to-br from-slate-900 via-blue-900 to-slate-800 dark:from-slate-950 dark:via-blue-950 dark:to-slate-900 p-6 rounded-2xl border border-blue-700/50 shadow-lg">
@@ -315,7 +457,19 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
             <button className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-green-600 text-white px-4 py-2.5 rounded-lg shadow-lg hover:shadow-xl hover:from-emerald-600 hover:to-green-700 transition-all font-bold text-sm" onClick={() => {
                 if (!prodSummary) { if (addToast) addToast('Sem dados para exportar', 'warning'); return; }
                 try {
-                  exportProductionSummary(dateRangeEnd, prodSummary, details, stockSnapshot, dateSource);
+                  exportProductionSummary(dateRangeEnd, prodSummary, details, stockSnapshot, dateSource, {
+                    generatedBy: (currentUser && (currentUser.name || currentUser.id)) ? (currentUser.name || currentUser.id) : undefined,
+                    coletas: coletas,
+                    personnel: productionByPerson,
+                    bipagens: manualBipagens,
+                    processes: mixes,
+                    packages: packagesList.registered,
+                    stockClosures: details?.closures || details?.closures || [],
+                    observations: observations,
+                    isMonthly: vista === 'geral',
+                    periodStart: dateRangeStart,
+                    periodEnd: dateRangeEnd
+                  });
                   if (addToast) addToast('Exportação iniciada (arquivo salvo no navegador)', 'success');
                 } catch (e) {
                   console.error('Erro ao exportar resumo:', e);
@@ -378,6 +532,164 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
             </div>
           </div>
         )}
+      </div>
+
+      <Collapsible title="Miúdos / Expedição">
+        {miudosStats.length === 0 ? (
+          <div className="flex items-center justify-center py-8 text-sm text-gray-500">Nenhum miúdo identificado para o período.</div>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+            <table className="min-w-full text-sm">
+              <thead className="bg-gradient-to-r from-rose-500 to-pink-500 text-white">
+                <tr className="font-bold">
+                  <th className="px-4 py-3 text-left">SKU Miúdo</th>
+                  <th className="px-4 py-3 text-left">Nome</th>
+                  <th className="px-4 py-3 text-right">Qtd Usada</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                {miudosStats.map((m, idx) => (
+                  <tr key={m.code} className={idx % 2 === 0 ? 'bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-700/50'}>
+                    <td className="px-4 py-3 font-mono font-bold">{m.code}</td>
+                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{m.name}</td>
+                    <td className="px-4 py-3 text-right font-black text-rose-600 dark:text-rose-400">{Number(m.qty || 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Collapsible>
+
+      <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm mb-4">
+        <div className="flex items-start justify-between mb-3">
+          <div>
+            <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">Resumo Objetivo</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Métricas principais do período selecionado</p>
+          </div>
+          <div className="text-sm text-slate-500 dark:text-slate-400">Período: {new Date(dateRangeStart).toLocaleDateString('pt-BR')} → {new Date(dateRangeEnd).toLocaleDateString('pt-BR')}</div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-700">
+            <p className="text-xs text-slate-500">Pedidos</p>
+            <p className="text-2xl font-bold mt-1 text-slate-800 dark:text-slate-100">{loading ? '—' : ordersCount}</p>
+          </div>
+          <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-700">
+            <p className="text-xs text-slate-500">Produção (unid)</p>
+            <p className="text-2xl font-bold mt-1 text-slate-800 dark:text-slate-100">{loading ? '—' : totalProducedQty}</p>
+          </div>
+          <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-700">
+            <p className="text-xs text-slate-500">Miúdos (qtd)</p>
+            <p className="text-2xl font-bold mt-1 text-rose-600 dark:text-rose-400">{loading ? '—' : miudosTotal}</p>
+          </div>
+          <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-700">
+            <p className="text-xs text-slate-500">Matéria-prima (itens)</p>
+            <p className="text-2xl font-bold mt-1 text-amber-700 dark:text-amber-300">{loadingSummary ? '—' : materialsUsedTotal}</p>
+          </div>
+          <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-700">
+            <p className="text-xs text-slate-500">Coletas</p>
+            <p className="text-2xl font-bold mt-1 text-sky-700 dark:text-sky-300">{coletasCount}</p>
+          </div>
+          <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-700">
+            <p className="text-xs text-slate-500">Sem coleta</p>
+            <p className="text-2xl font-bold mt-1 text-red-600 dark:text-red-400">{ordersWithoutColetaCount}</p>
+          </div>
+          <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-700">
+            <p className="text-xs text-slate-500">Faltas</p>
+            <p className="text-2xl font-bold mt-1 text-red-700 dark:text-red-300">{absentCount}</p>
+          </div>
+          <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-700 border border-slate-100 dark:border-slate-700">
+            <p className="text-xs text-slate-500">Presente sem bipagem</p>
+            <p className="text-2xl font-bold mt-1 text-indigo-700 dark:text-indigo-300">{presentButNoBipagensCount}</p>
+          </div>
+        </div>
+
+        <div className="flex justify-end mt-3 gap-2">
+          <button onClick={() => setPlatformsModalOpen(true)} className="px-3 py-2 bg-gray-800 text-white rounded-lg text-sm font-semibold">Gerenciar Plataformas</button>
+          <button onClick={() => setBipagensModalOpen(true)} className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-semibold">Detalhar bipagens ({presentButNoBipagensCount})</button>
+        </div>
+      </div>
+
+      {/* Modal: Detalhes de bipagens por pessoa */}
+      {bipagensModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setBipagensModalOpen(false)} />
+          <div className="bg-white dark:bg-slate-800 rounded-lg p-6 w-full max-w-2xl z-10">
+            <div className="flex items-center justify-between mb-4">
+              <h4 className="text-lg font-bold">Bipagens por Pessoa</h4>
+              <button onClick={() => setBipagensModalOpen(false)} className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-700"><X /></button>
+            </div>
+            <div className="overflow-auto max-h-96">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-100 dark:bg-slate-700">
+                  <tr className="font-bold">
+                    <th className="px-3 py-2 text-left">Funcionário</th>
+                    <th className="px-3 py-2 text-left">Bipagens</th>
+                    <th className="px-3 py-2 text-right">Ação</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                  {users.map(u => (
+                    <tr key={u.id}>
+                      <td className="px-3 py-2">{u.name}</td>
+                      <td className="px-3 py-2">{bipagensMap.get(u.id) || 0}</td>
+                      <td className="px-3 py-2 text-right">
+                        {((bipagensMap.get(u.id) || 0) === 0) ? (
+                          <button onClick={() => markManualBipagemForUser(u.id)} className="px-2 py-1 bg-amber-500 text-white rounded text-xs">Marcar manual</button>
+                        ) : (
+                          <span className="text-xs text-slate-500">OK</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+      {platformsModalOpen && (
+        <InsumoCategoryManagerModal
+          isOpen={platformsModalOpen}
+          onClose={() => setPlatformsModalOpen(false)}
+          currentCategories={platforms}
+          onSave={handleSavePlatforms}
+          title="Plataformas"
+        />
+      )}
+      {/* Plataformas: Tabelas por Plataforma */}
+      <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-bold">Por Plataforma</h3>
+          <div className="text-sm text-slate-500">Bases: {platforms.join(', ')}</div>
+        </div>
+        <div className="overflow-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 dark:bg-slate-700">
+              <tr className="font-bold">
+                <th className="px-3 py-2 text-left">Plataforma</th>
+                <th className="px-3 py-2 text-left">Pedidos</th>
+                <th className="px-3 py-2 text-left">Unidades</th>
+                <th className="px-3 py-2 text-left">Top SKUs</th>
+                <th className="px-3 py-2 text-right">Ações</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+              {perPlatformStats.map(p => (
+                <tr key={p.platform}>
+                  <td className="px-3 py-2 font-bold">{p.platform}</td>
+                  <td className="px-3 py-2">{p.ordersCount}</td>
+                  <td className="px-3 py-2">{p.units}</td>
+                  <td className="px-3 py-2">{p.topSkus.map(t => `${t.sku}(${t.qty})`).join(', ') || '-'}</td>
+                  <td className="px-3 py-2 text-right">
+                    <button onClick={() => openOrdersModalForPlatform(p.platform)} className="px-2 py-1 bg-emerald-600 text-white rounded text-xs">Ver pedidos</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -511,7 +823,7 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
                                 <td className="px-4 py-3 font-mono font-bold text-slate-900 dark:text-white">{it.sku}</td>
                                 <td className="px-4 py-3 text-slate-600 dark:text-slate-300">—</td>
                                 <td className="px-4 py-3 text-right font-black text-blue-600 dark:text-blue-400">{it.qty}</td>
-                                <td className="px-4 py-3 text-left"><button onClick={() => { setItemFilter(it.sku); setShowItemsView(false); if (addToast) addToast(`Filtrando por ${it.sku}`, 'info'); }} className="px-2 py-1 bg-blue-600 text-white rounded text-xs">Ver pedidos</button></td>
+                                <td className="px-4 py-3 text-left"><button onClick={() => openOrdersModalForSKU(it.sku)} className="px-2 py-1 bg-blue-600 text-white rounded text-xs">Ver pedidos</button></td>
                               </tr>
                             ))
                           )
@@ -565,6 +877,42 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
             )}
           </Collapsible>
 
+          {viewOrdersModalOpen && (
+            <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
+              <div className="bg-[var(--modal-bg)] rounded-lg shadow-2xl p-6 w-full max-w-4xl max-h-[80vh] overflow-auto">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-bold text-[var(--modal-text-primary)]">Pedidos ({viewOrdersModalOrders.length})</h2>
+                  <button onClick={() => setViewOrdersModalOpen(false)} className="text-[var(--modal-text-secondary)] hover:text-[var(--modal-text-primary)] font-semibold">Fechar</button>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-slate-100">
+                      <tr className="text-slate-700 font-bold text-left">
+                        <th className="px-4 py-2">Pedido</th>
+                        <th className="px-4 py-2">Cliente</th>
+                        <th className="px-4 py-2">Itens</th>
+                        <th className="px-4 py-2 text-right">Qtd</th>
+                        <th className="px-4 py-2">Canal</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                      {viewOrdersModalOrders.map((o: OrderItem) => (
+                        <tr key={o.id} className="bg-white dark:bg-slate-800">
+                          <td className="px-4 py-2 font-bold">{o.orderId || o.numero || o.id}</td>
+                          <td className="px-4 py-2">{o.cliente || o.customer_name || '—'}</td>
+                          <td className="px-4 py-2 break-words max-w-[420px]">{(o.items && o.items.map((it: any) => `${it.sku}×${it.qty_final || it.quantity || ''}`).join(', ')) || o.sku || '—'}</td>
+                          <td className="px-4 py-2 text-right font-black">{o.qty_final || o.qty || 0}</td>
+                          <td className="px-4 py-2">{o.canal || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
           <Collapsible title="Matéria-Prima Necessária">
             {loadingSummary ? (
               <div className="flex items-center justify-center py-8 text-sm text-gray-500">
@@ -616,7 +964,16 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
                 // Backend espera arrays com esses nomes: bipagens, personnel, processes, etc.
                 personnel: (selectedEmployees || []).map((id: string) => ({ user_id: id })),
                 bipagens: (manualBipagens || []).map(b => ({ product_sku: b.product_sku, quantity: b.quantity, platform: b.platform })),
-                notes: [payload?.notes || '', ...(observations || [])].filter(Boolean).join('\n')
+                processes: [
+                  ...(details?.weighings || []).map((w: any) => ({ type: 'Pesagem', product_sku: w.stock_item_code || w.stock_item_name || '', qty: w.qty_produced || w.used_qty || 0, operator: w.created_by_name || w.operador_maquina || '' , created_at: w.created_at })),
+                  ...(details?.grindings || []).map((g: any) => ({ type: 'Moagem', product_sku: g.output_insumo_code || g.output_insumo_name || '', qty: g.output_qty_produced || g.output_qty || 0, operator: g.user_name || g.user || '', created_at: g.created_at })),
+                  ...(details?.packages || details?.production_packages || []).map((p: any) => ({ type: 'Ensacamento', product_sku: p.product_sku || p.description || '', qty: p.quantity || p.qty || p.qty_final || 0, operator: p.created_by_name || p.user_name || '' , created_at: p.created_at }))
+                ],
+                collected_orders: (coletas || []).map(c => ({ coletaId: c.coletaId || c.id, plataforma: c.plataforma, motorista: c.motorista, placaCaminhao: c.placaCaminhao, dataColeta: c.dataColeta, horarioColeta: c.horarioColeta, pedidos: c.pedidos, totalPedidos: c.totalPedidos || (c.pedidos || []).length, totalItens: c.totalItens || 0 })),
+                packages: packagesList.registered || [],
+                stock_closures: details?.closures || details?.closures || [],
+                notes: [payload?.notes || '', ...(observations || [])].filter(Boolean).join('\n'),
+                created_by: currentUser ? (currentUser.id || currentUser.name) : undefined
               };
               try {
                 const res = await fetch('/api/production/reports', {
