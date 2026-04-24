@@ -994,10 +994,12 @@ export const exportProductionSummary = (
     prodSummary: any,
     details: any,
     stockItems: StockItem[] = [],
+    dateSource: 'imported' | 'original' = 'imported',
     options?: { filename?: string }
 ) => {
     const doc = new jsPDF();
-    const title = `Resumo de Produção - ${date}`;
+    const dateLabel = dateSource === 'imported' ? `(Data de Importação)` : `(Data de Envio)`;
+    const title = `Resumo de Produção - ${date} ${dateLabel}`;
     doc.setFontSize(16);
     doc.text(title, 14, 18);
 
@@ -1038,15 +1040,17 @@ export const exportProductionSummary = (
         doc.setFontSize(12);
         doc.text('Produtos Importados (Resumo)', 14, y + 12);
         const prodRows = (prodSummary.products || []).map((p: any) => {
-            return [String(p.sku || ''), Number(p.quantity || 0), "orders"];
+            const skuItem = stockItems.find(s => String(s.code || '').toUpperCase() === String(p.sku || '').toUpperCase());
+            const previousQty = skuItem ? Number(skuItem.previous_qty || skuItem.current_qty || 0) : 0;
+            return [String(p.sku || ''), Number(previousQty || 0), Number(p.quantity || 0), "orders"];
         });
         autoTable(doc, {
             startY: y + 16,
-            head: [['SKU', 'Qtd', 'Origem']],
+            head: [['SKU', 'Saldo Anterior', 'Qtd Importada', 'Origem']],
             body: prodRows,
             theme: 'grid',
             styles: { fontSize: 9 },
-            headStyles: { fillColor: '#0ea5e9', textColor: '#000' },
+            headStyles: { fillColor: '#0ea5e9', textColor: '#fff' },
             margin: { left: 14, right: 14 }
         });
         y = (doc as any).lastAutoTable?.finalY || y + 60;
@@ -1058,11 +1062,13 @@ export const exportProductionSummary = (
         doc.text('Materiais Necessários (Explodidos)', 14, y + 12);
         const matRows = (prodSummary.materials || []).map((m: any) => {
             const stock = stockItems.find(s => String(s.code || '').toUpperCase() === String(m.code || '').toUpperCase());
-            return [String(m.code || ''), String(m.name || ''), Number(m.quantity || 0).toFixed(3), stock ? Number(stock.current_qty || 0).toFixed(3) : '—', 'calculado'];
+            const previousQty = stock ? Number(stock.previous_qty || stock.current_qty || 0) : 0;
+            const currentQty = stock ? Number(stock.current_qty || 0) : 0;
+            return [String(m.code || ''), String(m.name || ''), Number(m.quantity || 0).toFixed(3), previousQty.toFixed(3), currentQty.toFixed(3), 'calculado'];
         });
         autoTable(doc, {
             startY: y + 16,
-            head: [['Código', 'Nome', 'Necessidade', 'Estoque', 'Origem']],
+            head: [['Código', 'Nome', 'Necessidade', 'Saldo Anterior', 'Estoque Atual', 'Origem']],
             body: matRows,
             theme: 'grid',
             styles: { fontSize: 8 },

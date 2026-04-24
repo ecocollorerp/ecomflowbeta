@@ -27,6 +27,7 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
   const [platformFilter, setPlatformFilter] = useState<string>('ALL');
   const [operatorFilter, setOperatorFilter] = useState<string>('ALL');
   const [search, setSearch] = useState<string>('');
+  const [dateSource, setDateSource] = useState<'imported'|'original'>('imported');
 
   const [loading, setLoading] = useState(true);
   const [prodSummary, setProdSummary] = useState<any>(null);
@@ -132,36 +133,46 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
 
   return (
     <div className="h-full space-y-6">
-      <div className="bg-gradient-to-r from-slate-50 to-white dark:from-gray-900 dark:to-gray-800 p-4 rounded-xl border">
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-2">
-            <Calendar className="text-slate-500" />
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} className="px-3 py-2 border rounded-md bg-white/60" />
+      <div className="bg-gradient-to-br from-slate-900 via-blue-900 to-slate-800 dark:from-slate-950 dark:via-blue-950 dark:to-slate-900 p-6 rounded-2xl border border-blue-700/50 shadow-lg">
+        <div className="flex flex-wrap items-end gap-4 justify-between">
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-black text-blue-200 uppercase tracking-wider">Data</label>
+              <input type="date" value={date} onChange={e => setDate(e.target.value)} className="px-3 py-2.5 border border-blue-500/30 rounded-lg bg-slate-800 text-white text-sm focus:ring-2 focus:ring-blue-400" />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-black text-blue-200 uppercase tracking-wider">Período</label>
+              <select value={period} onChange={e => setPeriod(e.target.value as any)} className="px-3 py-2.5 border border-blue-500/30 rounded-lg bg-slate-800 text-white text-sm focus:ring-2 focus:ring-blue-400">
+                <option value="daily">Diário</option>
+                <option value="weekly">Semanal</option>
+                <option value="monthly">Mensal</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-black text-blue-200 uppercase tracking-wider">Data na Exportação</label>
+              <select value={dateSource} onChange={e => setDateSource(e.target.value as any)} className="px-3 py-2.5 border border-blue-500/30 rounded-lg bg-slate-800 text-white text-sm focus:ring-2 focus:ring-blue-400">
+                <option value="imported">Data de Importação</option>
+                <option value="original">Data de Envio</option>
+              </select>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <label className="text-sm text-gray-500">Período</label>
-            <select value={period} onChange={e => setPeriod(e.target.value as any)} className="px-2 py-2 border rounded-md bg-white/60">
-              <option value="daily">Diário</option>
-              <option value="weekly">Semanal</option>
-              <option value="monthly">Mensal</option>
-            </select>
-          </div>
-
-            <div className="ml-auto flex items-center gap-2">
-            <button className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-green-600 text-white px-3 py-2 rounded shadow" onClick={() => {
+            <button className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-green-600 text-white px-4 py-2.5 rounded-lg shadow-lg hover:shadow-xl hover:from-emerald-600 hover:to-green-700 transition-all font-bold text-sm" onClick={() => {
                 if (!prodSummary) { if (addToast) addToast('Sem dados para exportar', 'warning'); return; }
                 try {
-                  exportProductionSummary(date, prodSummary, details, stockSnapshot);
+                  exportProductionSummary(date, prodSummary, details, stockSnapshot, dateSource);
                   if (addToast) addToast('Exportação iniciada (arquivo salvo no navegador)', 'success');
                 } catch (e) {
                   console.error('Erro ao exportar resumo:', e);
                   if (addToast) addToast('Erro ao exportar resumo', 'error');
                 }
             }}>
-              <FileDown /> Exportar
+              <FileDown size={16} /> Exportar
             </button>
-            <button className="flex items-center gap-2 bg-gradient-to-r from-sky-500 to-blue-600 text-white px-3 py-2 rounded shadow" onClick={async () => {
+            <button className="flex items-center gap-2 bg-gradient-to-r from-sky-500 to-blue-600 text-white px-4 py-2.5 rounded-lg shadow-lg hover:shadow-xl hover:from-sky-600 hover:to-blue-700 transition-all font-bold text-sm" onClick={async () => {
               try {
                 const res = await fetch(`/api/production/report?date=${date}`);
                 const json = await res.json();
@@ -176,27 +187,59 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
                 if (addToast) addToast('Erro ao carregar relatório salvo', 'error');
               }
             }}>
-              <Save /> Carregar
+              <Save size={16} /> Carregar
             </button>
-            <button className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-3 py-2 rounded shadow" onClick={() => { setReportInitialData(null); setIsReportModalOpen(true); }}>
-              <Save /> Salvar
+            <button className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-4 py-2.5 rounded-lg shadow-lg hover:shadow-xl hover:from-indigo-700 hover:to-purple-700 transition-all font-bold text-sm" onClick={() => { setReportInitialData(null); setIsReportModalOpen(true); }}>
+              <Save size={16} /> Salvar
             </button>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <InfoCard title="Pedidos Importados" value={ordersForPeriod.length} icon={<ClipboardCheck size={18} />} accent="bg-indigo-500" loading={loading} />
-        <InfoCard title="Itens Totais" value={totalItems} icon={<Box size={18} />} accent="bg-emerald-500" loading={loading} />
-        <InfoCard title="Matéria-prima estimada" value={prodSummary ? (prodSummary.materials?.length || 0) : '—'} icon={<Package size={18} />} accent="bg-yellow-400" loading={loading || loadingSummary} />
-        <InfoCard title="Pacotes (registrados)" value={pacotesRegistradosCount} icon={<Truck size={18} />} accent="bg-sky-500" loading={loading} />
+        <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 dark:from-indigo-900/30 dark:to-indigo-800/30 border border-indigo-200 dark:border-indigo-700 rounded-xl p-4 shadow-sm">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-xs font-bold text-indigo-600 dark:text-indigo-300 uppercase tracking-wide">Pedidos Importados</p>
+              <p className="text-3xl font-black text-indigo-800 dark:text-indigo-200 mt-1">{loading ? '—' : ordersForPeriod.length}</p>
+            </div>
+            <div className="p-2.5 bg-indigo-200 dark:bg-indigo-700 rounded-lg"><ClipboardCheck size={20} className="text-indigo-600 dark:text-indigo-300" /></div>
+          </div>
+        </div>
+        <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 dark:from-emerald-900/30 dark:to-emerald-800/30 border border-emerald-200 dark:border-emerald-700 rounded-xl p-4 shadow-sm">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-xs font-bold text-emerald-600 dark:text-emerald-300 uppercase tracking-wide">Itens Totais</p>
+              <p className="text-3xl font-black text-emerald-800 dark:text-emerald-200 mt-1">{loading ? '—' : totalItems}</p>
+            </div>
+            <div className="p-2.5 bg-emerald-200 dark:bg-emerald-700 rounded-lg"><Box size={20} className="text-emerald-600 dark:text-emerald-300" /></div>
+          </div>
+        </div>
+        <div className="bg-gradient-to-br from-amber-50 to-amber-100 dark:from-amber-900/30 dark:to-amber-800/30 border border-amber-200 dark:border-amber-700 rounded-xl p-4 shadow-sm">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-xs font-bold text-amber-600 dark:text-amber-300 uppercase tracking-wide">Matéria-Prima</p>
+              <p className="text-3xl font-black text-amber-800 dark:text-amber-200 mt-1">{loading || loadingSummary ? '—' : (prodSummary ? (prodSummary.materials?.length || 0) : '—')}</p>
+            </div>
+            <div className="p-2.5 bg-amber-200 dark:bg-amber-700 rounded-lg"><Package size={20} className="text-amber-600 dark:text-amber-300" /></div>
+          </div>
+        </div>
+        <div className="bg-gradient-to-br from-sky-50 to-sky-100 dark:from-sky-900/30 dark:to-sky-800/30 border border-sky-200 dark:border-sky-700 rounded-xl p-4 shadow-sm">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-xs font-bold text-sky-600 dark:text-sky-300 uppercase tracking-wide">Pacotes</p>
+              <p className="text-3xl font-black text-sky-800 dark:text-sky-200 mt-1">{loading ? '—' : pacotesRegistradosCount}</p>
+            </div>
+            <div className="p-2.5 bg-sky-200 dark:bg-sky-700 rounded-lg"><Truck size={20} className="text-sky-600 dark:text-sky-300" /></div>
+          </div>
+        </div>
       </div>
 
-      <div className="bg-white dark:bg-gray-800 p-4 rounded-xl border">
-        <div className="flex flex-wrap gap-4 items-center">
+      <div className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
+        <div className="flex flex-wrap gap-4 items-end">
           <div>
-            <label className="text-sm text-gray-500 block">Plataforma</label>
-            <select value={platformFilter} onChange={e => setPlatformFilter(e.target.value)} className="px-3 py-2 border rounded-md">
+            <label className="text-xs font-black text-slate-600 dark:text-slate-300 block uppercase tracking-wider mb-1.5">Plataforma</label>
+            <select value={platformFilter} onChange={e => setPlatformFilter(e.target.value)} className="px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-blue-400">
               <option value="ALL">Todas</option>
               <option value="ML">MercadoLibre</option>
               <option value="SHOPEE">Shopee</option>
@@ -204,71 +247,110 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
             </select>
           </div>
           <div>
-            <label className="text-sm text-gray-500 block">Operador</label>
-            <select value={operatorFilter} onChange={e => setOperatorFilter(e.target.value)} className="px-3 py-2 border rounded-md">
+            <label className="text-xs font-black text-slate-600 dark:text-slate-300 block uppercase tracking-wider mb-1.5">Operador</label>
+            <select value={operatorFilter} onChange={e => setOperatorFilter(e.target.value)} className="px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-blue-400">
               <option value="ALL">Todos</option>
               {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
           </div>
-          <div className="flex-1">
-            <label className="text-sm text-gray-500 block">Busca (SKU / Pedido)</label>
-            <input value={search} onChange={e => setSearch(e.target.value)} className="w-full px-3 py-2 border rounded-md" placeholder="Pesquisar..." />
+          <div className="flex-1 min-w-48">
+            <label className="text-xs font-black text-slate-600 dark:text-slate-300 block uppercase tracking-wider mb-1.5">Busca (SKU / Pedido)</label>
+            <input value={search} onChange={e => setSearch(e.target.value)} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-blue-400" placeholder="Pesquisar..." />
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
-          <Collapsible title="Pedidos importados do dia" defaultOpen>
+          <Collapsible title="Pedidos Importados do Dia" defaultOpen>
             {loadingSummary ? (
-              <div className="text-sm text-gray-500">Carregando pedidos...</div>
+              <div className="flex items-center justify-center py-8 text-sm text-gray-500">
+                <div className="animate-spin mr-2">⏳</div> Carregando pedidos...
+              </div>
             ) : prodSummary ? (
-              <div>
-                <div className="text-sm text-gray-600 mb-3">Total de pedidos: <strong>{prodSummary.ordersCount}</strong></div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-4">
+                <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-700 rounded-lg">
+                  <div className="text-3xl font-black text-blue-600 dark:text-blue-400">{prodSummary.ordersCount}</div>
+                  <div>
+                    <p className="text-xs font-black text-blue-600 dark:text-blue-400 uppercase tracking-wide">Total de Pedidos</p>
+                    <p className="text-xs text-gray-600 dark:text-gray-300">importados nesta data</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {Object.entries(prodSummary.ordersByPlatform || {}).map(([plat, cnt]) => (
-                    <div key={plat} className="p-3 bg-slate-50 rounded">
-                      <div className="text-xs text-gray-500 uppercase">{plat}</div>
-                      <div className="font-black text-lg">{cnt}</div>
+                    <div key={plat} className="p-3 bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-center hover:shadow-md transition-shadow">
+                      <div className="text-xs text-slate-600 dark:text-slate-300 font-bold uppercase">{plat}</div>
+                      <div className="font-black text-xl text-slate-900 dark:text-white mt-1">{cnt}</div>
                     </div>
                   ))}
                 </div>
 
-                <div className="mt-4 overflow-x-auto">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50"><tr className="text-slate-500 font-bold"><th className="px-3 py-2 text-left">SKU</th><th className="px-3 py-2 text-right">Qtd</th></tr></thead>
-                    <tbody>
-                      {(prodSummary.products || []).map((p: any) => (
-                        <tr key={p.sku} className="border-t"><td className="px-3 py-2 font-bold">{p.sku}</td><td className="px-3 py-2 text-right font-black">{p.quantity}</td></tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                {(prodSummary.products || []).length > 0 && (
+                  <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-700 dark:to-indigo-700">
+                        <tr className="text-white font-bold">
+                          <th className="px-4 py-3 text-left">SKU</th>
+                          <th className="px-4 py-3 text-right">Quantidade</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                        {(prodSummary.products || []).map((p: any, idx: number) => (
+                          <tr key={p.sku} className={idx % 2 === 0 ? 'bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-700/50'}>
+                            <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">{p.sku}</td>
+                            <td className="px-4 py-3 text-right font-black text-blue-600 dark:text-blue-400">{p.quantity}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             ) : (
-              <div className="text-sm text-gray-500">Nenhum dado disponível para a data selecionada.</div>
+              <div className="flex items-center justify-center py-8 text-sm text-gray-500">
+                <span className="text-3xl mr-2">📭</span> Nenhum dado disponível para a data selecionada.
+              </div>
             )}
           </Collapsible>
 
-          <Collapsible title="Matéria-prima necessária">
+          <Collapsible title="Matéria-Prima Necessária">
             {loadingSummary ? (
-              <div className="text-sm text-gray-500">Calculando necessidade de insumos...</div>
-            ) : prodSummary ? (
-              <div className="overflow-x-auto rounded-xl border">
+              <div className="flex items-center justify-center py-8 text-sm text-gray-500">
+                <div className="animate-spin mr-2">⏳</div> Calculando necessidade de insumos...
+              </div>
+            ) : prodSummary && (prodSummary.materials || []).length > 0 ? (
+              <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
                 <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50"><tr className="text-slate-500 font-bold"><th className="px-4 py-2 text-left">Insumo</th><th className="px-4 py-2 text-right">Necessidade</th><th className="px-4 py-2 text-right">Estoque</th></tr></thead>
-                  <tbody>
-                    {(prodSummary.materials || []).map((m: any) => {
+                  <thead className="bg-gradient-to-r from-amber-600 to-yellow-600 dark:from-amber-700 dark:to-yellow-700">
+                    <tr className="text-white font-bold">
+                      <th className="px-4 py-3 text-left">Insumo</th>
+                      <th className="px-4 py-3 text-right">Necessidade</th>
+                      <th className="px-4 py-3 text-right">Saldo Anterior</th>
+                      <th className="px-4 py-3 text-right">Estoque Atual</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                    {(prodSummary.materials || []).map((m: any, idx: number) => {
                       const stock = stockItems.find(s => String(s.code || '').toUpperCase() === String(m.code || '').toUpperCase());
+                      const previousQty = stock ? Number(stock.previous_qty || stock.current_qty || 0) : 0;
+                      const currentQty = stock ? Number(stock.current_qty || 0) : 0;
                       return (
-                        <tr key={m.code} className="border-t"><td className="px-4 py-2 font-bold">{m.name} <span className="text-xs text-gray-400">({m.code})</span></td><td className="px-4 py-2 text-right font-black">{Number(m.quantity || 0).toFixed(3)} {m.unit}</td><td className="px-4 py-2 text-right">{stock ? Number(stock.current_qty || 0).toFixed(3) : '—'}</td></tr>
+                        <tr key={m.code} className={idx % 2 === 0 ? 'bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-700/50'}>
+                          <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">{m.name} <span className="text-xs text-slate-400 font-normal">({m.code})</span></td>
+                          <td className="px-4 py-3 text-right font-black text-amber-600 dark:text-amber-400">{Number(m.quantity || 0).toFixed(3)} {m.unit}</td>
+                          <td className="px-4 py-3 text-right text-slate-600 dark:text-slate-300">{previousQty.toFixed(3)}</td>
+                          <td className="px-4 py-3 text-right font-bold text-slate-900 dark:text-white">{stock ? currentQty.toFixed(3) : '—'}</td>
+                        </tr>
                       );
                     })}
                   </tbody>
                 </table>
               </div>
             ) : (
-              <div className="text-sm text-gray-500">Nenhum insumo calculado.</div>
+              <div className="flex items-center justify-center py-8 text-sm text-gray-500">
+                <span className="text-3xl mr-2">📦</span> Nenhum insumo calculado.
+              </div>
             )}
           </Collapsible>
 
@@ -392,22 +474,35 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
             </div>
           </Collapsible>
 
-          <Collapsible title="Produção por pessoa">
+          <Collapsible title="Produção por Pessoa">
             <div>
               {productionByPerson.length === 0 ? (
-                <div className="text-sm text-gray-500">Nenhuma produção por pessoa registrada.</div>
+                <div className="flex items-center justify-center py-8 text-sm text-gray-500">
+                  <span className="text-3xl mr-2">👥</span> Nenhuma produção por pessoa registrada.
+                </div>
               ) : (
-                <div className="grid grid-cols-1 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {productionByPerson.map((p: any) => (
-                    <div key={p.userId} className="p-3 border rounded flex justify-between items-center">
-                      <div>
-                        <div className="font-bold">{p.name || p.userId}</div>
-                        <div className="text-xs text-gray-400">ID: {p.userId}</div>
+                    <div key={p.userId} className="p-4 bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg hover:shadow-md transition-shadow">
+                      <div className="flex justify-between items-start mb-3">
+                        <div>
+                          <div className="font-bold text-slate-900 dark:text-white">{p.name || p.userId}</div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400 font-mono">ID: {p.userId}</div>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <div className="text-sm">Bipagens: <strong>{p.bipagens || 0}</strong></div>
-                        <div className="text-sm">Pesagem: <strong>{p.weighings || 0}</strong></div>
-                        <div className="text-sm">Moagem: <strong>{p.grindings || 0}</strong></div>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-600 dark:text-slate-300">Bipagens</span>
+                          <span className="px-2.5 py-1 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded font-bold text-sm">{p.bipagens || 0}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-600 dark:text-slate-300">Pesagem</span>
+                          <span className="px-2.5 py-1 bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 rounded font-bold text-sm">{p.weighings || 0}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-600 dark:text-slate-300">Moagem</span>
+                          <span className="px-2.5 py-1 bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 rounded font-bold text-sm">{p.grindings || 0}</span>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -416,20 +511,36 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
             </div>
           </Collapsible>
 
-          <Collapsible title="Pacotes feitos à parte">
+          <Collapsible title="Pacotes Feitos à Parte">
             <div>
               {(packagesList.registered || []).length === 0 && (packagesList.suggestions || []).length === 0 ? (
-                <div className="text-sm text-gray-500">Nenhum pacote registrado ou sugerido para o período.</div>
+                <div className="flex items-center justify-center py-8 text-sm text-gray-500">
+                  <span className="text-3xl mr-2">📦</span> Nenhum pacote registrado ou sugerido para o período.
+                </div>
               ) : (
                 <div className="space-y-4">
                   {(packagesList.registered || []).length > 0 && (
                     <div>
-                      <div className="font-bold mb-2">Pacotes registrados</div>
-                      <div className="overflow-x-auto">
+                      <div className="text-sm font-bold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
+                        <span className="px-2 py-1 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 rounded text-xs font-black">✓ REGISTRADOS</span>
+                      </div>
+                      <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
                         <table className="min-w-full text-sm">
-                          <thead className="bg-slate-50"><tr className="text-slate-500 font-bold"><th className="px-3 py-2 text-left">Descrição</th><th className="px-3 py-2 text-right">Qtd</th><th className="px-3 py-2 text-left">Destino</th></tr></thead>
-                          <tbody>
-                            {(packagesList.registered || []).map((p: any) => (<tr key={p.id} className="border-t"><td className="px-3 py-2">{p.description || p.product_sku || '—'}</td><td className="px-3 py-2 text-right">{p.quantity || p.qty || 0}</td><td className="px-3 py-2">{p.destination || '—'}</td></tr>))}
+                          <thead className="bg-gradient-to-r from-green-600 to-emerald-600 dark:from-green-700 dark:to-emerald-700">
+                            <tr className="text-white font-bold">
+                              <th className="px-4 py-3 text-left">Descrição</th>
+                              <th className="px-4 py-3 text-right">Qtd</th>
+                              <th className="px-4 py-3 text-left">Destino</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                            {(packagesList.registered || []).map((p: any, idx: number) => (
+                              <tr key={p.id} className={idx % 2 === 0 ? 'bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-700/50'}>
+                                <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">{p.description || p.product_sku || '—'}</td>
+                                <td className="px-4 py-3 text-right font-bold text-green-600 dark:text-green-400">{p.quantity || p.qty || 0}</td>
+                                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{p.destination || '—'}</td>
+                              </tr>
+                            ))}
                           </tbody>
                         </table>
                       </div>
@@ -438,11 +549,18 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
 
                   {(packagesList.suggestions || []).length > 0 && (
                     <div>
-                      <div className="font-bold mb-2">Sugestões (importação)</div>
-                      <ul className="space-y-1">
+                      <div className="text-sm font-bold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-2">
+                        <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded text-xs font-black">💡 SUGESTÕES</span>
+                      </div>
+                      <ul className="space-y-2">
                         {(packagesList.suggestions || []).map((s: any, i: number) => (
-                          <li key={i} className="flex items-center justify-between p-2 border rounded">
-                            <div className="text-sm">{s.sku} — <strong>{s.qty_final}</strong> — <span className="text-xs text-gray-500">{s.canal || ''}</span></div>
+                          <li key={i} className="flex items-center justify-between p-3 border border-blue-200 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/20 rounded-lg hover:shadow-md transition-shadow">
+                            <div className="text-sm">
+                              <span className="font-bold text-slate-900 dark:text-white">{s.sku}</span>
+                              <span className="mx-2 text-slate-400">×</span>
+                              <span className="font-black text-blue-600 dark:text-blue-400">{s.qty_final}</span>
+                              {s.canal && <span className="ml-3 text-xs bg-blue-200 dark:bg-blue-800 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded font-bold">{s.canal}</span>}
+                            </div>
                           </li>
                         ))}
                       </ul>
@@ -454,33 +572,65 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
           </Collapsible>
 
           <Collapsible title="Estoque">
-            <div>
-              <div className="mb-3">
-                <div className="font-bold">Estoque geral (snapshot)</div>
+            <div className="space-y-4">
+              <div>
+                <div className="text-sm font-bold text-slate-700 dark:text-slate-200 mb-3">Estoque Geral (Snapshot)</div>
                 {(stockSnapshot || []).length === 0 ? (
-                  <div className="text-sm text-gray-500">Nenhum item de estoque disponível.</div>
+                  <div className="flex items-center justify-center py-8 text-sm text-gray-500">
+                    <span className="text-3xl mr-2">📭</span> Nenhum item de estoque disponível.
+                  </div>
                 ) : (
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
                     <table className="min-w-full text-sm">
-                      <thead className="bg-slate-50"><tr className="text-slate-500 font-bold"><th className="px-3 py-2 text-left">Código</th><th className="px-3 py-2 text-left">Nome</th><th className="px-3 py-2 text-right">Estoque</th><th className="px-3 py-2 text-right">Prontos</th></tr></thead>
-                      <tbody>
-                        {(stockSnapshot || []).map((s: any) => (<tr key={s.code} className="border-t"><td className="px-3 py-2">{s.code}</td><td className="px-3 py-2">{s.name}</td><td className="px-3 py-2 text-right">{Number(s.current_qty || 0).toFixed(3)}</td><td className="px-3 py-2 text-right">{Number(s.ready_qty || 0).toFixed(3)}</td></tr>))}
+                      <thead className="bg-gradient-to-r from-cyan-600 to-blue-600 dark:from-cyan-700 dark:to-blue-700">
+                        <tr className="text-white font-bold">
+                          <th className="px-4 py-3 text-left">Código</th>
+                          <th className="px-4 py-3 text-left">Nome</th>
+                          <th className="px-4 py-3 text-right">Estoque</th>
+                          <th className="px-4 py-3 text-right">Prontos</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                        {(stockSnapshot || []).map((s: any, idx: number) => (
+                          <tr key={s.code} className={idx % 2 === 0 ? 'bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-700/50'}>
+                            <td className="px-4 py-3 font-mono font-bold text-slate-900 dark:text-white">{s.code}</td>
+                            <td className="px-4 py-3 text-slate-900 dark:text-white">{s.name}</td>
+                            <td className="px-4 py-3 text-right font-bold text-cyan-600 dark:text-cyan-400">{Number(s.current_qty || 0).toFixed(3)}</td>
+                            <td className="px-4 py-3 text-right font-bold text-emerald-600 dark:text-emerald-400">{Number(s.ready_qty || 0).toFixed(3)}</td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
                 )}
               </div>
 
-              <div>
-                <div className="font-bold">Pacotes prontos</div>
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                <div className="text-sm font-bold text-slate-700 dark:text-slate-200 mb-3">Pacotes Prontos</div>
                 {(estoquePronto || []).length === 0 ? (
-                  <div className="text-sm text-gray-500">Nenhum pacote pronto registrado.</div>
+                  <div className="flex items-center justify-center py-8 text-sm text-gray-500">
+                    <span className="text-3xl mr-2">📦</span> Nenhum pacote pronto registrado.
+                  </div>
                 ) : (
-                  <div className="overflow-x-auto">
+                  <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
                     <table className="min-w-full text-sm">
-                      <thead className="bg-slate-50"><tr className="text-slate-500 font-bold"><th className="px-3 py-2 text-left">Batch</th><th className="px-3 py-2 text-left">SKU</th><th className="px-3 py-2 text-right">Total</th><th className="px-3 py-2 text-right">Disponível</th></tr></thead>
-                      <tbody>
-                        {(estoquePronto || []).map((p: any) => (<tr key={p.id || p.batch_id} className="border-t"><td className="px-3 py-2">{p.batch_id || p.id}</td><td className="px-3 py-2">{p.stock_item_code || (p.produtos && p.produtos[0] && p.produtos[0].code) || '—'}</td><td className="px-3 py-2 text-right">{Number(p.quantidade_total || p.quantidade_disponivel || 0)}</td><td className="px-3 py-2 text-right">{Number(p.quantidade_disponivel || 0)}</td></tr>))}
+                      <thead className="bg-gradient-to-r from-emerald-600 to-green-600 dark:from-emerald-700 dark:to-green-700">
+                        <tr className="text-white font-bold">
+                          <th className="px-4 py-3 text-left">Batch</th>
+                          <th className="px-4 py-3 text-left">SKU</th>
+                          <th className="px-4 py-3 text-right">Total</th>
+                          <th className="px-4 py-3 text-right">Disponível</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                        {(estoquePronto || []).map((p: any, idx: number) => (
+                          <tr key={p.id || p.batch_id} className={idx % 2 === 0 ? 'bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-700/50'}>
+                            <td className="px-4 py-3 font-mono font-bold text-slate-900 dark:text-white">{p.batch_id || p.id}</td>
+                            <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">{p.stock_item_code || (p.produtos && p.produtos[0] && p.produtos[0].code) || '—'}</td>
+                            <td className="px-4 py-3 text-right font-bold text-slate-900 dark:text-white">{Number(p.quantidade_total || p.quantidade_disponivel || 0)}</td>
+                            <td className="px-4 py-3 text-right font-bold text-emerald-600 dark:text-emerald-400">{Number(p.quantidade_disponivel || 0)}</td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
@@ -489,42 +639,86 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
             </div>
           </Collapsible>
 
-          <Collapsible title="Pedidos coletados / complementares">
-            <div>
-              <div className="text-sm text-gray-500 mb-2">Marcar pedidos coletados ou adicionar complementares manualmente.</div>
-              <div className="mb-3">
-                <label className="text-sm text-gray-500 block">Adicionar bipagem/manual</label>
-                <div className="flex gap-2 mt-2">
-                  <input value={newBip.product_sku} onChange={e => setNewBip({...newBip, product_sku: e.target.value})} placeholder="SKU" className="px-2 py-1 border rounded flex-1" />
-                  <input type="number" value={newBip.quantity} onChange={e => setNewBip({...newBip, quantity: Number(e.target.value)})} className="w-20 px-2 py-1 border rounded" />
+          <Collapsible title="Pedidos Coletados / Complementares">
+            <div className="space-y-4">
+              {/* Sugestões por categoria */}
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-4">
+                <div className="text-sm font-bold text-blue-900 dark:text-blue-200 mb-3 flex items-center gap-2">
+                  <Package size={16} /> Pedidos em Aberto por Categoria
                 </div>
-                <div className="flex items-center gap-2 mt-2">
-                  <select value={newBip.platform} onChange={e => setNewBip({...newBip, platform: e.target.value})} className="px-2 py-1 border rounded">
-                    <option value="SITE">Site</option>
-                    <option value="ML">MercadoLibre</option>
-                    <option value="SHOPEE">Shopee</option>
-                  </select>
-                  <button className="px-3 py-1 bg-emerald-500 text-white rounded" onClick={() => {
-                    if (!newBip.product_sku) { if (addToast) addToast('Informe um SKU', 'warning'); return; }
-                    setManualBipagens(prev => [...prev, {...newBip}]);
-                    setNewBip({ product_sku: '', quantity: 1, platform: 'SITE' });
-                  }}>Adicionar</button>
-                </div>
-              </div>
-              <div>
-                {(manualBipagens || []).length === 0 ? <div className="text-sm text-gray-500">Nenhuma bipagem manual</div> : (
-                  <ul className="space-y-1">
-                    {manualBipagens.map((b, i) => (
-                      <li key={i} className="flex items-center justify-between p-2 border rounded">
-                        <div className="text-sm">{b.product_sku} — <strong>{b.quantity}</strong> — <span className="text-xs text-gray-500">{b.platform}</span></div>
-                        <div>
-                          <button className="text-sm text-red-600" onClick={() => setManualBipagens(prev => prev.filter((_, idx) => idx !== i))}>Remover</button>
+                {ordersForPeriod.length === 0 ? (
+                  <div className="text-xs text-gray-500">Nenhum pedido disponível para a data selecionada.</div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {Array.from(new Set(ordersForPeriod.flatMap(o => o.itens.map((_, i) => `categoria-${i}`)))).slice(0, 6).map((_, catIdx) => {
+                      const pedidosNesta = ordersForPeriod.filter((_, pIdx) => pIdx % 3 === catIdx);
+                      const totalQty = pedidosNesta.reduce((sum, p) => sum + (p.qty_final || 0), 0);
+                      return (
+                        <div key={catIdx} className="bg-white dark:bg-slate-800 border border-blue-100 dark:border-blue-800 rounded-lg p-3 flex items-center justify-between hover:shadow-md transition-shadow">
+                          <div>
+                            <p className="font-bold text-sm text-slate-800 dark:text-slate-200">Categoria {catIdx + 1}</p>
+                            <p className="text-xs text-gray-600 dark:text-gray-400">{pedidosNesta.length} pedido(s)</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-200 px-3 py-1.5 rounded-lg font-bold text-sm">{totalQty}</span>
+                          </div>
                         </div>
-                      </li>
-                    ))}
-                  </ul>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
+
+              {/* Horário da coleta */}
+              <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg p-4">
+                <label className="text-sm font-bold text-amber-900 dark:text-amber-200 block mb-3 flex items-center gap-2">
+                  <Calendar size={16} /> Horário da Coleta
+                </label>
+                <input type="time" className="w-full px-3 py-2.5 border border-amber-300 dark:border-amber-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-amber-400" defaultValue={new Date().toTimeString().slice(0,5)} />
+              </div>
+
+              {/* Adicionar manualmente */}
+              <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-700 rounded-lg p-4">
+                <label className="text-sm font-bold text-emerald-900 dark:text-emerald-200 block mb-3">Adicionar Bipagem Manual</label>
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <input value={newBip.product_sku} onChange={e => setNewBip({...newBip, product_sku: e.target.value})} placeholder="SKU do produto" className="px-3 py-2 border border-emerald-300 dark:border-emerald-600 rounded-lg flex-1 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-emerald-400" />
+                    <input type="number" value={newBip.quantity} onChange={e => setNewBip({...newBip, quantity: Number(e.target.value)})} placeholder="Qtd" className="px-3 py-2 border border-emerald-300 dark:border-emerald-600 rounded-lg w-24 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-emerald-400" />
+                  </div>
+                  <div className="flex gap-2">
+                    <select value={newBip.platform} onChange={e => setNewBip({...newBip, platform: e.target.value})} className="px-3 py-2 border border-emerald-300 dark:border-emerald-600 rounded-lg flex-1 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-emerald-400">
+                      <option value="SITE">Site</option>
+                      <option value="ML">MercadoLibre</option>
+                      <option value="SHOPEE">Shopee</option>
+                    </select>
+                    <button className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-lg hover:from-emerald-600 hover:to-green-700 transition-all font-bold text-sm" onClick={() => {
+                      if (!newBip.product_sku) { if (addToast) addToast('Informe um SKU', 'warning'); return; }
+                      setManualBipagens(prev => [...prev, {...newBip}]);
+                      setNewBip({ product_sku: '', quantity: 1, platform: 'SITE' });
+                    }}>Adicionar</button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Lista de bipagens adicionadas */}
+              {(manualBipagens || []).length > 0 && (
+                <div className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
+                  <p className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-3">Bipagens Adicionadas ({manualBipagens.length})</p>
+                  <div className="space-y-2 max-h-48 overflow-y-auto">
+                    {manualBipagens.map((b, i) => (
+                      <div key={i} className="flex items-center justify-between p-2.5 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg">
+                        <div className="text-sm">
+                          <span className="font-bold text-slate-800 dark:text-slate-200">{b.product_sku}</span>
+                          <span className="mx-2 text-gray-400">×</span>
+                          <span className="font-bold text-emerald-600 dark:text-emerald-400">{b.quantity}</span>
+                          <span className="ml-3 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-1 rounded">{b.platform}</span>
+                        </div>
+                        <button className="text-sm text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 font-bold" onClick={() => setManualBipagens(prev => prev.filter((_, idx) => idx !== i))}>✕ Remover</button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </Collapsible>
 
