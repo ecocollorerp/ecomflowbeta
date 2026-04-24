@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Calendar, FileDown, Save, Package, Box, Truck, ClipboardCheck, Plus, Trash2, MapPin } from 'lucide-react';
+import { Calendar, FileDown, Save, Package, Box, Truck, ClipboardCheck, Plus, Trash2, MapPin, AlertCircle } from 'lucide-react';
 import InfoCard from '../components/InfoCard';
 import Collapsible from '../components/Collapsible';
 import ProductionReportModal from '../components/ProductionReportModal';
+import DateRangePicker from '../components/DateRangePicker';
 import { exportProductionSummary } from '../lib/export';
 import { StockItem, StockMovement, OrderItem, WeighingBatch, GrindingBatch, ScanLogItem, User, ProdutoCombinado, SkuLink, GeneralSettings, ColetaItem, ColetaAdicional } from '../types';
 
@@ -22,12 +23,18 @@ interface ResumoProducaoProps {
 
 
 const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMovements, orders, weighingBatches, grindingBatches, scanHistory, users, produtosCombinados, skuLinks, generalSettings, addToast }) => {
-  const [date, setDate] = useState<string>(() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0,10); });
-  const [period, setPeriod] = useState<'daily'|'weekly'|'monthly'>('daily');
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().slice(0, 10);
+
+  const [dateRangeStart, setDateRangeStart] = useState<string>(yesterdayStr);
+  const [dateRangeEnd, setDateRangeEnd] = useState<string>(yesterdayStr);
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [platformFilter, setPlatformFilter] = useState<string>('ALL');
   const [operatorFilter, setOperatorFilter] = useState<string>('ALL');
   const [search, setSearch] = useState<string>('');
   const [dateSource, setDateSource] = useState<'imported'|'original'>('imported');
+  const [vista, setVista] = useState<'dia' | 'geral'>('dia');
 
   const [loading, setLoading] = useState(true);
   const [prodSummary, setProdSummary] = useState<any>(null);
@@ -41,9 +48,11 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
   const [newBip, setNewBip] = useState<{ product_sku: string; quantity: number; platform: string }>({ product_sku: '', quantity: 1, platform: 'SITE' });
   const [observations, setObservations] = useState<string[]>([]);
   const [obsInput, setObsInput] = useState<string>('');
-  const [dateRange, setDateRange] = useState<'today' | 'week' | 'month' | 'custom'>('today');
-  const [customDateStart, setCustomDateStart] = useState<string>('');
-  const [customDateEnd, setCustomDateEnd] = useState<string>('');
+  const [savedDates, setSavedDates] = useState<Set<string>>(() => {
+    const stored = typeof window !== 'undefined' ? localStorage.getItem('ecomflow_saved_dates') : null;
+    return new Set(stored ? JSON.parse(stored) : []);
+  });
+  const [showLoadBanner, setShowLoadBanner] = useState(false);
 
   // Estado para Coleta
   const [coletas, setColetas] = useState<ColetaItem[]>([]);
@@ -61,42 +70,29 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
     return () => clearTimeout(t);
   }, []);
 
-  const getDateRange = useMemo(() => {
-    const today = new Date(date);
-    const start = new Date(date);
-    const end = new Date(date);
-
-    if (dateRange === 'today') {
-      return { start: date, end: date };
-    } else if (dateRange === 'week') {
-      start.setDate(today.getDate() - 7);
-      return { start: start.toISOString().slice(0, 10), end: date };
-    } else if (dateRange === 'month') {
-      start.setDate(today.getDate() - 30);
-      return { start: start.toISOString().slice(0, 10), end: date };
-    } else if (dateRange === 'custom' && customDateStart && customDateEnd) {
-      return { start: customDateStart, end: customDateEnd };
-    }
-    return { start: date, end: date };
-  }, [date, dateRange, customDateStart, customDateEnd]);
-
   const ordersForPeriod = useMemo(() => {
-    return orders.filter(o => {
+    const baseOrders = orders.filter(o => {
       const dStr = String(o.data || '').split('/').reverse().join('-');
-      const inRange = dStr >= getDateRange.start && dStr <= getDateRange.end;
-      if (period === 'daily') return inRange;
-      return inRange;
+      return vista === 'dia' ? (dStr >= dateRangeStart && dStr <= dateRangeEnd) : true;
     }).filter(o => platformFilter === 'ALL' || (o.canal === platformFilter));
-  }, [orders, date, period, platformFilter, getDateRange]);
+    return baseOrders;
+  }, [orders, dateRangeStart, dateRangeEnd, vista, platformFilter]);
 
-  const totalItems = ordersForPeriod.reduce((s, o) => s + (o.qty_final || 0), 0);
+  const totalItems = useMemo(() => {
+    return orders.reduce((s, o) => s + (o.qty_final || 0), 0);
+  }, [orders]);
+
+  // Check if there's saved data for the current date and show banner
+  useEffect(() => {
+    setShowLoadBanner(savedDates.has(dateRangeEnd));
+  }, [dateRangeEnd, savedDates]);
 
   useEffect(() => {
     let mounted = true;
     const fetchSummary = async () => {
       setLoadingSummary(true);
       try {
-        const res = await fetch(`/api/production/summary?date=${date}`);
+        const res = await fetch(`/api/production/summary?date=${dateRangeEnd}`);
         const json = await res.json();
         if (!mounted) return;
         if (json && json.success) setProdSummary(json);
@@ -111,7 +107,7 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
     fetchSummary();
     const fetchDetails = async () => {
       try {
-        const res = await fetch(`/api/production/details?date=${date}&period=${period}`);
+        const res = await fetch(`/api/production/details?date=${dateRangeEnd}&period=daily`);
         const json = await res.json();
         if (!mounted) return;
         if (json && json.success) setDetails(json);
@@ -123,13 +119,24 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
     };
     fetchDetails();
     return () => { mounted = false; };
-  }, [date, period]);
+  }, [dateRangeEnd]);
 
   // Compute derived views to replace placeholders
-  const pacotesRegistradosCount = useMemo(() => {
-    const registered = (details?.packages || details?.production_packages || []).length || 0;
-    const suggested = (details?.importedPackages || []).length || 0;
-    return registered + suggested;
+  const pacotesStats = useMemo(() => {
+    const registered = details?.packages || details?.production_packages || [];
+    const suggested = details?.importedPackages || [];
+    const lotes = registered.length + suggested.length;
+    const unidades = registered.reduce((s: number, p: any) => s + (p.quantity || p.qty || p.quantidade_disponivel || 0), 0) +
+                     suggested.reduce((s: number, p: any) => s + (p.quantity || p.qty || p.quantidade_disponivel || 0), 0);
+    return { lotes, unidades };
+  }, [details]);
+
+  const estoqueProntoStats = useMemo(() => {
+    const pronto = details?.estoquePronto || details?.estoque_pronto || [];
+    return {
+      lotes: pronto.length,
+      unidades: pronto.reduce((s: number, p: any) => s + (p.quantidade_disponivel || p.quantidade_total || 0), 0)
+    };
   }, [details]);
 
   const mixes = useMemo(() => {
@@ -168,24 +175,50 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
   return (
     <div className="h-full space-y-6">
       <div className="bg-gradient-to-br from-slate-900 via-blue-900 to-slate-800 dark:from-slate-950 dark:via-blue-950 dark:to-slate-900 p-6 rounded-2xl border border-blue-700/50 shadow-lg">
-        <div className="flex flex-wrap items-end gap-4 justify-between">
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-black text-blue-200 uppercase tracking-wider">Data</label>
-              <input type="date" value={date} onChange={e => setDate(e.target.value)} className="px-3 py-2.5 border border-blue-500/30 rounded-lg bg-slate-800 text-white text-sm focus:ring-2 focus:ring-blue-400" />
-            </div>
-
+        <div className="flex flex-wrap items-end gap-3 justify-between mb-4">
+          <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-black text-blue-200 uppercase tracking-wider">Período</label>
-              <select value={period} onChange={e => setPeriod(e.target.value as any)} className="px-3 py-2.5 border border-blue-500/30 rounded-lg bg-slate-800 text-white text-sm focus:ring-2 focus:ring-blue-400">
-                <option value="daily">Diário</option>
-                <option value="weekly">Semanal</option>
-                <option value="monthly">Mensal</option>
-              </select>
+              <DateRangePicker
+                startDate={dateRangeStart}
+                endDate={dateRangeEnd}
+                onChange={(start, end) => {
+                  setDateRangeStart(start);
+                  setDateRangeEnd(end);
+                }}
+                isOpen={isDatePickerOpen}
+                onOpenChange={setIsDatePickerOpen}
+              />
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-black text-blue-200 uppercase tracking-wider">Data na Exportação</label>
+              <label className="text-xs font-black text-blue-200 uppercase tracking-wider">Vista</label>
+              <div className="flex gap-1 p-1 bg-slate-700/50 border border-blue-500/30 rounded-lg">
+                <button
+                  onClick={() => setVista('dia')}
+                  className={`px-3 py-1.5 rounded text-xs font-bold transition-colors ${
+                    vista === 'dia'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-transparent text-blue-200 hover:bg-blue-600/30'
+                  }`}
+                >
+                  Dia
+                </button>
+                <button
+                  onClick={() => setVista('geral')}
+                  className={`px-3 py-1.5 rounded text-xs font-bold transition-colors ${
+                    vista === 'geral'
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-transparent text-blue-200 hover:bg-blue-600/30'
+                  }`}
+                >
+                  Geral
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-black text-blue-200 uppercase tracking-wider">Exportar Por</label>
               <select value={dateSource} onChange={e => setDateSource(e.target.value as any)} className="px-3 py-2.5 border border-blue-500/30 rounded-lg bg-slate-800 text-white text-sm focus:ring-2 focus:ring-blue-400">
                 <option value="imported">Data de Importação</option>
                 <option value="original">Data de Envio</option>
@@ -193,11 +226,36 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={async () => {
+                try {
+                  const res = await fetch('/api/production/report', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ date: dateRangeEnd, summary: prodSummary, details })
+                  });
+                  if (res.ok) {
+                    const newSet = new Set([...savedDates, dateRangeEnd]);
+                    setSavedDates(newSet);
+                    if (typeof window !== 'undefined') {
+                      localStorage.setItem('ecomflow_saved_dates', JSON.stringify([...newSet]));
+                    }
+                    if (addToast) addToast('Dia salvo com sucesso!', 'success');
+                  }
+                } catch (e) {
+                  console.error('Erro ao salvar dia:', e);
+                  if (addToast) addToast('Erro ao salvar dia', 'error');
+                }
+              }}
+              className="flex items-center gap-2 bg-gradient-to-r from-violet-500 to-purple-600 text-white px-4 py-2.5 rounded-lg shadow-lg hover:shadow-xl hover:from-violet-600 hover:to-purple-700 transition-all font-bold text-sm"
+            >
+              <Save size={16} /> Salvar Dia
+            </button>
             <button className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-green-600 text-white px-4 py-2.5 rounded-lg shadow-lg hover:shadow-xl hover:from-emerald-600 hover:to-green-700 transition-all font-bold text-sm" onClick={() => {
                 if (!prodSummary) { if (addToast) addToast('Sem dados para exportar', 'warning'); return; }
                 try {
-                  exportProductionSummary(date, prodSummary, details, stockSnapshot, dateSource);
+                  exportProductionSummary(dateRangeEnd, prodSummary, details, stockSnapshot, dateSource);
                   if (addToast) addToast('Exportação iniciada (arquivo salvo no navegador)', 'success');
                 } catch (e) {
                   console.error('Erro ao exportar resumo:', e);
@@ -208,7 +266,7 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
             </button>
             <button className="flex items-center gap-2 bg-gradient-to-r from-sky-500 to-blue-600 text-white px-4 py-2.5 rounded-lg shadow-lg hover:shadow-xl hover:from-sky-600 hover:to-blue-700 transition-all font-bold text-sm" onClick={async () => {
               try {
-                const res = await fetch(`/api/production/report?date=${date}`);
+                const res = await fetch(`/api/production/report?date=${dateRangeEnd}`);
                 const json = await res.json();
                 if (json && json.success && json.report) {
                   setReportInitialData(json.report);
@@ -223,11 +281,43 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
             }}>
               <Save size={16} /> Carregar
             </button>
-            <button className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-4 py-2.5 rounded-lg shadow-lg hover:shadow-xl hover:from-indigo-700 hover:to-purple-700 transition-all font-bold text-sm" onClick={() => { setReportInitialData(null); setIsReportModalOpen(true); }}>
-              <Save size={16} /> Salvar
-            </button>
           </div>
         </div>
+
+        {showLoadBanner && (
+          <div className="bg-amber-50/10 border border-amber-400/50 rounded-lg p-3 flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2 text-amber-100">
+              <AlertCircle size={16} />
+              <span className="text-sm font-bold">📅 Existe dado salvo para {new Date(dateRangeEnd).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })}. Carregar?</span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(`/api/production/report?date=${dateRangeEnd}`);
+                    const json = await res.json();
+                    if (json && json.success && json.report) {
+                      setReportInitialData(json.report);
+                      setIsReportModalOpen(true);
+                      setShowLoadBanner(false);
+                    }
+                  } catch (e) {
+                    console.error('Erro ao carregar relatório:', e);
+                  }
+                }}
+                className="px-3 py-1 bg-amber-400 text-amber-900 rounded text-xs font-bold hover:bg-amber-500 transition-colors"
+              >
+                Carregar
+              </button>
+              <button
+                onClick={() => setShowLoadBanner(false)}
+                className="px-3 py-1 bg-amber-700/50 text-amber-100 rounded text-xs font-bold hover:bg-amber-700 transition-colors"
+              >
+                Ignorar
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -262,8 +352,9 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
         <div className="bg-gradient-to-br from-sky-50 to-sky-100 dark:from-sky-900/30 dark:to-sky-800/30 border border-sky-200 dark:border-sky-700 rounded-xl p-4 shadow-sm">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-xs font-bold text-sky-600 dark:text-sky-300 uppercase tracking-wide">Pacotes</p>
-              <p className="text-3xl font-black text-sky-800 dark:text-sky-200 mt-1">{loading ? '—' : pacotesRegistradosCount}</p>
+              <p className="text-xs font-bold text-sky-600 dark:text-sky-300 uppercase tracking-wide">Pacotes Prontos</p>
+              <p className="text-3xl font-black text-sky-800 dark:text-sky-200 mt-1">{loading ? '—' : pacotesStats.lotes}</p>
+              <p className="text-xs text-sky-600 dark:text-sky-400 mt-1">{pacotesStats.unidades} unidades</p>
             </div>
             <div className="p-2.5 bg-sky-200 dark:bg-sky-700 rounded-lg"><Truck size={20} className="text-sky-600 dark:text-sky-300" /></div>
           </div>
@@ -295,9 +386,9 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          <Collapsible title={`Pedidos Importados ${dateRange === 'today' ? 'do Dia' : `(${getDateRange.start} a ${getDateRange.end})`}`} defaultOpen>
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <div className="lg:col-span-3 space-y-4">
+          <Collapsible title={`Pedidos Importados ${dateRangeStart === dateRangeEnd ? '' : `(${dateRangeStart} a ${dateRangeEnd})`}`} defaultOpen>
             {loadingSummary ? (
               <div className="flex items-center justify-center py-8 text-sm text-gray-500">
                 <div className="animate-spin mr-2">⏳</div> Carregando pedidos...
@@ -656,7 +747,9 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
               </div>
 
               <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
-                <div className="text-sm font-bold text-slate-700 dark:text-slate-200 mb-3">Pacotes Prontos</div>
+                <div className="text-sm font-bold text-slate-700 dark:text-slate-200 mb-3">
+                  Pacotes Prontos {estoqueProntoStats.lotes > 0 && `(${estoqueProntoStats.lotes} lotes • ${estoqueProntoStats.unidades} un.)`}
+                </div>
                 {(estoquePronto || []).length === 0 ? (
                   <div className="flex items-center justify-center py-8 text-sm text-gray-500">
                     <span className="text-3xl mr-2">📦</span> Nenhum pacote pronto registrado.
@@ -682,6 +775,17 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
                           </tr>
                         ))}
                       </tbody>
+                      <tfoot className="bg-slate-100 dark:bg-slate-800 border-t-2 border-slate-300 dark:border-slate-600">
+                        <tr className="font-bold">
+                          <td colSpan={2} className="px-4 py-3 text-slate-900 dark:text-white text-right">TOTAL:</td>
+                          <td className="px-4 py-3 text-right text-slate-900 dark:text-white">
+                            {(estoquePronto || []).reduce((s: number, p: any) => s + (p.quantidade_total || p.quantidade_disponivel || 0), 0)}
+                          </td>
+                          <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-400">
+                            {(estoquePronto || []).reduce((s: number, p: any) => s + (p.quantidade_disponível || 0), 0)}
+                          </td>
+                        </tr>
+                      </tfoot>
                     </table>
                   </div>
                 )}
@@ -690,78 +794,56 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
           </Collapsible>
 
           <Collapsible title="Pedidos Coletados / Complementares">
-            <div className="space-y-4">
-              {/* Seletor de prazo de tempo */}
-              <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-lg p-4">
-                <div className="text-sm font-bold text-indigo-900 dark:text-indigo-200 mb-3 flex items-center gap-2">
-                  <Calendar size={16} /> Selecionar Período
-                </div>
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {[
-                    { value: 'today' as const, label: 'Hoje' },
-                    { value: 'week' as const, label: 'Últimos 7 dias' },
-                    { value: 'month' as const, label: 'Últimos 30 dias' },
-                    { value: 'custom' as const, label: 'Customizado' }
-                  ].map(opt => (
-                    <button
-                      key={opt.value}
-                      onClick={() => setDateRange(opt.value)}
-                      className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${
-                        dateRange === opt.value
-                          ? 'bg-indigo-600 text-white border border-indigo-700'
-                          : 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700 hover:bg-indigo-100 dark:hover:bg-slate-600'
-                      }`}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-                {dateRange === 'custom' && (
-                  <div className="flex gap-3 mt-3">
-                    <div className="flex-1">
-                      <label className="text-xs font-black text-indigo-700 dark:text-indigo-300 block mb-1.5">De</label>
-                      <input
-                        type="date"
-                        value={customDateStart}
-                        onChange={e => setCustomDateStart(e.target.value)}
-                        className="w-full px-3 py-2 border border-indigo-300 dark:border-indigo-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-400"
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <label className="text-xs font-black text-indigo-700 dark:text-indigo-300 block mb-1.5">Até</label>
-                      <input
-                        type="date"
-                        value={customDateEnd}
-                        onChange={e => setCustomDateEnd(e.target.value)}
-                        className="w-full px-3 py-2 border border-indigo-300 dark:border-indigo-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-400"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
+            <div className="space-y-3">
 
-              {/* Sugestões por categoria */}
-              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-4">
-                <div className="text-sm font-bold text-blue-900 dark:text-blue-200 mb-3 flex items-center gap-2">
-                  <Package size={16} /> Pedidos em Aberto por Categoria ({ordersForPeriod.length} pedido{ordersForPeriod.length !== 1 ? 's' : ''})
+              {/* Bipagem dos Pedidos Importados */}
+              <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-3">
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <div className="text-sm font-bold text-blue-900 dark:text-blue-200 flex items-center gap-2">
+                    <Package size={16} /> Pedidos em Aberto ({ordersForPeriod.length})
+                  </div>
+                  {ordersForPeriod.length > 0 && (
+                    <button
+                      onClick={() => {
+                        const totalQty = ordersForPeriod.reduce((s, o) => s + (o.qty_final || 0), 0);
+                        setManualBipagens([{
+                          product_sku: `TODOS-${ordersForPeriod.length}-PEDIDOS`,
+                          quantity: totalQty,
+                          platform: 'TODOS'
+                        }]);
+                        if (addToast) addToast(`${ordersForPeriod.length} pedidos selecionados (${totalQty} itens)`, 'success');
+                      }}
+                      className="px-2.5 py-1 bg-blue-600 text-white text-xs font-bold rounded hover:bg-blue-700 transition-all"
+                    >
+                      + Selecionar Todos
+                    </button>
+                  )}
                 </div>
                 {ordersForPeriod.length === 0 ? (
-                  <div className="text-xs text-gray-500">Nenhum pedido disponível para o período selecionado.</div>
+                  <div className="text-xs text-gray-500">Nenhum pedido no período.</div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {Array.from(new Set(ordersForPeriod.flatMap(o => (o.itens || []).map((_, i) => `categoria-${i}`)))).slice(0, 6).map((_, catIdx) => {
-                      const pedidosNesta = ordersForPeriod.filter((_, pIdx) => pIdx % 3 === catIdx);
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                    {[1, 2, 3].map((catIdx) => {
+                      const pedidosNesta = ordersForPeriod.filter((_, pIdx) => pIdx % 3 === catIdx - 1);
+                      if (pedidosNesta.length === 0) return null;
                       const totalQty = pedidosNesta.reduce((sum, p) => sum + (p.qty_final || 0), 0);
                       return (
-                        <div key={catIdx} className="bg-white dark:bg-slate-800 border border-blue-100 dark:border-blue-800 rounded-lg p-3 flex items-center justify-between hover:shadow-md transition-shadow">
-                          <div>
-                            <p className="font-bold text-sm text-slate-800 dark:text-slate-200">Categoria {catIdx + 1}</p>
-                            <p className="text-xs text-gray-600 dark:text-gray-400">{pedidosNesta.length} pedido(s)</p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-200 px-3 py-1.5 rounded-lg font-bold text-sm">{totalQty}</span>
-                          </div>
-                        </div>
+                        <button
+                          key={catIdx}
+                          onClick={() => {
+                            setManualBipagens([{
+                              product_sku: `CAT-${catIdx}-${pedidosNesta.length}-PED`,
+                              quantity: totalQty,
+                              platform: 'IMPORTADO'
+                            }]);
+                            if (addToast) addToast(`Categoria ${catIdx}: ${pedidosNesta.length} pedidos (${totalQty} itens)`, 'success');
+                          }}
+                          className="bg-white dark:bg-slate-800 border border-blue-200 dark:border-blue-800 rounded p-2 text-center hover:bg-blue-100 dark:hover:bg-blue-900 transition-all"
+                        >
+                          <div className="font-bold text-xs text-slate-800 dark:text-slate-200">Cat {catIdx}</div>
+                          <div className="text-xs text-gray-600 dark:text-gray-400">{pedidosNesta.length}p</div>
+                          <div className="font-bold text-xs text-blue-600 dark:text-blue-400">{totalQty}</div>
+                        </button>
                       );
                     })}
                   </div>

@@ -3,7 +3,11 @@
     "allow": [
       "Read(//c/Users/MAQUINA/Music/01/ecomflowbeta/**)",
       "Bash(grep -E \"\\\\.\\(tsx?|jsx?\\)$\")",
-      "Bash(grep -E \"\\\\.\\(ts|tsx|js\\)$\")"
+      "Bash(grep -E \"\\\\.\\(ts|tsx|js\\)$\")",
+      "Bash(curl -s https://localhost:3000/api/production/summary?date=2024-01-15)"
+    ],
+    "additionalDirectories": [
+      "\\tmp"
     ]
   }
 }
