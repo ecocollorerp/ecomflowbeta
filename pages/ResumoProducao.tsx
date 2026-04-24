@@ -41,19 +41,42 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
   const [newBip, setNewBip] = useState<{ product_sku: string; quantity: number; platform: string }>({ product_sku: '', quantity: 1, platform: 'SITE' });
   const [observations, setObservations] = useState<string[]>([]);
   const [obsInput, setObsInput] = useState<string>('');
+  const [dateRange, setDateRange] = useState<'today' | 'week' | 'month' | 'custom'>('today');
+  const [customDateStart, setCustomDateStart] = useState<string>('');
+  const [customDateEnd, setCustomDateEnd] = useState<string>('');
 
   useEffect(() => {
     const t = setTimeout(() => setLoading(false), 350);
     return () => clearTimeout(t);
   }, []);
 
+  const getDateRange = useMemo(() => {
+    const today = new Date(date);
+    const start = new Date(date);
+    const end = new Date(date);
+
+    if (dateRange === 'today') {
+      return { start: date, end: date };
+    } else if (dateRange === 'week') {
+      start.setDate(today.getDate() - 7);
+      return { start: start.toISOString().slice(0, 10), end: date };
+    } else if (dateRange === 'month') {
+      start.setDate(today.getDate() - 30);
+      return { start: start.toISOString().slice(0, 10), end: date };
+    } else if (dateRange === 'custom' && customDateStart && customDateEnd) {
+      return { start: customDateStart, end: customDateEnd };
+    }
+    return { start: date, end: date };
+  }, [date, dateRange, customDateStart, customDateEnd]);
+
   const ordersForPeriod = useMemo(() => {
     return orders.filter(o => {
       const dStr = String(o.data || '').split('/').reverse().join('-');
-      if (period === 'daily') return dStr === date;
-      return true;
+      const inRange = dStr >= getDateRange.start && dStr <= getDateRange.end;
+      if (period === 'daily') return inRange;
+      return inRange;
     }).filter(o => platformFilter === 'ALL' || (o.canal === platformFilter));
-  }, [orders, date, period, platformFilter]);
+  }, [orders, date, period, platformFilter, getDateRange]);
 
   const totalItems = ordersForPeriod.reduce((s, o) => s + (o.qty_final || 0), 0);
 
@@ -262,54 +285,69 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
-          <Collapsible title="Pedidos Importados do Dia" defaultOpen>
+          <Collapsible title={`Pedidos Importados ${dateRange === 'today' ? 'do Dia' : `(${getDateRange.start} a ${getDateRange.end})`}`} defaultOpen>
             {loadingSummary ? (
               <div className="flex items-center justify-center py-8 text-sm text-gray-500">
                 <div className="animate-spin mr-2">⏳</div> Carregando pedidos...
               </div>
-            ) : prodSummary ? (
+            ) : ordersForPeriod.length > 0 ? (
               <div className="space-y-4">
-                <div className="flex items-center gap-3 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-700 rounded-lg">
-                  <div className="text-3xl font-black text-blue-600 dark:text-blue-400">{prodSummary.ordersCount}</div>
+                <div className="flex items-center gap-3 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-700 rounded-lg">
+                  <div className="text-3xl font-black text-blue-600 dark:text-blue-400">{ordersForPeriod.length}</div>
                   <div>
                     <p className="text-xs font-black text-blue-600 dark:text-blue-400 uppercase tracking-wide">Total de Pedidos</p>
-                    <p className="text-xs text-gray-600 dark:text-gray-300">importados nesta data</p>
+                    <p className="text-xs text-gray-600 dark:text-gray-300">
+                      {dateRange === 'today' ? 'importados nesta data' : `no período de ${getDateRange.start} a ${getDateRange.end}`}
+                    </p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {Object.entries(prodSummary.ordersByPlatform || {}).map(([plat, cnt]) => (
+                  {Object.entries(ordersForPeriod.reduce((acc: Record<string, number>, o) => {
+                    const canal = o.canal || 'Outros';
+                    acc[canal] = (acc[canal] || 0) + 1;
+                    return acc;
+                  }, {})).map(([plat, cnt]) => (
                     <div key={plat} className="p-3 bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg text-center hover:shadow-md transition-shadow">
-                      <div className="text-xs text-slate-600 dark:text-slate-300 font-bold uppercase">{plat}</div>
+                      <div className="text-xs text-slate-600 dark:text-slate-300 font-bold uppercase truncate">{plat}</div>
                       <div className="font-black text-xl text-slate-900 dark:text-white mt-1">{cnt}</div>
                     </div>
                   ))}
                 </div>
 
-                {(prodSummary.products || []).length > 0 && (
+                {ordersForPeriod.length > 0 && (
                   <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
                     <table className="min-w-full text-sm">
                       <thead className="bg-gradient-to-r from-blue-600 to-indigo-600 dark:from-blue-700 dark:to-indigo-700">
                         <tr className="text-white font-bold">
-                          <th className="px-4 py-3 text-left">SKU</th>
-                          <th className="px-4 py-3 text-right">Quantidade</th>
+                          <th className="px-4 py-3 text-left">Pedido</th>
+                          <th className="px-4 py-3 text-left">Cliente</th>
+                          <th className="px-4 py-3 text-right">Qtd</th>
+                          <th className="px-4 py-3 text-left">Canal</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                        {(prodSummary.products || []).map((p: any, idx: number) => (
-                          <tr key={p.sku} className={idx % 2 === 0 ? 'bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-700/50'}>
-                            <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">{p.sku}</td>
-                            <td className="px-4 py-3 text-right font-black text-blue-600 dark:text-blue-400">{p.quantity}</td>
+                        {ordersForPeriod.slice(0, 10).map((o: any, idx: number) => (
+                          <tr key={o.orderId || idx} className={idx % 2 === 0 ? 'bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-700/50'}>
+                            <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">{o.orderId || o.numero || '—'}</td>
+                            <td className="px-4 py-3 text-slate-600 dark:text-slate-300 truncate max-w-[150px]">{o.cliente || '—'}</td>
+                            <td className="px-4 py-3 text-right font-black text-blue-600 dark:text-blue-400">{o.qty_final || 0}</td>
+                            <td className="px-4 py-3 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-1 rounded font-bold inline-block">{o.canal || '—'}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
+                    {ordersForPeriod.length > 10 && (
+                      <div className="px-4 py-3 bg-slate-50 dark:bg-slate-700/50 text-xs text-slate-500 dark:text-slate-400 font-bold">
+                        ... e mais {ordersForPeriod.length - 10} pedido(s)
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             ) : (
               <div className="flex items-center justify-center py-8 text-sm text-gray-500">
-                <span className="text-3xl mr-2">📭</span> Nenhum dado disponível para a data selecionada.
+                <span className="text-3xl mr-2">📭</span> Nenhum pedido disponível para o período selecionado.
               </div>
             )}
           </Collapsible>
@@ -641,16 +679,65 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
 
           <Collapsible title="Pedidos Coletados / Complementares">
             <div className="space-y-4">
+              {/* Seletor de prazo de tempo */}
+              <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-lg p-4">
+                <div className="text-sm font-bold text-indigo-900 dark:text-indigo-200 mb-3 flex items-center gap-2">
+                  <Calendar size={16} /> Selecionar Período
+                </div>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {[
+                    { value: 'today' as const, label: 'Hoje' },
+                    { value: 'week' as const, label: 'Últimos 7 dias' },
+                    { value: 'month' as const, label: 'Últimos 30 dias' },
+                    { value: 'custom' as const, label: 'Customizado' }
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setDateRange(opt.value)}
+                      className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${
+                        dateRange === opt.value
+                          ? 'bg-indigo-600 text-white border border-indigo-700'
+                          : 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700 hover:bg-indigo-100 dark:hover:bg-slate-600'
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                {dateRange === 'custom' && (
+                  <div className="flex gap-3 mt-3">
+                    <div className="flex-1">
+                      <label className="text-xs font-black text-indigo-700 dark:text-indigo-300 block mb-1.5">De</label>
+                      <input
+                        type="date"
+                        value={customDateStart}
+                        onChange={e => setCustomDateStart(e.target.value)}
+                        className="w-full px-3 py-2 border border-indigo-300 dark:border-indigo-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-400"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-xs font-black text-indigo-700 dark:text-indigo-300 block mb-1.5">Até</label>
+                      <input
+                        type="date"
+                        value={customDateEnd}
+                        onChange={e => setCustomDateEnd(e.target.value)}
+                        className="w-full px-3 py-2 border border-indigo-300 dark:border-indigo-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-indigo-400"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Sugestões por categoria */}
               <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-4">
                 <div className="text-sm font-bold text-blue-900 dark:text-blue-200 mb-3 flex items-center gap-2">
-                  <Package size={16} /> Pedidos em Aberto por Categoria
+                  <Package size={16} /> Pedidos em Aberto por Categoria ({ordersForPeriod.length} pedido{ordersForPeriod.length !== 1 ? 's' : ''})
                 </div>
                 {ordersForPeriod.length === 0 ? (
-                  <div className="text-xs text-gray-500">Nenhum pedido disponível para a data selecionada.</div>
+                  <div className="text-xs text-gray-500">Nenhum pedido disponível para o período selecionado.</div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {Array.from(new Set(ordersForPeriod.flatMap(o => o.itens.map((_, i) => `categoria-${i}`)))).slice(0, 6).map((_, catIdx) => {
+                    {Array.from(new Set(ordersForPeriod.flatMap(o => (o.itens || []).map((_, i) => `categoria-${i}`)))).slice(0, 6).map((_, catIdx) => {
                       const pedidosNesta = ordersForPeriod.filter((_, pIdx) => pIdx % 3 === catIdx);
                       const totalQty = pedidosNesta.reduce((sum, p) => sum + (p.qty_final || 0), 0);
                       return (
