@@ -82,6 +82,66 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
     return orders.reduce((s, o) => s + (o.qty_final || 0), 0);
   }, [orders]);
 
+  const [expandedOrders, setExpandedOrders] = useState<Set<string>>(new Set());
+
+  const [itemFilter, setItemFilter] = useState<string>('');
+  const [showItemsView, setShowItemsView] = useState<boolean>(false);
+
+  const groupedOrders = useMemo(() => {
+    const map = new Map<string, any[]>();
+    ordersForPeriod.forEach(o => {
+      const key = o.orderId || o.tracking || `__${o.id}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(o);
+    });
+    return Array.from(map.entries()).map(([key, items]) => {
+      if (items.length > 1) {
+        const first = items[0];
+        return {
+          isGroup: true,
+          groupKey: key,
+          items,
+          id: first.id,
+          orderId: first.orderId,
+          cliente: first.cliente || first.customer_name,
+          qty: items.reduce((s, x) => s + (x.qty_final || 0), 0),
+          canal: first.canal
+        };
+      }
+      const it = items[0];
+      return { ...it, isGroup: false, id: it.id, orderId: it.orderId, cliente: it.cliente || it.customer_name, qty: it.qty_final || 0, canal: it.canal };
+    });
+  }, [ordersForPeriod]);
+
+  const filteredGroupedOrders = useMemo(() => {
+    if (!itemFilter) return groupedOrders;
+    const s = itemFilter.toLowerCase();
+    return groupedOrders.filter((item: any) => {
+      if (item.isGroup) return item.items.some((sub: any) => String(sub.sku || '').toLowerCase().includes(s));
+      return String(item.sku || item.orderId || '').toLowerCase().includes(s);
+    });
+  }, [groupedOrders, itemFilter]);
+
+  const itemsAggregate = useMemo(() => {
+    const map = new Map<string, number>();
+    ordersForPeriod.forEach((o: any) => {
+      const sku = String(o.sku || o.product_sku || '').toUpperCase();
+      const qty = Number(o.qty_final || o.quantity || 1) || 0;
+      if (!sku) return;
+      map.set(sku, (map.get(sku) || 0) + qty);
+    });
+    return Array.from(map.entries()).map(([sku, qty]) => ({ sku, qty })).sort((a, b) => b.qty - a.qty);
+  }, [ordersForPeriod]);
+
+  const toggleGroup = (key: string) => {
+    setExpandedOrders(prev => {
+      const n = new Set(prev);
+      if (n.has(key)) n.delete(key);
+      else n.add(key);
+      return n;
+    });
+  };
+
   // Check if there's saved data for the current date and show banner
   useEffect(() => {
     setShowLoadBanner(savedDates.has(dateRangeEnd));
@@ -382,6 +442,18 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
           <div className="flex-1 min-w-48">
             <label className="text-xs font-black text-slate-600 dark:text-slate-300 block uppercase tracking-wider mb-1.5">Busca (SKU / Pedido)</label>
             <input value={search} onChange={e => setSearch(e.target.value)} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-blue-400" placeholder="Pesquisar..." />
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs font-black text-slate-600 dark:text-slate-300 block uppercase tracking-wider mb-1.5">Filtrar Item (SKU)</label>
+                <input value={itemFilter} onChange={e => setItemFilter(e.target.value)} placeholder="SKU para filtrar..." className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-sm" />
+              </div>
+              <div className="flex items-end">
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={showItemsView} onChange={e => setShowItemsView(e.target.checked)} className="h-4 w-4" />
+                  <span className="text-xs font-bold">Visão por Itens</span>
+                </label>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -400,7 +472,7 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
                   <div>
                     <p className="text-xs font-black text-blue-600 dark:text-blue-400 uppercase tracking-wide">Total de Pedidos</p>
                     <p className="text-xs text-gray-600 dark:text-gray-300">
-                      {dateRange === 'today' ? 'importados nesta data' : `no período de ${getDateRange.start} a ${getDateRange.end}`}
+                      {dateRangeStart === dateRangeEnd ? 'importados nesta data' : `no período de ${dateRangeStart} a ${dateRangeEnd}`}
                     </p>
                   </div>
                 </div>
@@ -430,19 +502,57 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                        {ordersForPeriod.slice(0, 10).map((o: any, idx: number) => (
-                          <tr key={o.orderId || idx} className={idx % 2 === 0 ? 'bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-700/50'}>
-                            <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">{o.orderId || o.numero || '—'}</td>
-                            <td className="px-4 py-3 text-slate-600 dark:text-slate-300 truncate max-w-[150px]">{o.cliente || '—'}</td>
-                            <td className="px-4 py-3 text-right font-black text-blue-600 dark:text-blue-400">{o.qty_final || 0}</td>
-                            <td className="px-4 py-3 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-1 rounded font-bold inline-block">{o.canal || '—'}</td>
-                          </tr>
-                        ))}
+                        {showItemsView ? (
+                          itemsAggregate.length === 0 ? (
+                            <tr><td colSpan={4} className="text-center py-8 text-gray-500 dark:text-gray-400">Nenhum item para exibir.</td></tr>
+                          ) : (
+                            itemsAggregate.slice(0, 200).map((it, idx) => (
+                              <tr key={it.sku} className={idx % 2 === 0 ? 'bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-700/50'}>
+                                <td className="px-4 py-3 font-mono font-bold text-slate-900 dark:text-white">{it.sku}</td>
+                                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">—</td>
+                                <td className="px-4 py-3 text-right font-black text-blue-600 dark:text-blue-400">{it.qty}</td>
+                                <td className="px-4 py-3 text-left"><button onClick={() => { setItemFilter(it.sku); setShowItemsView(false); if (addToast) addToast(`Filtrando por ${it.sku}`, 'info'); }} className="px-2 py-1 bg-blue-600 text-white rounded text-xs">Ver pedidos</button></td>
+                              </tr>
+                            ))
+                          )
+                        ) : (
+                          filteredGroupedOrders.slice(0, 10).map((item: any, idx: number) => {
+                            const isGroup = item.isGroup;
+                            const isExpanded = isGroup && expandedOrders.has(item.groupKey);
+                            return (
+                              <React.Fragment key={item.orderId || item.id}>
+                                <tr className={idx % 2 === 0 ? 'bg-white dark:bg-slate-800' : 'bg-slate-50 dark:bg-slate-700/50'}>
+                                  <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">
+                                    {isGroup ? (
+                                      <button onClick={() => toggleGroup(item.groupKey)} className="font-bold">{isExpanded ? '▾ ' : '▸ '}{item.orderId}</button>
+                                    ) : (
+                                      <div className="flex flex-col">
+                                        <span>{item.orderId || item.numero || '—'}</span>
+                                        <span className="text-xs text-slate-400 mt-1">{String(item.sku || item.product_sku || (item.items && item.items[0] && item.items[0].sku) || '').toUpperCase()}</span>
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300 truncate max-w-[150px]">{item.cliente || '—'}</td>
+                                  <td className="px-4 py-3 text-right font-black text-blue-600 dark:text-blue-400">{item.qty || 0}</td>
+                                  <td className="px-4 py-3 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-1 rounded font-bold inline-block">{item.canal || '—'}</td>
+                                </tr>
+                                {isExpanded && isGroup && item.items.map((sub: any) => (
+                                  <tr key={sub.id} className="bg-slate-50 dark:bg-slate-700/50">
+                                    <td className="px-6 py-2 font-mono text-sm">{sub.sku}</td>
+                                    <td className="px-4 py-2">{sub.cliente || sub.customer_name || ''}</td>
+                                    <td className="px-4 py-2 text-right font-bold">{sub.qty_final || 0}</td>
+                                    <td className="px-4 py-2">{sub.canal || ''}</td>
+                                  </tr>
+                                ))}
+                              </React.Fragment>
+                            );
+                          })
+                        )}
                       </tbody>
                     </table>
-                    {ordersForPeriod.length > 10 && (
+                    {filteredGroupedOrders.length > 10 && (
                       <div className="px-4 py-3 bg-slate-50 dark:bg-slate-700/50 text-xs text-slate-500 dark:text-slate-400 font-bold">
-                        ... e mais {ordersForPeriod.length - 10} pedido(s)
+                        ... e mais {filteredGroupedOrders.length - 10} pedido(s)
                       </div>
                     )}
                   </div>
@@ -499,7 +609,7 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
             isOpen={isReportModalOpen}
             onClose={() => setIsReportModalOpen(false)}
             initialData={reportInitialData}
-            period={period === 'daily' ? 'daily' : 'monthly'}
+            period={vista === 'dia' ? 'daily' : 'monthly'}
             onSave={async (payload: any) => {
               const enriched = {
                 ...payload,
@@ -903,7 +1013,7 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
                     <label className="text-xs font-black text-amber-700 dark:text-amber-300 block mb-1.5">Data</label>
                     <input
                       type="date"
-                      value={newColeta.dataColeta || date}
+                      value={newColeta.dataColeta || dateRangeEnd}
                       onChange={e => setNewColeta({...newColeta, dataColeta: e.target.value})}
                       className="w-full px-3 py-2 border border-amber-300 dark:border-amber-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm focus:ring-2 focus:ring-amber-400"
                     />
@@ -930,7 +1040,7 @@ const ResumoProducaoPage: React.FC<ResumoProducaoProps> = ({ stockItems, stockMo
                       plataforma: newColeta.plataforma as any,
                       motorista: newColeta.motorista!,
                       placaCaminhao: newColeta.placaCaminhao!,
-                      dataColeta: newColeta.dataColeta || date,
+                      dataColeta: newColeta.dataColeta || dateRangeEnd,
                       horarioColeta: newColeta.horarioColeta || new Date().toTimeString().slice(0,5),
                       lotes: manualBipagens.map(b => b.product_sku),
                       pedidos: [],
