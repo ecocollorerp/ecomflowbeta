@@ -1771,24 +1771,25 @@ const FinancePage: React.FC<FinancePageProps> = ({
                         </div>
 
                         <div className="flex-1 overflow-y-auto p-8">
-                            <div className="flex flex-wrap gap-2 mb-8 bg-slate-100 p-1.5 rounded-2xl w-fit">
-                                {[
-                                    { id: 'ml', name: 'Mercado Livre' },
-                                    { id: 'shopee', name: 'Shopee' },
-                                    { id: 'tiktok', name: 'TikTok Shop' },
-                                    { id: 'site', name: 'Padrão / Site' },
-                                    ...(generalSettings.customStores || []).map(s => ({ id: s.id.toLowerCase(), name: s.name }))
-                                ].map(canal => (
-                                    <button
-                                        key={canal.id}
-                                        onClick={() => setMappingCanal(canal.id)}
-                                        className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
-                                            mappingCanal === canal.id ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'
-                                        }`}
-                                    >
-                                        {canal.name}
-                                    </button>
-                                ))}
+                            <div className="mb-6 max-w-sm">
+                                <label className="text-[10px] font-black text-gray-400 uppercase mb-1 block">Perfil a mapear</label>
+                                <select
+                                    value={mappingCanal}
+                                    onChange={(e) => setMappingCanal(e.target.value)}
+                                    className="w-full p-2.5 border rounded-xl bg-white text-sm font-bold"
+                                >
+                                    {[
+                                        { id: 'ml', name: 'Mercado Livre' },
+                                        { id: 'shopee', name: 'Shopee' },
+                                        { id: 'tiktok', name: 'TikTok Shop' },
+                                        { id: 'site', name: 'Padrão / Site' },
+                                        ...(generalSettings.customStores || []).map(s => ({ id: s.id.toLowerCase(), name: s.name }))
+                                    ].map(canal => (
+                                        <option key={canal.id} value={canal.id}>
+                                            {canal.name}
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
 
                              <MappingPanel

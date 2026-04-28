@@ -32,6 +32,24 @@ const orderCandidateChannels = (forcedCanal?: Canal | 'AUTO', fileNameHint?: str
     return [hinted, ...defaults.filter(c => c !== hinted)];
 };
 
+// Resolve mapping for detected channel names, supporting custom channels like 'ML_COLETA'
+const resolveMappingForDetectedChannel = (settings: GeneralSettings, detectedChannel: string | Canal | null) : { mappingToUse: ColumnMapping | null, baseCanal: Canal | null } => {
+    if (!detectedChannel) return { mappingToUse: null, baseCanal: null };
+    const raw = String(detectedChannel || '').trim();
+    const lower = raw.toLowerCase();
+    const prefix = lower.split('_')[0];
+
+    // Try direct importer key (e.g., 'ml_coleta'), then importer_<key>, then base importer (e.g., 'ml')
+    let mapping: any = (settings.importer as any)[lower] || (settings as any)[`importer_${lower}`] || null;
+    if (!mapping) {
+        mapping = (settings.importer as any)[prefix] || (settings as any)[`importer_${prefix}`] || null;
+    }
+
+    const prefixUpper = prefix.toUpperCase();
+    const baseCanal = ['ML','SHOPEE','TIKTOK','SITE'].includes(prefixUpper) ? prefixUpper as Canal : null;
+    return { mappingToUse: mapping || null, baseCanal };
+}
+
 const getCriticalColumnsForDetection = (canal: Canal, config?: Partial<ColumnMapping>): string[] => {
     const configured = [config?.orderId, config?.sku, config?.qty, config?.tracking]
         .filter(Boolean)
@@ -167,10 +185,9 @@ export const extractShippingDates = (
 
     // Check if we have a forced channel and it has a configured start row
     if (forcedCanal && forcedCanal !== 'AUTO') {
-        const configKey = forcedCanal.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site';
-        const config = settings.importer[configKey];
-        if (config && config.importStartRow !== undefined) {
-            headerRowIndex = config.importStartRow;
+        const _r = resolveMappingForDetectedChannel(settings, forcedCanal as string);
+        if (_r.mappingToUse && (_r.mappingToUse as any).importStartRow !== undefined) {
+            headerRowIndex = (_r.mappingToUse as any).importStartRow;
             detectedChannel = forcedCanal;
         }
     }
@@ -243,13 +260,14 @@ export const extractShippingDates = (
         }
     }
 
-    // OBTEM A CONFIGURAÇÃO ESPECÍFICA DO CANAL
-    mappingToUse = settings.importer[detectedChannel.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site'];
-    
+    // OBTEM A CONFIGURAÇÃO ESPECÍFICA DO CANAL (suporta canais customizados ex: 'ML_COLETA')
+    const _resolved = resolveMappingForDetectedChannel(settings, detectedChannel);
+    mappingToUse = (_resolved.mappingToUse as ColumnMapping) || ({} as ColumnMapping);
+    const baseCanal = _resolved.baseCanal || (detectedChannel ? String(detectedChannel).split('_')[0].toUpperCase() as Canal : null);
 
     // Se não tiver coluna de data de envio configurada, tenta usar data de venda ou retorna vazio
     // Prioriza dateShipping (ex: Coluna H da Shopee)
-    const desiredDateCol = mappingToUse.dateShipping || mappingToUse.date;
+    const desiredDateCol = (mappingToUse as any).dateShipping || (mappingToUse as any).date;
     if (!desiredDateCol) return [];
 
     const jsonData = XLSX.utils.sheet_to_json<any>(worksheet, { range: headerRowIndex, raw: false });
@@ -376,6 +394,7 @@ export const getParserInternals = (
     let canalDetectado: Canal | null = null;
     let headerRowIndex = -1;
     let mappingToUse: any = null;
+    let baseCanal: Canal | null = null;
 
     let candidateChannels: Canal[] = [];
     if (forcedCanal && forcedCanal !== 'AUTO') candidateChannels = [forcedCanal as Canal];
@@ -385,12 +404,12 @@ export const getParserInternals = (
     
     // Support configured start row
     if (forcedCanal && forcedCanal !== 'AUTO') {
-        const configKey = forcedCanal.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site';
-        const config = settings.importer[configKey];
-        if (config && config.importStartRow !== undefined) {
-            headerRowIndex = config.importStartRow;
+        const _r = resolveMappingForDetectedChannel(settings, forcedCanal as string);
+        mappingToUse = (_r.mappingToUse as ColumnMapping) || mappingToUse;
+        baseCanal = _r.baseCanal || null;
+        if (mappingToUse && mappingToUse.importStartRow !== undefined) {
+            headerRowIndex = mappingToUse.importStartRow;
             canalDetectado = forcedCanal as Canal;
-            mappingToUse = config;
         }
     }
 
@@ -413,11 +432,15 @@ export const getParserInternals = (
     if (bestMatch.rowIndex !== -1) {
         headerRowIndex = bestMatch.rowIndex;
         canalDetectado = bestMatch.channel;
-        if (canalDetectado) mappingToUse = settings.importer[canalDetectado.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site'];
+        const _r = resolveMappingForDetectedChannel(settings, canalDetectado);
+        mappingToUse = (_r.mappingToUse as ColumnMapping) || mappingToUse;
+        baseCanal = _r.baseCanal || baseCanal;
     } else if (forcedCanal && forcedCanal !== 'AUTO') {
         headerRowIndex = 0;
         canalDetectado = forcedCanal as Canal;
-        mappingToUse = settings.importer[canalDetectado.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site'];
+        const _r = resolveMappingForDetectedChannel(settings, canalDetectado);
+        mappingToUse = (_r.mappingToUse as ColumnMapping) || mappingToUse;
+        baseCanal = _r.baseCanal || baseCanal;
     } else {
         let maxCols = 0;
         for (let i = 0; i < Math.min(rawData.length, 50); i++) {
@@ -431,7 +454,7 @@ export const getParserInternals = (
                 if (filledCols >= 8) break;
             }
         }
-        if (headerRowIndex !== -1) {
+            if (headerRowIndex !== -1) {
             const firstRowValues = (rawData[headerRowIndex] || []).map(c => normalizeHeaderToken(c));
             const possibleChannels: Canal[] = ['ML', 'SHOPEE', 'TIKTOK', 'SITE'];
             for (const canal of possibleChannels) {
@@ -483,7 +506,7 @@ export const getParserInternals = (
         headerKeyMap['statusColumn'] = tryMatch(mappingToUse.statusColumn);
     }
 
-    return { headerRowIndex, canalDetectado, mappingToUse, sheetKeys, headerKeyMap, sampleRow: jsonData[0] || null, jsonDataLength: jsonData.length };
+    return { headerRowIndex, canalDetectado, baseCanal, mappingToUse, sheetKeys, headerKeyMap, sampleRow: jsonData[0] || null, jsonDataLength: jsonData.length };
 };
 
 export const parseExcelFile = (
@@ -513,6 +536,7 @@ export const parseExcelFile = (
     let canalDetectado: Canal | null = null;
     let headerRowIndex = -1;
     let mappingToUse: ColumnMapping | null = null;
+    let baseCanal: Canal | null = null;
 
     // Definição dos canais a testar
     const candidateChannels = orderCandidateChannels(forcedCanal, fileName);
@@ -559,7 +583,9 @@ export const parseExcelFile = (
         headerRowIndex = bestMatch.rowIndex;
         canalDetectado = bestMatch.channel;
         if (canalDetectado) {
-            mappingToUse = settings.importer[canalDetectado.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site'];
+            const _r = resolveMappingForDetectedChannel(settings, canalDetectado);
+            mappingToUse = (_r.mappingToUse as ColumnMapping) || mappingToUse;
+            baseCanal = _r.baseCanal || (canalDetectado ? String(canalDetectado).split('_')[0].toUpperCase() as Canal : null);
         }
     }
 
@@ -567,8 +593,10 @@ export const parseExcelFile = (
     if (!mappingToUse || headerRowIndex === -1) {
         if (forcedCanal && forcedCanal !== 'AUTO') {
             canalDetectado = forcedCanal;
-            mappingToUse = settings.importer[forcedCanal.toLowerCase() as 'ml' | 'shopee' | 'tiktok' | 'site'];
-            const isML = forcedCanal === 'ML';
+            const _r = resolveMappingForDetectedChannel(settings, forcedCanal as string);
+            mappingToUse = (_r.mappingToUse as ColumnMapping) || mappingToUse;
+            baseCanal = _r.baseCanal || (forcedCanal ? String(forcedCanal).split('_')[0].toUpperCase() as Canal : null);
+            const isML = (baseCanal === 'ML');
             let maxCols = 0;
             for (let i = 0; i < Math.min(rawData.length, 50); i++) {
                 const row = rawData[i];
@@ -587,8 +615,10 @@ export const parseExcelFile = (
         }
     }
 
+    // Garante que mappingToUse seja um objeto (evitar TypeError em mapeamentos ausentes)
+    mappingToUse = mappingToUse || ({} as ColumnMapping);
     if (options.columnOverrides) {
-        mappingToUse = { ...mappingToUse!, ...options.columnOverrides };
+        mappingToUse = { ...mappingToUse, ...options.columnOverrides };
     }
 
     // 5. Re-ler a planilha
@@ -649,7 +679,7 @@ export const parseExcelFile = (
     };
 
     // Fallbacks de aliases por plataforma quando configuração vier incompleta ou com rótulo diferente.
-    if (canalDetectado === 'ML') {
+    if (baseCanal === 'ML') {
         fillMissingHeaderKey('orderId', ['N.º de venda', 'N° de venda', 'No de venda', 'ID da venda', 'ID do pedido']);
         fillMissingHeaderKey('sku', ['SKU', 'SKU do anúncio', 'SKU do produto', 'Seller SKU', 'Número de referência SKU']);
         fillMissingHeaderKey('qty', ['Quantidade', 'Unidades', 'Quantity']);
@@ -660,7 +690,7 @@ export const parseExcelFile = (
         fillMissingHeaderKey('shippingFee', ['Tarifa de envio (BRL)', 'Custo de frete (BRL)']);
         fillMissingHeaderKey('shippingPaidByCustomer', ['Custo de envio (pago pelo comprador)', 'Frete pago pelo cliente', 'Frete pago pelo comprador', 'Custo de envio para o comprador']);
         fillMissingHeaderKey('statusColumn', ['Estado', 'Status do pedido', 'Order Status']);
-    } else if (canalDetectado === 'SHOPEE') {
+    } else if (baseCanal === 'SHOPEE') {
         fillMissingHeaderKey('orderId', ['ID do pedido', 'N.º do pedido', 'Order ID']);
         fillMissingHeaderKey('sku', ['Número de referência SKU', 'Nº de referência do SKU principal', 'Seller SKU', 'SKU']);
         fillMissingHeaderKey('qty', ['Quantidade', 'Quantity']);
@@ -669,7 +699,7 @@ export const parseExcelFile = (
         fillMissingHeaderKey('dateShipping', ['Data prevista de envio', 'Data de envio prevista', 'Ship By Date']);
         fillMissingHeaderKey('shippingPaidByCustomer', ['Taxa de envio paga pelo comprador', 'Frete pago pelo comprador']);
         fillMissingHeaderKey('statusColumn', ['Status do pedido', 'Order Status']);
-    } else if (canalDetectado === 'TIKTOK') {
+    } else if (baseCanal === 'TIKTOK') {
         fillMissingHeaderKey('orderId', ['Order ID', 'ID do pedido', 'N.º do pedido']);
         fillMissingHeaderKey('sku', ['Seller SKU', 'SKU', 'SKU ID', 'Número de referência SKU']);
         fillMissingHeaderKey('qty', ['Quantity', 'Quantidade', 'Unidades']);
@@ -687,7 +717,7 @@ export const parseExcelFile = (
     }
 
     // Hard fallback para Shopee (Data de envio) se não encontrar via config
-    if (!headerKeyMap['dateShipping'] && canalDetectado === 'SHOPEE') {
+    if (!headerKeyMap['dateShipping'] && baseCanal === 'SHOPEE') {
         headerKeyMap['dateShipping'] = tryMatch('Data de envio') || tryMatch('Data de envio prevista');
     }
 
@@ -729,7 +759,7 @@ export const parseExcelFile = (
 
     // Set for O(1) lookup
     const allowedDatesSet = options.allowedShippingDates ? new Set(options.allowedShippingDates) : null;
-    const shouldApplyDateFilter = canalDetectado === 'SHOPEE';
+    const shouldApplyDateFilter = baseCanal === 'SHOPEE';
 
     if (allowedDatesSet) console.debug('PARSER-DIAG: allowedDatesSet', Array.from(allowedDatesSet), 'shouldApplyDateFilter', shouldApplyDateFilter);
 
@@ -750,7 +780,7 @@ export const parseExcelFile = (
 
     // TikTok: detecta linhas de descrição (segunda linha da planilha que contém textos explicativos)
     const isTikTokDescriptionRow = (row: any): boolean => {
-        if (canalDetectado !== 'SITE') return false;
+        if (baseCanal !== 'TIKTOK') return false;
         const orderIdVal = String(row[headerKeyMap['orderId']] || '');
         const qtyVal = String(row[headerKeyMap['qty']] || '');
         // Linhas de descrição TikTok contêm texto longo explicativo no OrderID
@@ -793,7 +823,7 @@ export const parseExcelFile = (
         
         // Se houver data de postagem/envio e for importação normal, pode ser tratado como NORMAL (Pedidos do dia)
         // Se for Shopee sem data de envio, talvez deva ser outro status, mas aqui seguimos a regra do usuário de ML
-        if (!forcedStatus && canalDetectado === 'ML' && dataEnvioStr) {
+        if (!forcedStatus && baseCanal === 'ML' && dataEnvioStr) {
             statusParaImportacao = 'NORMAL'; 
         }
         
@@ -991,7 +1021,7 @@ export const parseExcelFile = (
     // Na planilha do ML, "Tarifa de venda e impostos" e "Custo de envio" são valores
     // do PEDIDO INTEIRO, repetidos em cada linha de item. Sem normalização, ao somar
     // no Financeiro, esses valores seriam multiplicados pelo nº de itens.
-    if (canalDetectado === 'ML') {
+    if (baseCanal === 'ML') {
         const orderGroups = new Map<string, OrderItem[]>();
         orders.forEach(o => {
             if (!orderGroups.has(o.orderId)) orderGroups.set(o.orderId, []);

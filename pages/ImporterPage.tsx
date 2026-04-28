@@ -167,6 +167,22 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         }
     };
 
+    // Quando o painel pede para re-extrair cabeçalhos (por ex. após mudar importStartRow)
+    const handleRequestDetectHeaders = async (canalId: string, importStartRow?: number) => {
+        if (!selectedFile) return;
+        try {
+            const buffer = await selectedFile.arrayBuffer();
+            const startRow = importStartRow !== undefined
+                ? importStartRow
+                : (((generalSettings.importer as any)[canalId]?.importStartRow) ?? undefined);
+            const { headers } = extractHeadersAndData(buffer, startRow);
+            setDetectedHeaders(headers || []);
+            setMappingCanal(canalId.toLowerCase());
+        } catch (err) {
+            console.error('Erro ao detectar cabeçalhos (request):', err);
+        }
+    };
+
     useEffect(() => {
         if (isMappingModalOpen && selectedFile && detectedHeaders.length === 0) {
             handleExtractHeaders();
@@ -670,8 +686,8 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                                         onChange={e => setSelectedChannel(e.target.value as any)}
                                         className="w-full p-3 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
                                     >
-                                        {channelOptions.map(opt => (
-                                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                        {channelOptions.map((opt, idx) => (
+                                            <option key={`${opt.value}-${idx}`} value={opt.value}>{opt.label}</option>
                                         ))}
                                     </select>
                                     <p className="text-[10px] text-slate-400 mt-2 font-medium">Use "Automático" por padrão. Se houver erro de colunas não encontradas, selecione o canal específico aqui.</p>
@@ -929,7 +945,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
             {/* Modal de Mapeamento de Colunas */}
             {isMappingModalOpen && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-                    <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-4xl flex flex-col max-h-[90vh] overflow-hidden">
+                    <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-3xl flex flex-col max-h-[90vh] overflow-hidden overflow-x-hidden">
                         <div className="p-8 border-b border-gray-100 flex justify-between items-center bg-slate-50">
                             <div>
                                 <h2 className="text-2xl font-black text-slate-800 uppercase tracking-tighter flex items-center gap-3">
@@ -943,30 +959,33 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                             </button>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto p-8">
-                            <div className="flex gap-2 mb-8 bg-slate-100 p-1.5 rounded-2xl w-fit">
-                                {[
-                                    { id: 'ml', name: 'Mercado Livre' },
-                                    { id: 'shopee', name: 'Shopee' },
-                                    { id: 'site', name: 'Padrao / Site' }
-                                ].map(canal => (
-                                    <button
-                                        key={canal.id}
-                                        onClick={() => setMappingCanal(canal.id)}
-                                        className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
-                                            mappingCanal === canal.id ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'
-                                        }`}
-                                    >
-                                        {canal.name}
-                                    </button>
-                                ))}
+                        <div className="flex-1 overflow-y-auto overflow-x-hidden p-8">
+                            <div className="mb-6 max-w-sm">
+                                <label className="text-[10px] font-black text-gray-400 uppercase mb-1 block">Perfil / Layout</label>
+                                <select
+                                    value={mappingCanal}
+                                    onChange={(e) => setMappingCanal(e.target.value)}
+                                    className="w-full p-2.5 border rounded-xl bg-white text-sm font-bold"
+                                >
+                                    {channelOptions
+                                        .filter(opt => String(opt.value).toUpperCase() !== 'AUTO')
+                                        .map(opt => (
+                                            <option key={opt.value} value={String(opt.value).toLowerCase()}>
+                                                {opt.label}
+                                            </option>
+                                        ))}
+                                </select>
                             </div>
 
                             <MappingPanel
                                 canalId={mappingCanal}
-                                canalName={mappingCanal === 'ml' ? 'Mercado Livre' : mappingCanal === 'shopee' ? 'Shopee' : 'Padrão'}
+                                canalName={(() => {
+                                    const found = channelOptions.find(o => String(o.value).toLowerCase() === mappingCanal);
+                                    return found ? found.label : mappingCanal === 'ml' ? 'Mercado Livre' : mappingCanal === 'shopee' ? 'Shopee' : 'Padrão';
+                                })()}
                                 settings={generalSettings}
                                 onUpdateMapping={handleUpdateMapping}
+                                onRequestDetectHeaders={handleRequestDetectHeaders}
                                 detectedHeaders={detectedHeaders}
                                 mode="import"
                             />
@@ -979,12 +998,25 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                                     ? `${detectedHeaders.length} colunas detectadas no arquivo atual.` 
                                     : 'Nenhum arquivo carregado para detecção automática.'}
                             </div>
-                            <button 
-                                onClick={() => setIsMappingModalOpen(false)}
-                                className="px-10 py-4 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all"
-                            >
-                                Concluir Mapeamento
-                            </button>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={() => {
+                                        // Re-salva as configurações gerais (chama handleSaveGeneralSettings no App)
+                                        try { setGeneralSettings((prev: any) => ({ ...prev })); } catch (e) { console.error('Erro ao salvar mapeamento:', e); }
+                                        setIsMappingModalOpen(false);
+                                    }}
+                                    className="px-6 py-3 bg-emerald-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl hover:bg-emerald-700 transition-all"
+                                >
+                                    Salvar Mapeamento
+                                </button>
+
+                                <button 
+                                    onClick={() => setIsMappingModalOpen(false)}
+                                    className="px-10 py-4 bg-blue-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl shadow-blue-100 hover:bg-blue-700 transition-all"
+                                >
+                                    Concluir Mapeamento
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

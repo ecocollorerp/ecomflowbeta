@@ -220,9 +220,9 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
                 className="p-3 border rounded-xl text-sm bg-slate-50 focus:ring-2 focus:ring-blue-500 font-bold border-slate-100"
             >
                 <option value="">-- Selecione a Coluna --</option>
-                {detectedHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                {detectedHeaders.map((h, idx) => <option key={`${h}-${idx}`} value={h}>{h}</option>)}
                 {settings.importer[canal][field] && !detectedHeaders.includes(settings.importer[canal][field] as string) && (
-                    <option value={settings.importer[canal][field] as string}>{settings.importer[canal][field] as string} (Salvo)</option>
+                    <option key={`saved-${settings.importer[canal][field] as string}`} value={settings.importer[canal][field] as string}>{settings.importer[canal][field] as string} (Salvo)</option>
                 )}
             </select>
         </div>
@@ -232,9 +232,9 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = (props) => {
         <div className="mt-6">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 block">Taxas e Descontos a Abater (Abatimento Financeiro)</label>
             <div className="grid grid-cols-1 gap-2 max-h-56 overflow-y-auto p-4 border-2 border-slate-50 rounded-3xl bg-slate-50/50">
-                {detectedHeaders.length > 0 ? detectedHeaders.map(h => (
+                {detectedHeaders.length > 0 ? detectedHeaders.map((h, idx) => (
                     <button 
-                        key={h} 
+                        key={`${h}-${idx}`} 
                         onClick={() => toggleFeeColumn(canal, h)} 
                         className={`flex items-center gap-3 p-3 rounded-2xl border-2 transition-all text-left ${settings.importer[canal].fees?.includes(h) ? 'bg-blue-600 border-blue-600 text-white shadow-xl shadow-blue-100' : 'bg-white border-slate-100 text-slate-500 hover:border-blue-200'}`}
                     >

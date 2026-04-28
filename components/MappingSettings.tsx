@@ -7,6 +7,8 @@ interface MappingSettingsProps {
     canalName: string;
     settings: GeneralSettings;
     onUpdateMapping: (canalId: string, field: string, value: any) => void;
+    /** Chamado quando o usuário altera `importStartRow` e quer re-extrair cabeçalhos do arquivo atual */
+    onRequestDetectHeaders?: (canalId: string, importStartRow?: number) => void;
     detectedHeaders?: string[];
     mode: 'import' | 'fiscal' | 'all';
 }
@@ -22,24 +24,24 @@ export const MapRow: React.FC<{
     const OFF_VALUE = '__OFF__';
     
     return (
-        <div className="flex flex-col gap-1 w-full">
+        <div className="flex flex-col gap-1 w-full min-w-0">
             <label className="text-[10px] font-black text-gray-400 uppercase">{label}</label>
             <div className="flex gap-2">
                 <select
                     value={val || ''}
                     onChange={e => onUpdate(field, e.target.value)}
-                    className={`flex-1 p-2 border rounded-xl text-xs bg-white focus:ring-2 focus:ring-blue-500 font-bold outline-none ${!val ? 'border-amber-200 bg-amber-50/30' : 'border-gray-200'}`}
+                    className={`flex-1 min-w-0 p-2 border rounded-xl text-xs bg-white focus:ring-2 focus:ring-blue-500 font-bold outline-none ${!val ? 'border-amber-200 bg-amber-50/30' : 'border-gray-200'}`}
                 >
                     <option value="">-- Não mapeado --</option>
                     <option value={OFF_VALUE}>[ DESATIVAR COLUNA ]</option>
                     {detectedHeaders && detectedHeaders.length > 0 && (
                         <optgroup label="Colunas Detectadas">
-                            {detectedHeaders.map(h => <option key={h} value={h}>{h}</option>)}
+                            {detectedHeaders.map((h, idx) => <option key={`${h}-${idx}`} value={h}>{h}</option>)}
                         </optgroup>
                     )}
                     {val && !detectedHeaders?.includes(val) && val !== OFF_VALUE && (
                         <optgroup label="Valor Atual">
-                            <option value={val}>{val}</option>
+                            <option key={`current-${val}`} value={val}>{val}</option>
                         </optgroup>
                     )}
                 </select>
@@ -51,11 +53,21 @@ export const MapRow: React.FC<{
     );
 };
 
-export const MappingPanel: React.FC<MappingSettingsProps> = ({ canalId, canalName, settings, onUpdateMapping, detectedHeaders, mode }) => {
+export const MappingPanel: React.FC<MappingSettingsProps> = ({ canalId, canalName, settings, onUpdateMapping, detectedHeaders, mode, onRequestDetectHeaders }) => {
     const mapping = (settings.importer as any)[canalId] || (settings as any)[`importer_${canalId}`] || {};
+
+    const detectTimerRef = React.useRef<number | null>(null);
 
     const handleUpdate = (field: string, value: any) => {
         onUpdateMapping(canalId, field, value);
+
+        // Se o usuário atualizou a linha inicial, solicita nova extração de cabeçalhos (debounce)
+        if (field === 'importStartRow') {
+            if (detectTimerRef.current) window.clearTimeout(detectTimerRef.current);
+            detectTimerRef.current = window.setTimeout(() => {
+                onRequestDetectHeaders?.(canalId, typeof value === 'number' ? value : undefined);
+            }, 600) as unknown as number;
+        }
     };
 
     const toggleFeeColumn = (header: string) => {
@@ -185,8 +197,8 @@ export const MappingPanel: React.FC<MappingSettingsProps> = ({ canalId, canalNam
                             <div className="mt-2">
                                 <label className="text-[10px] font-black text-gray-400 uppercase block mb-2">Valores de Status Aceitos</label>
                                 <div className="flex flex-wrap gap-2">
-                                    {(mapping.acceptedStatusValues || []).map((val: string) => (
-                                        <div key={val} className="flex items-center gap-1 px-3 py-1.5 bg-orange-600 text-white rounded-xl text-[10px] font-bold">
+                                    {(mapping.acceptedStatusValues || []).map((val: string, idx: number) => (
+                                        <div key={`${val}-${idx}`} className="flex items-center gap-1 px-3 py-1.5 bg-orange-600 text-white rounded-xl text-[10px] font-bold">
                                             {val}
                                             <button onClick={() => toggleStatusValue(val)} className="hover:text-red-200"><X size={12}/></button>
                                         </div>
