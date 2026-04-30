@@ -16,8 +16,8 @@ import * as XLSX from 'xlsx';
 
 interface ImporterPageProps {
     allOrders: OrderItem[];
-    selectedFile: File | null;
-    setSelectedFile: (file: File | null) => void;
+    selectedFiles: File[];
+    setSelectedFiles: (files: File[]) => void;
     processedData: ProcessedData | null;
     setProcessedData: (data: ProcessedData | null) => void;
     error: string | null;
@@ -47,7 +47,7 @@ interface ImporterPageProps {
 
 export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
     const {
-        allOrders, selectedFile, setSelectedFile, processedData, setProcessedData,
+        allOrders, selectedFiles, setSelectedFiles, processedData, setProcessedData,
         error, setError, isProcessing, setIsProcessing, onLaunchSuccess,
         skuLinks, onLinkSku, onUnlinkSku, products, onAddNewItem,
         produtosCombinados, stockItems, generalSettings, setGeneralSettings, // Add setGeneralSettings
@@ -63,6 +63,11 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         trackingFilter: 'all' as any,
         descontarVolatil: false,
     });
+    const [mergeFiles, setMergeFiles] = useState(true);
+    const [splitByShippingDate, setSplitByShippingDate] = useState(false);
+    const [splitByPlatform, setSplitByPlatform] = useState(false);
+    const [processedGroups, setProcessedGroups] = useState<ProcessedData[]>([]);
+    const [activeGroupIndex, setActiveGroupIndex] = useState(0);
     const [importAsHistory, setImportAsHistory] = useState(false);
     const [importAsNormalWithDate, setImportAsNormalWithDate] = useState(true);
     const [selectedChannel, setSelectedChannel] = useState<Canal | 'AUTO'>('AUTO');
@@ -115,8 +120,8 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         });
     }, []);
 
-    const handleFileSelect = (file: File | null) => {
-        setSelectedFile(file);
+    const handleFileSelect = (files: File[]) => {
+        setSelectedFiles(files);
         setError(null);
         // Reseta estados de datas ao trocar arquivo
         setAvailableShippingDates([]);
@@ -147,13 +152,14 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
     };
 
     const handleExtractHeaders = async () => {
-        if (!selectedFile) return;
+        if (!selectedFiles || selectedFiles.length === 0) return;
+        const primaryFile = selectedFiles[0];
         try {
-            const buffer = await selectedFile.arrayBuffer();
+            const buffer = await primaryFile.arrayBuffer();
             const workbook = XLSX.read(buffer, { type: 'array' });
             const sheet = workbook.Sheets[workbook.SheetNames[0]];
-            const isML = selectedFile.name.toLowerCase().includes('vendas') || selectedFile.name.toLowerCase().includes('mercado');
-            const detectedCanalKey = isML ? 'ml' : (selectedFile.name.toLowerCase().includes('shopee') ? 'shopee' : (selectedFile.name.toLowerCase().includes('tiktok') ? 'tiktok' : 'site'));
+            const isML = primaryFile.name.toLowerCase().includes('vendas') || primaryFile.name.toLowerCase().includes('mercado');
+            const detectedCanalKey = isML ? 'ml' : (primaryFile.name.toLowerCase().includes('shopee') ? 'shopee' : (primaryFile.name.toLowerCase().includes('tiktok') ? 'tiktok' : 'site'));
             const config = (generalSettings.importer as any)[detectedCanalKey];
             const startRow = config?.importStartRow !== undefined ? config.importStartRow : (isML ? 5 : 0);
             
@@ -169,9 +175,10 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
 
     // Quando o painel pede para re-extrair cabeçalhos (por ex. após mudar importStartRow)
     const handleRequestDetectHeaders = async (canalId: string, importStartRow?: number) => {
-        if (!selectedFile) return;
+        if (!selectedFiles || selectedFiles.length === 0) return;
+        const primaryFile = selectedFiles[0];
         try {
-            const buffer = await selectedFile.arrayBuffer();
+            const buffer = await primaryFile.arrayBuffer();
             const startRow = importStartRow !== undefined
                 ? importStartRow
                 : (((generalSettings.importer as any)[canalId]?.importStartRow) ?? undefined);
@@ -184,7 +191,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
     };
 
     useEffect(() => {
-        if (isMappingModalOpen && selectedFile && detectedHeaders.length === 0) {
+        if (isMappingModalOpen && selectedFiles && selectedFiles.length > 0 && detectedHeaders.length === 0) {
             handleExtractHeaders();
         }
     }, [isMappingModalOpen]);
@@ -246,16 +253,166 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
 
     // 1. Botão "Iniciar Processamento" chama esta função
     const handleStartProcessing = async () => {
-        if (!selectedFile) return;
+        if (!selectedFiles || selectedFiles.length === 0) return;
 
         setIsScanningDates(true);
         setError(null);
 
         try {
-            const buffer = await selectedFile.arrayBuffer();
+            // Se múltiplos arquivos e modo merge ativado -> processa todos e concatena
+                if (selectedFiles.length > 1 && mergeFiles) {
+                setIsProcessing(true);
+                const aggregatedOrders: OrderItem[] = [];
+                const aggregatedSkus: any[] = [];
+                let finalCanal: Canal | 'AUTO' = 'AUTO';
 
-            // Primeiro tentamos usar explicitamente o mapeamento vindo das configurações de Planilhas
-            // para garantir que a coluna configurada (`dateShipping`) seja usada quando disponível.
+                for (const file of selectedFiles) {
+                    const name = file.name.toLowerCase();
+                    const isXml = name.endsWith('.xml');
+                    const isZip = name.endsWith('.zip');
+
+                    if (isXml || isZip) {
+                        // Por ora, ignora XML/ZIP no merge automático (pode ser adicionado depois)
+                        console.warn('Import: pulando arquivo XML/ZIP no merge automático:', file.name);
+                        continue;
+                    }
+
+                    const buffer = await file.arrayBuffer();
+                    try {
+                        const data = parseExcelFile(buffer, file.name, allOrders, generalSettings, { ...importOptions, tiktokOrderType, allowedShippingDates: undefined, columnOverrides: undefined }, selectedChannel);
+                        // marca origem/canal nos pedidos importados
+                        const ordersFromFile = (data.lists?.completa || []).map(o => ({ ...o, canal: data.canal || o.canal }));
+                        aggregatedOrders.push(...ordersFromFile);
+                        if (data.skusNaoVinculados) aggregatedSkus.push(...data.skusNaoVinculados);
+                        if (finalCanal === 'AUTO' && data.canal) finalCanal = data.canal as any;
+                    } catch (parseErr: any) {
+                        console.error('Erro ao parsear arquivo', file.name, parseErr);
+                        // continua com os outros arquivos
+                    }
+                }
+                if (aggregatedOrders.length === 0) {
+                    throw new Error('Nenhum pedido encontrado nos arquivos selecionados. Verifique os arquivos e o mapeamento.');
+                }
+
+                // Se for necessário separar por plataforma e/ou por data, gerar grupos distintos
+                if (splitByPlatform || splitByShippingDate) {
+                    const groups = new Map<string, { orders: OrderItem[]; canal?: string; date?: string }>();
+
+                    const normalizeDate = (raw?: any) => {
+                        if (!raw) return 'SEM_DATA';
+                        if (typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+                        const d = new Date(raw);
+                        if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+                        const s = String(raw).trim();
+                        const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+                        if (m) {
+                            const day = m[1].padStart(2,'0');
+                            const month = m[2].padStart(2,'0');
+                            const year = m[3].length === 2 ? (Number(m[3])>70? '19'+m[3] : '20'+m[3]) : m[3];
+                            return `${year}-${month}-${day}`;
+                        }
+                        return 'SEM_DATA';
+                    };
+
+                    for (const o of aggregatedOrders) {
+                        const canalKey = splitByPlatform ? (o.canal || finalCanal || 'OUTROS') : 'ALL_PLATFORMS';
+                        const dateKey = splitByShippingDate ? normalizeDate(o.data_prevista_envio) : 'ALL_DATES';
+                        const key = `${canalKey}__${dateKey}`;
+                        if (!groups.has(key)) groups.set(key, { orders: [], canal: canalKey, date: dateKey });
+                        groups.get(key)!.orders.push(o);
+                    }
+
+                    const processedList: ProcessedData[] = [];
+                    const fileNames = selectedFiles.map(f => f.name).join(', ');
+                    let idx = 0;
+                    for (const [key, val] of groups.entries()) {
+                        const grpOrders = val.orders;
+                        const pd: ProcessedData = {
+                            importId: `MERGE-${Date.now()}-${idx}`,
+                            canal: (splitByPlatform ? (val.canal as any) : finalCanal) as any,
+                            lists: {
+                                completa: grpOrders,
+                                resumida: [],
+                                totaisPorCor: []
+                            },
+                            skusNaoVinculados: aggregatedSkus.filter(sku => grpOrders.some(o => String(o.sku) === String(sku.sku))),
+                            idempotencia: { lancaveis: grpOrders.length, jaSalvos: 0 },
+                            summary: {
+                                totalPedidos: new Set(grpOrders.map(o => o.orderId)).size,
+                                totalPacotes: grpOrders.length,
+                                totalUnidades: grpOrders.reduce((s, o) => s + Number(o.qty_final || 0), 0),
+                                totalUnidadesBranca: 0,
+                                totalUnidadesPreta: 0,
+                                totalUnidadesEspecial: 0,
+                                totalMiudos: 0
+                            }
+                        };
+
+                        // salva histórico separado por grupo
+                        addImportToHistory({
+                            fileName: `${fileNames} [grupo:${key}]`,
+                            processedAt: new Date().toISOString(),
+                            user: currentUser.name,
+                            item_count: pd.lists.completa.length,
+                            unlinked_count: pd.skusNaoVinculados.length,
+                            canal: pd.canal
+                        }, pd);
+
+                        processedList.push(pd);
+                        idx++;
+                    }
+
+                    // atualiza UI com os grupos e mostra o primeiro por padrão
+                    setProcessedGroups(processedList);
+                    setActiveGroupIndex(0);
+                    setProcessedData(processedList[0]);
+                    setIsScanningDates(false);
+                    setIsProcessing(false);
+                    return;
+                }
+
+                // Caso sem split: comportamento anterior (merge único)
+                const merged: ProcessedData = {
+                    importId: `MERGE-${Date.now()}`,
+                    canal: finalCanal as Canal,
+                    lists: {
+                        completa: aggregatedOrders,
+                        resumida: [],
+                        totaisPorCor: []
+                    },
+                    skusNaoVinculados: aggregatedSkus,
+                    idempotencia: { lancaveis: aggregatedOrders.length, jaSalvos: 0 },
+                    summary: {
+                        totalPedidos: new Set(aggregatedOrders.map(o => o.orderId)).size,
+                        totalPacotes: aggregatedOrders.length,
+                        totalUnidades: aggregatedOrders.reduce((s, o) => s + Number(o.qty_final || 0), 0),
+                        totalUnidadesBranca: 0,
+                        totalUnidadesPreta: 0,
+                        totalUnidadesEspecial: 0,
+                        totalMiudos: 0
+                    }
+                };
+
+                setProcessedData(merged);
+                addImportToHistory({
+                    fileName: selectedFiles.map(f => f.name).join(', '),
+                    processedAt: new Date().toISOString(),
+                    user: currentUser.name,
+                    item_count: merged.lists.completa.length,
+                    unlinked_count: merged.skusNaoVinculados.length,
+                    canal: merged.canal
+                }, merged);
+
+                setIsScanningDates(false);
+                setIsProcessing(false);
+                return;
+            }
+
+            // Caso padrão: processa o primeiro arquivo (compatibilidade com fluxo existente)
+            const primaryFile = selectedFiles[0];
+            const buffer = await primaryFile.arrayBuffer();
+
+            // Reaproveita a lógica existente para extrair cabeçalhos e detectar canal/datas
             const { headers, sheetData } = extractHeadersAndData(buffer);
             console.debug('DEBUG: extracted headers =>', headers.slice(0, 50));
             const normalizeHeaderLocal = (s: any) => String(s || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Z0-9\s]/g, '').replace(/\s+/g, ' ');
@@ -268,7 +425,6 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 if (mk) return mk;
                 mk = headers.find(h => t.includes(normalizeHeaderLocal(h)));
                 if (mk) return mk;
-                // Token matching com stopwords (ex: "Data de envio prevista" ↔ "Data prevista de envio")
                 const sw = new Set(['DE', 'DO', 'DA', 'E', 'PARA', 'POR', 'O', 'A', 'EM', 'NO', 'NA', 'DOS', 'DAS', 'AO', 'PELO', 'PELA']);
                 const tImp = t.split(' ').filter(Boolean).filter(w => !sw.has(w));
                 if (tImp.length > 0) {
@@ -282,9 +438,8 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 return mk;
             };
 
-            // Determina canal efetivo por cabeçalho + nome de arquivo quando estiver em AUTO.
             const detectChannelByConfig = (): Canal | 'AUTO' => {
-                const byName = selectedFile.name.toUpperCase();
+                const byName = primaryFile.name.toUpperCase();
                 if (byName.includes('TIKTOK')) return 'TIKTOK';
                 if (byName.includes('MERCADO') || byName.includes('MELI') || byName.includes('ML_')) return 'ML';
                 if (byName.includes('SHOPEE') || byName.includes('TO_SHIP') || byName.includes('TOSHIP') || byName.includes('ORDER')) return 'SHOPEE';
@@ -307,7 +462,6 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 setSelectedChannel(effectiveChannel);
             }
 
-            // Regra de negócio: seleção por datas só existe para Shopee.
             if (effectiveChannel !== 'SHOPEE') {
                 setShippingDateKey(null);
                 setAvailableShippingDates([]);
@@ -332,7 +486,6 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 console.debug('DEBUG: trying config', ch, 'desired:', desired, 'matched:', matched);
                 if (!matched) continue;
 
-                // Computa contagem de datas usando a coluna mapeada da config
                 const dateMap = new Map<string, number>();
                 const normalizeDateLocal = (raw: any) => {
                     if (!raw) return '';
@@ -362,17 +515,12 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 if (dateMap.size > 0) {
                     foundDates = Array.from(dateMap.entries()).map(([date, count]) => ({ date, count, key: matched }));
                     detectedKeyFromConfig = matched;
-                    console.debug('DEBUG: foundDates from config column', matched, '=>', foundDates.slice(0,20));
-                    // log sample rows for diagnosis
-                    console.debug('DEBUG: sample sheet rows (first 5) for column', matched, sheetData.slice(0,5).map(r => r[matched]));
                     break;
                 }
             }
 
             if (foundDates.length === 0) {
-                // Fallback para heurística existente
-                const dates = extractShippingDates(buffer, generalSettings, effectiveChannel, selectedFile.name);
-                console.debug('DEBUG: extractShippingDates ->', dates);
+                const dates = extractShippingDates(buffer, generalSettings, effectiveChannel, primaryFile.name);
                 foundDates = dates;
             }
 
@@ -392,31 +540,33 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 });
 
                 setAvailableShippingDates(enriched);
-                // guarda a coluna detectada (para forçar o parse a usar a mesma coluna)
                 const detectedKey = detectedKeyFromConfig || (foundDates[0] as any).key || null;
                 setShippingDateKey(detectedKey);
-                console.debug('DEBUG: shippingDateKey set to', detectedKey, 'enriched:', enriched);
                 setIsScanningDates(false);
                 setIsDateModalOpen(true);
                 return;
             }
 
-            // Sem datas válidas para Shopee: segue sem filtro para não bloquear importação.
             setShippingDateKey(null);
             executeFullProcessing(buffer, undefined, effectiveChannel);
             setIsScanningDates(false);
         } catch (e: any) {
             console.error("Erro ao analisar datas:", e);
-            // Em caso de erro na pré-análise, tenta processar direto (fallback)
-            const buffer = await selectedFile.arrayBuffer();
-            executeFullProcessing(buffer, undefined);
+            const primaryFile = selectedFiles[0];
+            try {
+                const buffer = await primaryFile.arrayBuffer();
+                executeFullProcessing(buffer, undefined);
+            } catch (inner) {
+                console.error('Fallback failed', inner);
+            }
             setIsScanningDates(false);
         }
     };
 
     // 2. Callback do Modal de Datas (Confirmar)
     const handleDateConfirm = async (selectedDates: string[]) => {
-        if (!selectedFile) return;
+        if (!selectedFiles || selectedFiles.length === 0) return;
+        const primaryFile = selectedFiles[0];
 
         setIsProcessing(true); // Mostra loading principal
         try {
@@ -433,7 +583,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
 
             // Se passou no diagnóstico, fecha o modal e processa
             setIsDateModalOpen(false);
-            const buffer = await selectedFile.arrayBuffer();
+            const buffer = await primaryFile.arrayBuffer();
             console.debug('DEBUG: handleDateConfirm -> selectedDates', selectedDates, 'shippingDateKey', shippingDateKey);
             executeFullProcessing(buffer, selectedDates);
         } catch (e) {
@@ -443,9 +593,10 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
 
     // Handler para diagnóstico acionado pelo modal — retorna um objeto serializável
     const runDiagnostics = async (selectedDates?: string[]) => {
-        if (!selectedFile) return { error: 'Nenhum arquivo selecionado' };
+        if (!selectedFiles || selectedFiles.length === 0) return { error: 'Nenhum arquivo selecionado' };
+        const primaryFile = selectedFiles[0];
         try {
-            const buffer = await selectedFile.arrayBuffer();
+            const buffer = await primaryFile.arrayBuffer();
             const { headers, sheetData } = extractHeadersAndData(buffer as any);
             const sampleRows = (sheetData as any[]).slice(0, 5).map((r: any) => {
                 const obj: any = {};
@@ -454,7 +605,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
             });
 
             let extractDates: any = null;
-            try { extractDates = extractShippingDates(buffer as any, generalSettings, selectedChannel, selectedFile.name); } catch (e) { extractDates = { error: String(e) }; }
+            try { extractDates = extractShippingDates(buffer as any, generalSettings, selectedChannel, primaryFile.name); } catch (e) { extractDates = { error: String(e) }; }
 
             const diagnostics: any = { headers: headers.slice(0, 200), sampleRows, extractShippingDates: extractDates, shippingDateKey };
 
@@ -478,7 +629,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
 
             // Tenta parse sem filtros
             try {
-                const rawNoFilter = parseExcelFile(buffer, selectedFile.name, allOrders, generalSettings, { ...importOptions, tiktokOrderType, allowedShippingDates: undefined, columnOverrides: undefined }, selectedChannel);
+                const rawNoFilter = parseExcelFile(buffer, primaryFile.name, allOrders, generalSettings, { ...importOptions, tiktokOrderType, allowedShippingDates: undefined, columnOverrides: undefined }, selectedChannel);
                 diagnostics.parseWithoutFilters = { total: rawNoFilter.lists?.completa?.length ?? null, sample: (rawNoFilter.lists?.completa || []).slice(0, 10) };
             } catch (e: any) {
                 diagnostics.parseWithoutFiltersError = String(e?.message || e);
@@ -494,7 +645,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                     diagnostics.parserInternalsError = String(inner);
                 }
                 const datesAll = (selectedDates && selectedDates.length > 0) ? selectedDates : availableShippingDates.map(d => d.date);
-                const rawWithOverride = parseExcelFile(buffer, selectedFile.name, allOrders, generalSettings, { ...importOptions, tiktokOrderType, allowedShippingDates: datesAll.length ? datesAll : undefined, columnOverrides: shippingDateKey ? { dateShipping: shippingDateKey } : undefined }, selectedChannel);
+                const rawWithOverride = parseExcelFile(buffer, primaryFile.name, allOrders, generalSettings, { ...importOptions, tiktokOrderType, allowedShippingDates: datesAll.length ? datesAll : undefined, columnOverrides: shippingDateKey ? { dateShipping: shippingDateKey } : undefined }, selectedChannel);
                 diagnostics.parseWithOverride = { total: rawWithOverride.lists?.completa?.length ?? null, sample: (rawWithOverride.lists?.completa || []).slice(0, 10) };
             } catch (e: any) {
                 diagnostics.parseWithOverrideError = String(e?.message || e);
@@ -508,13 +659,14 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
 
     // 3. Execução real do processamento (com ou sem datas filtradas)
     const executeFullProcessing = (buffer: ArrayBuffer, allowedDates?: string[], channelOverride?: Canal | 'AUTO') => {
-        if (!selectedFile) return;
+        if (!selectedFiles || selectedFiles.length === 0) return;
+        const fileName = selectedFiles[0]?.name || 'arquivo';
         setIsProcessing(true);
         try {
-            console.debug('DEBUG: executeFullProcessing -> allowedDates', allowedDates, 'channelOverride', channelOverride, 'columnOverrides', shippingDateKey ? { dateShipping: shippingDateKey } : undefined, 'fileName', selectedFile?.name);
+            console.debug('DEBUG: executeFullProcessing -> allowedDates', allowedDates, 'channelOverride', channelOverride, 'columnOverrides', shippingDateKey ? { dateShipping: shippingDateKey } : undefined, 'fileName', fileName);
             const data = parseExcelFile(
                 buffer,
-                selectedFile.name,
+                fileName,
                 allOrders,
                 generalSettings,
                 {
@@ -528,7 +680,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
             setProcessedData(data);
             setIsViewingHistory(false);
             addImportToHistory({
-                fileName: selectedFile.name,
+                fileName,
                 processedAt: new Date().toISOString(),
                 user: currentUser.name,
                 item_count: data.lists.completa.length,
@@ -547,7 +699,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                     console.debug('DEBUG-DIAG: extractShippingDates', datesDiag);
                     // Tenta rodar parse sem filtro para ver se existem pedidos sem filtro
                     try {
-                        const raw = parseExcelFile(buffer, selectedFile.name, allOrders, generalSettings, { ...importOptions, tiktokOrderType, allowedShippingDates: undefined, columnOverrides: undefined }, selectedChannel);
+                        const raw = parseExcelFile(buffer, fileName, allOrders, generalSettings, { ...importOptions, tiktokOrderType, allowedShippingDates: undefined, columnOverrides: undefined }, selectedChannel);
                         console.debug('DEBUG-DIAG: parse without filters -> total', raw.lists.completa.length, 'sample', raw.lists.completa.slice(0,10));
                     } catch (innerErr: any) {
                         console.debug('DEBUG-DIAG: parse without filters erro ->', innerErr?.message || innerErr);
@@ -574,16 +726,16 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
         onLaunchSuccess(ordersToLaunch as any);
         setProcessedData(null);
         setImportAsHistory(false); // Reset checkbox
-        setSelectedFile(null); // Reset file
+        setSelectedFiles([]); // Reset files
     };
 
     const handleViewHistory = async (item: ImportHistoryItem) => {
         setIsProcessing(true);
         const data = await onGetImportHistoryDetails(item.id);
-        if (data) {
+            if (data) {
             setProcessedData(data);
             setIsViewingHistory(true);
-            setSelectedFile(null);
+            setSelectedFiles([]);
             setIsHistoryManagerOpen(false); // Close manager if open
         } else { alert("Não foi possível recuperar os dados desta importação histórica."); }
         setIsProcessing(false);
@@ -647,8 +799,8 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                     <>
                         <div className="relative">
                             <FileUploader
-                                onFileSelect={handleFileSelect}
-                                selectedFile={selectedFile}
+                                onFilesSelect={handleFileSelect}
+                                files={selectedFiles}
                             />
                             {isScanningDates && (
                                 <div className="absolute inset-0 bg-white/80 flex items-center justify-center rounded-xl z-10 animate-in fade-in">
@@ -663,7 +815,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                             )}
                         </div>
 
-                        {selectedFile && (
+                        {selectedFiles && selectedFiles.length > 0 && (
                             <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-sm space-y-6 animate-in fade-in zoom-in-95">
                                 <div className="flex items-center justify-between border-b pb-3">
                                     <div className="flex items-center gap-2">
@@ -693,7 +845,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                                     <p className="text-[10px] text-slate-400 mt-2 font-medium">Use "Automático" por padrão. Se houver erro de colunas não encontradas, selecione o canal específico aqui.</p>
                                 </div>
 
-                                {(selectedChannel === 'TIKTOK' || (selectedChannel === 'AUTO' && selectedFile && selectedFile.name.toUpperCase().includes('TIKTOK'))) && (
+                                {(selectedChannel === 'TIKTOK' || (selectedChannel === 'AUTO' && selectedFiles && selectedFiles[0] && selectedFiles[0].name.toUpperCase().includes('TIKTOK'))) && (
                                     <div className="bg-purple-50 p-4 rounded-xl border border-purple-100">
                                         <label className="block text-[10px] font-black text-purple-500 uppercase tracking-widest mb-2">TikTok — Tipo de Pedido</label>
                                         <select
@@ -729,6 +881,29 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                                         <div className="text-sm">
                                             <p className="font-black text-orange-800">Descontar do Estoque Volátil</p>
                                             <p className="text-xs text-orange-600 font-medium">Se marcado, a bipagem destes itens irá priorizar o abatimento do estoque volátil dos pacotes prontos.</p>
+                                        </div>
+                                    </label>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4">
+                                    <label className="flex items-start gap-3 p-3 bg-gray-50 rounded-xl cursor-pointer border-2 border-transparent hover:border-blue-500 transition-all">
+                                        <input type="checkbox" checked={mergeFiles} onChange={e => setMergeFiles(e.target.checked)} className="w-5 h-5 text-blue-600 rounded mt-0.5 shadow-sm" />
+                                        <div className="text-sm">
+                                            <p className="font-black text-gray-800">Unir arquivos</p>
+                                            <p className="text-xs text-gray-500 font-medium">Concatena os arquivos antes de processar.</p>
+                                        </div>
+                                    </label>
+                                    <label className="flex items-start gap-3 p-3 bg-gray-50 rounded-xl cursor-pointer border-2 border-transparent hover:border-emerald-500 transition-all">
+                                        <input type="checkbox" checked={splitByShippingDate} onChange={e => setSplitByShippingDate(e.target.checked)} className="w-5 h-5 text-emerald-600 rounded mt-0.5 shadow-sm" />
+                                        <div className="text-sm">
+                                            <p className="font-black text-gray-800">Separar por Data de Envio</p>
+                                            <p className="text-xs text-gray-500 font-medium">Cria uma importação separada para cada data prevista de envio.</p>
+                                        </div>
+                                    </label>
+                                    <label className="flex items-start gap-3 p-3 bg-gray-50 rounded-xl cursor-pointer border-2 border-transparent hover:border-purple-500 transition-all">
+                                        <input type="checkbox" checked={splitByPlatform} onChange={e => setSplitByPlatform(e.target.checked)} className="w-5 h-5 text-purple-600 rounded mt-0.5 shadow-sm" />
+                                        <div className="text-sm">
+                                            <p className="font-black text-gray-800">Separar por Plataforma</p>
+                                            <p className="text-xs text-gray-500 font-medium">Gera importações separadas por canal (Shopee, ML, TikTok, etc.).</p>
                                         </div>
                                     </label>
                                 </div>
@@ -785,11 +960,25 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                             </div>
                         )}
 
+                        {processedGroups && processedGroups.length > 1 && (
+                            <div className="flex gap-2 mb-4 overflow-x-auto">
+                                {processedGroups.map((pd, i) => {
+                                    const firstDate = (pd.lists.completa && pd.lists.completa.length > 0) ? (pd.lists.completa[0].data_prevista_envio || pd.lists.completa[0].data_postagem || '') : '';
+                                    const label = `${pd.canal || 'Geral'} • ${firstDate ? String(firstDate).slice(0,10) : 'SEM_DATA'} (${pd.lists.completa.length})`;
+                                    return (
+                                        <button key={pd.importId} onClick={() => { setActiveGroupIndex(i); setProcessedData(processedGroups[i]); }} className={`px-3 py-1 rounded-lg font-bold text-sm ${i===activeGroupIndex ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                                            {label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+
                         <ImportResults
                             data={processedData}
                             blingLinkedIds={blingLinkedIds}
                             onLaunchSuccess={handleLaunch}
-                            onCancel={() => { setProcessedData(null); setSelectedFile(null); setImportAsHistory(false); }}
+                            onCancel={() => { setProcessedData(null); setProcessedGroups([]); setActiveGroupIndex(0); setSelectedFiles([]); setImportAsHistory(false); }}
                             skuLinks={skuLinks}
                             products={products}
                             onLinkSku={async (sku, master) => await onLinkSku(sku.toUpperCase(), master.toUpperCase())}
@@ -939,7 +1128,7 @@ export const ImporterPage: React.FC<ImporterPageProps> = (props) => {
                 onClose={() => { setIsDateModalOpen(false); }}
                 availableDates={availableShippingDates}
                 onConfirm={handleDateConfirm}
-                fileName={selectedFile?.name || ''}
+                fileName={selectedFiles && selectedFiles.length > 0 ? selectedFiles[0].name : ''}
                 onRunDiagnostics={runDiagnostics}
             />
             {/* Modal de Mapeamento de Colunas */}

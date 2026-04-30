@@ -177,7 +177,7 @@ const App: React.FC = () => {
     const [adminNotices, setAdminNotices] = useState<AdminNotice[]>([]);
     const [isAutoBipagemActive, setIsAutoBipagemActive] = useState(false);
 
-    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
     const [processedData, setProcessedData] = useState<ProcessedData | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [importError, setImportError] = useState<string | null>(null);
@@ -2304,8 +2304,8 @@ const App: React.FC = () => {
             case 'dashboard': return <DashboardPage setCurrentPage={setCurrentPage} generalSettings={generalSettings} allOrders={allOrders} scanHistory={scanHistory} stockItems={stockItems} produtosCombinados={produtosCombinados} users={users} lowStockCount={lowStockCount} uiSettings={uiSettings} onSaveUiSettings={handleSaveUiSettings} adminNotices={adminNotices} onSaveNotice={handleSaveNotice} onDeleteNotice={handleDeleteNotice} currentUser={currentUser!} skuLinks={skuLinks} onSaveDashboardConfig={handleSaveDashboardConfig} packGroups={packGroups} onSavePackGroup={async (g, id) => { await dbClient.from('stock_pack_groups').upsert(id ? { ...g, id } : g); loadData(); }} onExportDailyLog={handleExportDailyLog} onSaveGeneralSettings={handleSaveGeneralSettings} />
             case 'importer': return <ImporterPage
                 allOrders={allOrders}
-                selectedFile={selectedFile}
-                setSelectedFile={setSelectedFile}
+                selectedFiles={selectedFiles}
+                setSelectedFiles={setSelectedFiles}
                 processedData={processedData}
                 setProcessedData={setProcessedData}
                 error={importError}
